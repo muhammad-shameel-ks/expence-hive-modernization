@@ -1,6 +1,49 @@
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
 
+This project is the greenfield ExpenseHive modernization workspace.
+
+The legacy `expensehive` directory is read-only reference material.
+
+## Project Documents
+
+- [Formal specification](docs/specs/expensehive-modernization.md)
+- [UX research](docs/ux/ux-research.md)
+- [Approval workflow domain model](docs/domain-model/approval-workflow.md)
+- [Modernization architecture](docs/architecture/modernization.md)
+- [Platform ADR](docs/architecture/decisions/0001-azure-native-nextjs-mvp.md)
+
 ## Getting Started
+
+### Local Infrastructure
+
+The local development stack follows the architecture specification and provides PostgreSQL, Azurite, and Mailpit through Docker Compose.
+
+Start the services from this directory:
+
+```bash
+docker compose up -d
+```
+
+The local service endpoints are:
+
+- PostgreSQL: `postgresql://expensehive:expensehive@127.0.0.1:5432/expensehive`
+- Azurite Blob service: `http://127.0.0.1:10000/devstoreaccount1`
+- Mailpit SMTP: `127.0.0.1:1025`
+- Mailpit inbox: [http://localhost:8025](http://localhost:8025)
+
+Stop the services while keeping their local data:
+
+```bash
+docker compose down
+```
+
+Remove the containers and local data volumes:
+
+```bash
+docker compose down -v
+```
+
+The development identity adapter and seeded users described in the specification are not implemented yet.
 
 First, run the development server:
 
