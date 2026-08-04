@@ -18,4 +18,9 @@ describe("submittedLabel", () => {
     expect(submittedLabel("2026-08-03T10:42:00Z")).toBe("Aug 3");
     expect(submittedLabel("2026-07-29T13:20:00Z")).toBe("Jul 29");
   });
+
+  it("falls back to the raw value instead of 'Invalid Date' for malformed input", () => {
+    expect(submittedLabel("not-a-date")).toBe("not-a-date");
+    expect(submittedLabel("")).toBe("");
+  });
 });

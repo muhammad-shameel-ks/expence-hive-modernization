@@ -49,7 +49,9 @@ export function formatMoney(amount: number, currency = "USD") {
 
 /** "Aug 3" from an ISO submission timestamp, in UTC so the date never shifts. */
 export function submittedLabel(submittedAt: string) {
-  return new Date(submittedAt).toLocaleDateString("en-US", {
+  const date = new Date(submittedAt);
+  if (Number.isNaN(date.getTime())) return submittedAt;
+  return date.toLocaleDateString("en-US", {
     month: "short",
     day: "numeric",
     timeZone: "UTC",
