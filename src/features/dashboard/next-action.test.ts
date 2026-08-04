@@ -21,7 +21,7 @@ function expense(overrides: Partial<Expense>): Expense {
 
 describe("nextActionFor", () => {
   it("returns Continue draft for a draft, owned by me", () => {
-    expect(nextActionFor(expense({ status: "draft" }))).toEqual({
+    expect(nextActionFor(expense({ status: "draft" }), ME)).toEqual({
       label: "Continue draft",
       actor: ME,
       mine: true,
@@ -29,7 +29,7 @@ describe("nextActionFor", () => {
   });
 
   it("returns Resubmit for needs-correction, owned by me", () => {
-    expect(nextActionFor(expense({ status: "needs-correction" }))).toEqual({
+    expect(nextActionFor(expense({ status: "needs-correction" }), ME)).toEqual({
       label: "Resubmit",
       actor: ME,
       mine: true,
@@ -37,7 +37,7 @@ describe("nextActionFor", () => {
   });
 
   it("sends a rejected expense back into the correction loop, owned by me", () => {
-    expect(nextActionFor(expense({ status: "rejected" }))).toEqual({
+    expect(nextActionFor(expense({ status: "rejected" }), ME)).toEqual({
       label: "Resubmit",
       actor: ME,
       mine: true,
@@ -57,7 +57,7 @@ describe("nextActionFor", () => {
   });
 
   it("falls back to a generic Approval label when no stage is assigned", () => {
-    expect(nextActionFor(expense({ status: "submitted" }))).toEqual({
+    expect(nextActionFor(expense({ status: "submitted" }), ME)).toEqual({
       label: "Approval",
       actor: undefined,
       mine: false,
@@ -65,12 +65,12 @@ describe("nextActionFor", () => {
   });
 
   it("points at Finance verification for approved and in-finance", () => {
-    expect(nextActionFor(expense({ status: "approved", nextActor: "Finance Officer" }))).toEqual({
+    expect(nextActionFor(expense({ status: "approved", nextActor: "Finance Officer" }), ME)).toEqual({
       label: "Finance verification",
       actor: "Finance Officer",
       mine: false,
     });
-    expect(nextActionFor(expense({ status: "in-finance", nextActor: "Finance Officer" }))).toEqual({
+    expect(nextActionFor(expense({ status: "in-finance", nextActor: "Finance Officer" }), ME)).toEqual({
       label: "Finance verification",
       actor: "Finance Officer",
       mine: false,
@@ -78,7 +78,7 @@ describe("nextActionFor", () => {
   });
 
   it("is Done for a paid expense, owned by no one", () => {
-    expect(nextActionFor(expense({ status: "paid" }))).toEqual({ label: "Done", mine: false });
+    expect(nextActionFor(expense({ status: "paid" }), ME)).toEqual({ label: "Done", mine: false });
   });
 
   it("honours an explicit current user instead of the mock identity", () => {

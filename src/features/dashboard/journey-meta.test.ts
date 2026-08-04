@@ -2,18 +2,14 @@ import { describe, expect, it } from "vitest";
 import { formatMoney, submittedLabel } from "./journey-meta";
 
 describe("formatMoney", () => {
-  it("keeps whole-dollar amounts clean", () => {
-    expect(formatMoney(594)).toBe("$594");
-    expect(formatMoney(620)).toBe("$620");
-  });
-
-  it("does not round away cents on a financial surface", () => {
+  it("always shows two decimals for a consistent financial surface", () => {
+    expect(formatMoney(594)).toBe("$594.00");
     expect(formatMoney(594.6)).toBe("$594.60");
     expect(formatMoney(100.25)).toBe("$100.25");
   });
 
   it("respects the currency", () => {
-    expect(formatMoney(340, "EUR")).toBe("€340");
+    expect(formatMoney(340, "EUR")).toBe("€340.00");
   });
 });
 

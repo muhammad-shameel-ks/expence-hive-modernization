@@ -39,13 +39,12 @@ export function statusBadgeClass(status: ExpenseStatus) {
 }
 
 export function formatMoney(amount: number, currency = "USD") {
-  const formatted = new Intl.NumberFormat("en-US", {
+  return new Intl.NumberFormat("en-US", {
     style: "currency",
     currency,
     minimumFractionDigits: 2,
     maximumFractionDigits: 2,
   }).format(amount);
-  return formatted.replace(/\.00$/, "");
 }
 
 /** "Aug 3" from an ISO submission timestamp, in UTC so the date never shifts. */
