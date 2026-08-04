@@ -81,7 +81,14 @@ export function createAuthCommands(ports: AuthPorts) {
     ports.sessionStore.remove(sessionId);
   }
 
-  return { requestLogin, completeLogin, getCurrentEmployee, logout };
+  function createDevSession(employeeId: string): string {
+    if (!ports.identityProvider.findById(employeeId)) {
+      throw new AuthenticationError();
+    }
+    return ports.sessionStore.create(employeeId);
+  }
+
+  return { requestLogin, completeLogin, getCurrentEmployee, logout, createDevSession };
 }
 
 export type AuthCommands = ReturnType<typeof createAuthCommands>;

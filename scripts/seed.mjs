@@ -1,4 +1,4 @@
-// Seeds the local admin foundation: organization, employees, roles, and a draft flow.
+// Seeds the local expense foundation: organization, employees, roles, hierarchy, flow, and claims.
 // Idempotent: safe to run repeatedly after migrations.
 // Usage: npm run db:seed
 
@@ -23,6 +23,7 @@ const ROLES = [
   { code: "manager", displayName: "Manager" },
   { code: "finance-reviewer", displayName: "Finance reviewer" },
   { code: "it-reviewer", displayName: "IT reviewer" },
+  { code: "ceo", displayName: "CEO" },
   { code: "hr-administrator", displayName: "HR administrator" },
   { code: "system-administrator", displayName: "System administrator" },
   { code: "ceo-delegate", displayName: "CEO delegate" },
@@ -32,15 +33,117 @@ const EMPLOYEE_ROLES = [
   { employeeId: "emp-grace", roleCode: "hr-administrator" },
   { employeeId: "emp-shameel", roleCode: "system-administrator" },
   { employeeId: "emp-ada", roleCode: "manager" },
-  { employeeId: "emp-dorothy", roleCode: "finance-reviewer" },
+  { employeeId: "emp-finance", roleCode: "finance-reviewer" },
   { employeeId: "emp-it", roleCode: "it-reviewer" },
+  { employeeId: "emp-ceo", roleCode: "ceo" },
 ];
 
 const FLOW = {
   name: "Standard reimbursement",
   scope: "All departments",
-  steps: ["manager", "finance-reviewer", "ceo-delegate"],
+  steps: ["manager", "it-reviewer", "ceo", "finance-reviewer"],
 };
+
+const CLAIMS = [
+  {
+    id: "claim-demo-draft",
+    ref: "EXP-2026-0143",
+    requesterId: "emp-shameel",
+    title: "Team lunch - onboarding week",
+    category: "Meals",
+    amountMinor: 21000,
+    expenseDate: "2026-08-04",
+    paymentMethod: "Personal card",
+    status: "draft",
+    currentStage: null,
+    currentActorId: null,
+    createdAt: "2026-08-04T11:05:00Z",
+    submittedAt: null,
+    steps: [],
+    history: [{ id: "history-demo-draft", kind: "draft", actorId: "emp-shameel", detail: "Draft saved", createdAt: "2026-08-04T11:05:00Z" }],
+  },
+  {
+    id: "claim-demo-approval",
+    ref: "EXP-2026-0142",
+    requesterId: "emp-shameel",
+    title: "Figma Professional plan - H2 renewal",
+    category: "Software",
+    amountMinor: 59400,
+    expenseDate: "2026-08-04",
+    paymentMethod: "Company card",
+    status: "in-approval",
+    currentStage: "manager",
+    currentActorId: "emp-ada",
+    createdAt: "2026-08-03T10:42:00Z",
+    submittedAt: "2026-08-03T10:42:00Z",
+    steps: [
+      ["step-demo-approval-manager", 0, "manager", "emp-ada", "pending"],
+      ["step-demo-approval-it", 1, "it", "emp-it", "pending"],
+      ["step-demo-approval-ceo", 2, "ceo", "emp-ceo", "pending"],
+      ["step-demo-approval-finance", 3, "finance", "emp-finance", "pending"],
+    ],
+    history: [
+      { id: "history-demo-approval-draft", kind: "draft", actorId: "emp-shameel", detail: "Draft saved", createdAt: "2026-08-03T10:40:00Z" },
+      { id: "history-demo-approval-submitted", kind: "submitted", actorId: "emp-shameel", detail: "Sent to Manager approval", createdAt: "2026-08-03T10:42:00Z" },
+    ],
+  },
+  {
+    id: "claim-demo-finance",
+    ref: "EXP-2026-0132",
+    requesterId: "emp-shameel",
+    title: "Hotel - Karachi office week",
+    category: "Lodging",
+    amountMinor: 62000,
+    expenseDate: "2026-07-30",
+    paymentMethod: "Personal card",
+    status: "in-finance",
+    currentStage: "finance",
+    currentActorId: "emp-finance",
+    createdAt: "2026-07-26T08:55:00Z",
+    submittedAt: "2026-07-26T08:55:00Z",
+    steps: [
+      ["step-demo-finance-manager", 0, "manager", "emp-ada", "approved"],
+      ["step-demo-finance-it", 1, "it", "emp-it", "approved"],
+      ["step-demo-finance-ceo", 2, "ceo", "emp-ceo", "approved"],
+      ["step-demo-finance-finance", 3, "finance", "emp-finance", "pending"],
+    ],
+    history: [
+      { id: "history-demo-finance-submitted", kind: "submitted", actorId: "emp-shameel", detail: "Sent for approval", createdAt: "2026-07-26T08:55:00Z" },
+      { id: "history-demo-finance-manager", kind: "approved", actorId: "emp-ada", detail: "Manager approval", createdAt: "2026-07-27T10:00:00Z" },
+      { id: "history-demo-finance-it", kind: "approved", actorId: "emp-it", detail: "IT review complete", createdAt: "2026-07-28T13:10:00Z" },
+      { id: "history-demo-finance-ceo", kind: "approved", actorId: "emp-ceo", detail: "CEO approval", createdAt: "2026-07-29T09:05:00Z" },
+    ],
+  },
+  {
+    id: "claim-demo-paid",
+    ref: "EXP-2026-0126",
+    requesterId: "emp-shameel",
+    title: "Office snacks - pantry restock",
+    category: "Supplies",
+    amountMinor: 9500,
+    expenseDate: "2026-07-28",
+    paymentMethod: "Company card",
+    status: "paid",
+    currentStage: null,
+    currentActorId: null,
+    createdAt: "2026-07-25T16:20:00Z",
+    submittedAt: "2026-07-25T16:20:00Z",
+    steps: [
+      ["step-demo-paid-manager", 0, "manager", "emp-ada", "approved"],
+      ["step-demo-paid-it", 1, "it", "emp-it", "approved"],
+      ["step-demo-paid-ceo", 2, "ceo", "emp-ceo", "approved"],
+      ["step-demo-paid-finance", 3, "finance", "emp-finance", "paid"],
+    ],
+    history: [
+      { id: "history-demo-paid-submitted", kind: "submitted", actorId: "emp-shameel", detail: "Sent for approval", createdAt: "2026-07-25T16:20:00Z" },
+      { id: "history-demo-paid-manager", kind: "approved", actorId: "emp-ada", detail: "Manager approval", createdAt: "2026-07-26T10:02:00Z" },
+      { id: "history-demo-paid-it", kind: "approved", actorId: "emp-it", detail: "IT review complete", createdAt: "2026-07-26T13:05:00Z" },
+      { id: "history-demo-paid-ceo", kind: "approved", actorId: "emp-ceo", detail: "CEO approval", createdAt: "2026-07-27T09:44:00Z" },
+      { id: "history-demo-paid-verified", kind: "verified", actorId: "emp-finance", detail: "Finance verified", createdAt: "2026-07-28T10:15:00Z" },
+      { id: "history-demo-paid-paid", kind: "paid", actorId: "emp-finance", detail: "Payment marked complete", createdAt: "2026-07-28T12:15:00Z" },
+    ],
+  },
+];
 
 async function main() {
   const pool = new Pool({ connectionString: databaseUrl });
@@ -70,6 +173,11 @@ async function main() {
         [`role-${role.code}`, ORGANIZATION.id, role.code, role.displayName],
       );
     }
+
+    await client.query(
+      "DELETE FROM employee_roles WHERE employee_id IN (SELECT id FROM employees WHERE organization_id = $1)",
+      [ORGANIZATION.id],
+    );
 
     for (const assignment of EMPLOYEE_ROLES) {
       const roleId = `role-${assignment.roleCode}`;
@@ -112,6 +220,44 @@ async function main() {
     }
     if (!flowId) {
       throw new Error("Could not create or find the seeded flow.");
+    }
+
+    await client.query(
+      `INSERT INTO hierarchy_assignments (employee_id, manager_id)
+       VALUES ($1, $2)
+       ON CONFLICT (employee_id) DO UPDATE SET manager_id = EXCLUDED.manager_id, updated_at = now()`,
+      ["emp-shameel", "emp-ada"],
+    );
+
+    for (const claim of CLAIMS) {
+      await client.query(
+        `INSERT INTO reimbursement_claims
+          (id, organization_id, requester_id, reference, title, category, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'INR', $8, $9, $10, $11, $12, 1, $13, $14)
+         ON CONFLICT (id) DO UPDATE SET
+           requester_id = EXCLUDED.requester_id, reference = EXCLUDED.reference, title = EXCLUDED.title,
+           category = EXCLUDED.category, amount_minor = EXCLUDED.amount_minor, currency = EXCLUDED.currency,
+           expense_date = EXCLUDED.expense_date, payment_method = EXCLUDED.payment_method, status = EXCLUDED.status,
+           current_stage = EXCLUDED.current_stage, current_actor_id = EXCLUDED.current_actor_id,
+           submitted_at = EXCLUDED.submitted_at, updated_at = now()`,
+        [claim.id, ORGANIZATION.id, claim.requesterId, claim.ref, claim.title, claim.category, claim.amountMinor, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage, claim.currentActorId, claim.createdAt, claim.submittedAt],
+      );
+      await client.query("DELETE FROM claim_approval_steps WHERE claim_id = $1", [claim.id]);
+      for (const [id, position, stage, assignedActorId, status] of claim.steps) {
+        await client.query(
+          `INSERT INTO claim_approval_steps (id, claim_id, position, stage, assigned_actor_id, status)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [id, claim.id, position, stage, assignedActorId, status],
+        );
+      }
+      await client.query("DELETE FROM claim_history_events WHERE claim_id = $1", [claim.id]);
+      for (const event of claim.history) {
+        await client.query(
+          `INSERT INTO claim_history_events (id, claim_id, kind, actor_id, detail, created_at)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [event.id, claim.id, event.kind, event.actorId, event.detail, event.createdAt],
+        );
+      }
     }
 
     await client.query("COMMIT");

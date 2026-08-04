@@ -17,7 +17,7 @@ export function devAuth(): AuthCommands {
   if (process.env.NODE_ENV === "production") {
     throw new Error("The development identity adapter must not run in production.");
   }
-  if (!globalStore[globalKey]) {
+  if (!globalStore[globalKey] || typeof globalStore[globalKey]?.createDevSession !== "function") {
     globalStore[globalKey] = createAuthCommands({
       baseUrl,
       identityProvider: new InMemoryIdentityStore(seededEmployees),

@@ -9,7 +9,7 @@ function expense(overrides: Partial<Expense>): Expense {
     title: "Test expense",
     category: "Other",
     amount: 100,
-    currency: "USD",
+    currency: "INR",
     date: "Aug 4",
     submittedAt: "2026-08-04T09:00:00Z",
     status: "submitted",

@@ -1,0 +1,238 @@
+import type {
+  CreateExpenseDraftInput,
+  ExpenseClaim,
+  ExpenseEmployee,
+  ExpenseStage,
+  ExpenseStore,
+} from "./ports";
+
+export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict";
+
+export class ExpenseError extends Error {
+  constructor(readonly code: ExpenseErrorCode, message: string) {
+    super(message);
+    this.name = "ExpenseError";
+  }
+}
+
+export function isExpenseError(error: unknown): error is ExpenseError {
+  return error instanceof ExpenseError;
+}
+
+type IdFactory = (prefix: string) => string;
+
+export type ExpenseCommands = {
+  createDraft(actorId: string, input: CreateExpenseDraftInput): Promise<ExpenseClaim>;
+  getClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  listClaims(actorId: string): Promise<ExpenseClaim[]>;
+  getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
+  submitClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
+};
+
+export function createExpenseCommands({
+  store,
+  now = () => new Date(),
+  idFactory = (prefix) => `${prefix}-${crypto.randomUUID()}`,
+}: {
+  store: ExpenseStore;
+  now?: () => Date;
+  idFactory?: IdFactory;
+}): ExpenseCommands {
+  async function requireEmployee(actorId: string): Promise<ExpenseEmployee> {
+    const employee = await store.getEmployee(actorId);
+    if (!employee) {
+      throw new ExpenseError("unauthorized", "The current user is not an active employee.");
+    }
+    return employee;
+  }
+
+  async function requireClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+    const employee = await requireEmployee(actorId);
+    const claim = await store.getClaim(claimId);
+    if (!claim || claim.organizationId !== employee.organizationId) {
+      throw new ExpenseError("not-found", "Expense claim does not exist.");
+    }
+    if (claim.requesterId !== actorId) {
+      throw new ExpenseError("unauthorized", "You cannot access this expense claim.");
+    }
+    return claim;
+  }
+
+  async function requireAssignedClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+    const actor = await requireEmployee(actorId);
+    const claim = await store.getClaim(claimId);
+    if (!claim || claim.organizationId !== actor.organizationId) {
+      throw new ExpenseError("not-found", "Expense claim does not exist.");
+    }
+    if (claim.requesterId === actorId) {
+      throw new ExpenseError("unauthorized", "You cannot approve your own expense claim.");
+    }
+    if (claim.currentActorId !== actorId) {
+      throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
+    }
+    return claim;
+  }
+
+  return {
+    async createDraft(actorId, input) {
+      const employee = await requireEmployee(actorId);
+      validateDraft(input);
+      const createdAt = now().toISOString();
+      const claimId = idFactory("claim");
+      const claim: ExpenseClaim = {
+        id: claimId,
+        ref: `EXP-${createdAt.slice(0, 4)}-${claimId.replace(/^claim-/, "").slice(-8).toUpperCase()}`,
+        organizationId: employee.organizationId,
+        requesterId: actorId,
+        title: input.title.trim(),
+        category: input.category.trim(),
+        amountMinor: input.amountMinor,
+        currency: "INR",
+        expenseDate: input.expenseDate,
+        paymentMethod: input.paymentMethod as ExpenseClaim["paymentMethod"],
+        status: "draft",
+        attachment: input.attachment
+          ? { ...input.attachment, id: idFactory("attachment"), status: "available" }
+          : undefined,
+        steps: [],
+        history: [{ id: idFactory("history"), kind: "draft", actorId, createdAt }],
+        version: 1,
+        createdAt,
+      };
+      await store.createClaim(claim);
+      return claim;
+    },
+
+    async getClaim(actorId, claimId) {
+      return requireClaim(actorId, claimId);
+    },
+
+    async listClaims(actorId) {
+      const employee = await requireEmployee(actorId);
+      return store.listClaimsForEmployee(employee);
+    },
+
+    async getWorkspace(actorId) {
+      const employee = await requireEmployee(actorId);
+      const [employees, claims] = await Promise.all([
+        store.listEmployees(employee.organizationId),
+        store.listClaimsForEmployee(employee),
+      ]);
+      return { employee, employees, claims };
+    },
+
+    async submitClaim(actorId, claimId) {
+      const claim = await requireClaim(actorId, claimId);
+      if (claim.status !== "draft") {
+        throw new ExpenseError("conflict", "Only a draft claim can be submitted.");
+      }
+      const requester = await requireEmployee(actorId);
+      const employees = await store.listEmployees(requester.organizationId);
+      const manager = requester.managerId ? employees.find((employee) => employee.id === requester.managerId) : undefined;
+      const it = employees.find((employee) => employee.roleCodes.includes("it-reviewer"));
+      const ceo = employees.find((employee) => employee.roleCodes.includes("ceo"));
+      const finance = employees.find((employee) => employee.roleCodes.includes("finance-reviewer"));
+      if (!manager || !it || !ceo || !finance) {
+        throw new ExpenseError("validation", "The reimbursement approval path is not fully configured.");
+      }
+
+      const submittedAt = now().toISOString();
+      const stages: Array<[ExpenseStage, string]> = [
+        ["manager", manager.id],
+        ["it", it.id],
+        ["ceo", ceo.id],
+        ["finance", finance.id],
+      ];
+      claim.steps = stages.map(([stage, assignedActorId]) => ({
+        id: idFactory("step"),
+        stage,
+        assignedActorId,
+        status: "pending",
+      }));
+      claim.status = "in-approval";
+      claim.currentStage = "manager";
+      claim.currentActorId = manager.id;
+      claim.submittedAt = submittedAt;
+      claim.version += 1;
+      claim.history.push({ id: idFactory("history"), kind: "submitted", actorId, createdAt: submittedAt });
+      await store.updateClaim(claim);
+      return claim;
+    },
+
+    async approveStage(actorId, claimId) {
+      const claim = await requireAssignedClaim(actorId, claimId);
+      if (!claim.currentStage || claim.currentStage === "finance" || claim.status !== "in-approval") {
+        throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
+      }
+      const step = claim.steps.find((candidate) => candidate.stage === claim.currentStage);
+      if (!step || step.status !== "pending") {
+        throw new ExpenseError("conflict", "This approval stage is already complete.");
+      }
+      const decidedAt = now().toISOString();
+      step.status = "approved";
+      step.decidedAt = decidedAt;
+      claim.history.push({ id: idFactory("history"), kind: "approved", actorId, detail: `${claim.currentStage} approval complete`, createdAt: decidedAt });
+      const nextStep = claim.steps[claim.steps.indexOf(step) + 1];
+      if (!nextStep) throw new ExpenseError("validation", "The approval route has no Finance stage.");
+      claim.currentStage = nextStep.stage;
+      claim.currentActorId = nextStep.assignedActorId;
+      claim.status = nextStep.stage === "finance" ? "in-finance" : "in-approval";
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
+    },
+
+    async verifyClaim(actorId, claimId) {
+      const claim = await requireAssignedClaim(actorId, claimId);
+      if (claim.currentStage !== "finance" || claim.status !== "in-finance") {
+        throw new ExpenseError("conflict", "This claim is not waiting for Finance verification.");
+      }
+      const step = claim.steps.find((candidate) => candidate.stage === "finance");
+      if (!step || step.status !== "pending") throw new ExpenseError("conflict", "Finance verification is already complete.");
+      const verifiedAt = now().toISOString();
+      step.status = "verified";
+      step.decidedAt = verifiedAt;
+      claim.history.push({ id: idFactory("history"), kind: "verified", actorId, detail: "Finance verification complete", createdAt: verifiedAt });
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
+    },
+
+    async markPaid(actorId, claimId) {
+      const claim = await requireAssignedClaim(actorId, claimId);
+      if (claim.currentStage !== "finance" || claim.status !== "in-finance") {
+        throw new ExpenseError("conflict", "This claim is not ready for payment.");
+      }
+      const step = claim.steps.find((candidate) => candidate.stage === "finance");
+      if (!step || step.status !== "verified") throw new ExpenseError("conflict", "Verify the claim before marking payment.");
+      const paidAt = now().toISOString();
+      step.status = "paid";
+      step.decidedAt = paidAt;
+      claim.history.push({ id: idFactory("history"), kind: "paid", actorId, detail: "Payment marked complete", createdAt: paidAt });
+      claim.status = "paid";
+      claim.currentStage = undefined;
+      claim.currentActorId = undefined;
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
+    },
+  };
+}
+
+function validateDraft(input: CreateExpenseDraftInput): void {
+  if (!input.title.trim()) throw new ExpenseError("validation", "Add a title for the expense.");
+  if (!input.category.trim()) throw new ExpenseError("validation", "Choose a category.");
+  if (!Number.isInteger(input.amountMinor) || input.amountMinor <= 0) {
+    throw new ExpenseError("validation", "Enter an amount greater than ₹0.");
+  }
+  if (input.currency !== "INR") throw new ExpenseError("validation", "Expenses must be submitted in INR.");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(input.expenseDate)) {
+    throw new ExpenseError("validation", "Choose a valid expense date.");
+  }
+  if (input.paymentMethod !== "Personal card" && input.paymentMethod !== "Company card") {
+    throw new ExpenseError("validation", "Choose how you paid.");
+  }
+}

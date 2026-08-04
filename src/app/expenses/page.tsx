@@ -1,8 +1,10 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
+import { expenseCommands } from "@/server/expenses/dev";
 import styles from "./expenses.module.css";
 import { ExpenseDashboard } from "@/features/dashboard/dashboard";
+import { claimToExpense } from "@/features/dashboard/expense-read-model";
 
 export default async function ExpensesPage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
@@ -10,6 +12,8 @@ export default async function ExpensesPage() {
   if (!employee) {
     redirect("/login");
   }
+  const workspace = await expenseCommands().getWorkspace(employee.id);
+  const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
 
   return (
     <main className={styles.page}>
@@ -61,7 +65,7 @@ export default async function ExpensesPage() {
         </p>
 
         <div className="mt-8">
-          <ExpenseDashboard currentUser={employee.name} />
+          <ExpenseDashboard currentUser={employee.name} expenses={expenses} />
         </div>
       </div>
     </main>

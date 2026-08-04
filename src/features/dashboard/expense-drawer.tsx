@@ -43,6 +43,21 @@ export function ExpenseDrawer({
   const statusMeta = expense ? STATUS_META[expense.status] : null;
   const terminal = expense ? isTerminal(expense.status) : false;
   const next = expense ? nextActionFor(expense, currentUser) : null;
+  const actionLabel = expense?.primaryAction === "approve"
+    ? "Approve claim"
+    : expense?.primaryAction === "verify"
+      ? "Verify for payment"
+      : expense?.primaryAction === "pay"
+        ? "Mark as paid"
+        : expense
+          ? PRIMARY_ACTION[expense.status]
+          : "Action";
+
+  async function performAction() {
+    if (!expense?.primaryAction || !next?.mine) return;
+    const response = await fetch(`/api/expenses/${expense.id}/${expense.primaryAction}`, { method: "POST" });
+    if (response.ok) window.location.reload();
+  }
 
   return (
     <Drawer
@@ -210,7 +225,7 @@ export function ExpenseDrawer({
           </div>
 
           <footer className="flex items-center gap-3 border-t border-border bg-card px-6 py-4">
-            <Button className="flex-1">{PRIMARY_ACTION[expense.status]}</Button>
+            <Button className="flex-1" disabled={!expense.primaryAction || !next.mine} onClick={performAction}>{actionLabel}</Button>
             <Button variant="outline" className="gap-1.5">
               Full record
               <ArrowUpRight className="h-3.5 w-3.5" />

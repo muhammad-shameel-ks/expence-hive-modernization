@@ -3,6 +3,7 @@ export const ADMIN_ROLES = [
   "Manager",
   "Finance reviewer",
   "IT reviewer",
+  "CEO",
   "HR administrator",
   "System administrator",
   "CEO delegate",
