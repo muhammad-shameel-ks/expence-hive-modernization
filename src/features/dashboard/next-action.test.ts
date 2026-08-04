@@ -36,9 +36,9 @@ describe("nextActionFor", () => {
     });
   });
 
-  it("returns Appeal for a rejected expense, owned by me", () => {
+  it("sends a rejected expense back into the correction loop, owned by me", () => {
     expect(nextActionFor(expense({ status: "rejected" }))).toEqual({
-      label: "Appeal",
+      label: "Resubmit",
       actor: ME,
       mine: true,
     });
@@ -88,13 +88,20 @@ describe("nextActionFor", () => {
 });
 
 describe("isTerminal", () => {
-  it("is true for paid and rejected expenses", () => {
+  it("is true only for paid expenses", () => {
     expect(isTerminal("paid")).toBe(true);
-    expect(isTerminal("rejected")).toBe(true);
   });
 
-  it("is false for every non-terminal status", () => {
-    for (const status of ["draft", "submitted", "in-approval", "needs-correction", "approved", "in-finance"] as const) {
+  it("is false for every status that can still move, including rejected", () => {
+    for (const status of [
+      "draft",
+      "submitted",
+      "in-approval",
+      "needs-correction",
+      "approved",
+      "in-finance",
+      "rejected",
+    ] as const) {
       expect(isTerminal(status)).toBe(false);
     }
   });

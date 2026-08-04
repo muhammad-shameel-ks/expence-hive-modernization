@@ -22,7 +22,7 @@ import { dashboardStats } from "./dashboard-stats";
 import { ExpenseDrawer } from "./expense-drawer";
 import { ExpenseTable } from "./expense-table";
 import { expenses, STATUS_META, type Expense } from "./mock-data";
-import { KIND_META, formatMoney, initials, statusBadgeClass } from "./journey-meta";
+import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { nextActionFor } from "./next-action";
 
 const DASHBOARD_MONTH = expenses
@@ -98,7 +98,7 @@ export function ExpenseDashboard({ currentUser }: { currentUser: string }) {
               <span className="font-medium text-foreground">
                 {formatMoney(hero.amount, hero.currency)}
               </span>{" "}
-              · {hero.category} · submitted {hero.date}
+              · {hero.category} · submitted {submittedLabel(hero.submittedAt)}
             </p>
 
             <Timeline position="alternate" className="mt-8">
@@ -211,7 +211,7 @@ export function ExpenseDashboard({ currentUser }: { currentUser: string }) {
         />
       </section>
 
-      <ExpenseDrawer open={open} onOpenChange={setOpen} expense={selected} />
+      <ExpenseDrawer open={open} onOpenChange={setOpen} expense={selected} currentUser={currentUser} />
     </div>
   );
 }
