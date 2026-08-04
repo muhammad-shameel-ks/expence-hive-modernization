@@ -6,11 +6,17 @@ const connectionString =
   process.env.DATABASE_URL ??
   "postgresql://expensehive:expensehive@127.0.0.1:5432/expensehive";
 
+// Dev-only adapter. The Pool and the AdminCommands singleton live for the
+// process lifetime and are never closed: acceptable for local development,
+// but this module must not run in production.
 const globalKey = Symbol.for("expensehive.admin-commands");
 type GlobalStore = { [globalKey]?: AdminCommands };
 const globalStore = globalThis as GlobalStore;
 
 export function adminCommands(): AdminCommands {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("The development admin adapter must not run in production.");
+  }
   if (!globalStore[globalKey]) {
     const pool = new Pool({ connectionString });
     globalStore[globalKey] = createAdminCommands({

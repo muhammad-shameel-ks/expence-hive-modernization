@@ -15,7 +15,9 @@ export class InMemoryAdminStore implements AdminStore {
   readonly audit: AuditEvent[] = [];
 
   constructor(employees: readonly AdminEmployee[]) {
-    this.employeesById = new Map(employees.map((employee) => [employee.id, employee]));
+    this.employeesById = new Map(
+      employees.map((employee) => [employee.id, { ...employee }]),
+    );
   }
 
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {

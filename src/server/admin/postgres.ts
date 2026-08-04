@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { AdminError } from "./commands";
 import {
   isAdminRole,
   type AdminEmployee,
@@ -63,6 +64,8 @@ export class PostgresAdminStore implements AdminStore {
     return result.rows.length > 0 ? employeeFromRow(result.rows[0]) : null;
   }
 
+  // This slice models one administration role per employee (ADR 0002), so
+  // assignment replaces any previously assigned role instead of adding one.
   async setEmployeeRole(employeeId: string, role: AdminRole): Promise<void> {
     const client = await this.pool.connect();
     try {
@@ -76,7 +79,10 @@ export class PostgresAdminStore implements AdminStore {
         [role, employeeId],
       );
       if (roleResult.rows.length === 0) {
-        throw new Error(`Role "${role}" is not seeded.`);
+        throw new AdminError(
+          "validation",
+          `Role "${role}" is not seeded in this organization.`,
+        );
       }
       await client.query(
         "INSERT INTO employee_roles (employee_id, role_id) VALUES ($1, $2)",
@@ -107,7 +113,10 @@ export class PostgresAdminStore implements AdminStore {
           [input.steps[index], organizationId],
         );
         if (roleResult.rows.length === 0) {
-          throw new Error(`Role "${input.steps[index]}" is not seeded.`);
+          throw new AdminError(
+            "validation",
+            `Role "${input.steps[index]}" is not seeded in this organization.`,
+          );
         }
         await client.query(
           "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",

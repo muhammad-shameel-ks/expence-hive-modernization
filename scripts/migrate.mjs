@@ -49,6 +49,14 @@ async function main() {
 }
 
 main().catch((error) => {
-  console.error(error);
+  const code = typeof error === "object" && error !== null ? error.code : undefined;
+  if (code === "ECONNREFUSED") {
+    console.error(
+      "Could not connect to PostgreSQL. Start it with `docker compose up -d db`, " +
+        "or point DATABASE_URL at a running instance.",
+    );
+  } else {
+    console.error(error);
+  }
   process.exit(1);
 });

@@ -37,6 +37,7 @@ const ADMIN_AUTHORIZED_ROLES: readonly AdminRole[] = [
 export type AdminCommands = {
   listEmployees(actorId: string): Promise<AdminEmployee[]>;
   listFlows(actorId: string): Promise<FlowDraft[]>;
+  getAdminActor(actorId: string): Promise<AdminEmployee | null>;
   assignRole(
     actorId: string,
     input: { employeeId: string; role: AdminRole },
@@ -52,14 +53,20 @@ export function createAdminCommands({
   now?: () => Date;
 }): AdminCommands {
   async function requireAdmin(actorId: string): Promise<AdminEmployee> {
-    const actor = await store.getEmployee(actorId);
-    if (!actor || !ADMIN_AUTHORIZED_ROLES.includes(actor.role ?? "Employee")) {
+    const actor = await getAdminActor(actorId);
+    if (!actor) {
       throw new AdminError(
         "unauthorized",
         "Only HR and system administrators can use the admin workspace.",
       );
     }
     return actor;
+  }
+
+  function getAdminActor(actorId: string): Promise<AdminEmployee | null> {
+    return store.getEmployee(actorId).then((actor) =>
+      actor && ADMIN_AUTHORIZED_ROLES.includes(actor.role ?? "Employee") ? actor : null,
+    );
   }
 
   async function audit(
@@ -78,6 +85,8 @@ export function createAdminCommands({
   }
 
   return {
+    getAdminActor,
+
     async listEmployees(actorId) {
       const actor = await requireAdmin(actorId);
       return store.listEmployees(actor.organizationId);

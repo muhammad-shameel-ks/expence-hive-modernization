@@ -44,6 +44,28 @@ function buildAdmin() {
   return { admin, store };
 }
 
+describe("getAdminActor", () => {
+  it("returns the actor for an HR administrator", async () => {
+    const { admin } = buildAdmin();
+
+    const actor = await admin.getAdminActor("emp-grace");
+
+    expect(actor).toMatchObject({ id: "emp-grace", role: "HR administrator" });
+  });
+
+  it("returns null for an employee without an admin role", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(admin.getAdminActor("emp-katherine")).resolves.toBeNull();
+  });
+
+  it("returns null for an unknown employee", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(admin.getAdminActor("emp-missing")).resolves.toBeNull();
+  });
+});
+
 describe("assignRole", () => {
   it("lets an HR administrator assign a role to an employee", async () => {
     const { admin } = buildAdmin();
