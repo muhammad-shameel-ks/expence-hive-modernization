@@ -85,6 +85,11 @@ describe("nextActionFor", () => {
     const result = nextActionFor(expense({ status: "needs-correction" }), "Ada Lovelace");
     expect(result.actor).toBe("Ada Lovelace");
   });
+
+  it("attributes the resubmit of a rejected expense to the explicit current user", () => {
+    const result = nextActionFor(expense({ status: "rejected" }), "Ada Lovelace");
+    expect(result).toEqual({ label: "Resubmit", actor: "Ada Lovelace", mine: true });
+  });
 });
 
 describe("isTerminal", () => {
