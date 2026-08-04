@@ -64,17 +64,24 @@ jobs:
           requirements that are not visible in the diff, or report issues in unchanged
           code unless the diff clearly introduces or worsens them.
 
-          Report only concrete, actionable findings that have all of these properties:
+          Report only concrete, actionable findings in FINDINGS that have all of these
+          properties:
           - The behavior is demonstrably possible from the changed code.
           - It affects correctness, security, data integrity, reliability, or a clear
             maintainability contract.
-          - The finding is not merely a preference, style nit, speculative future risk,
-            or a feature that is explicitly out of scope.
           - You can identify the changed file and line or a precise changed hunk.
 
           Do not repeat a concern merely because it could be improved. If the diff
           already addresses a concern, treat it as addressed. If evidence is
           insufficient, omit the concern. It is valid and expected to return no findings.
+
+          You may also include up to three optional, non-blocking SUGGESTIONS for
+          grounded style, UX, readability, or user-preference alternatives. Suggestions
+          are feedback, not defects: phrase them tentatively (for example, "A user might
+          prefer..." or "Consider whether...") and explain the expected benefit. Do not
+          turn a suggestion into a finding, do not invent a persona preference, and do
+          not use suggestions to lower the score or change the verdict. Omit suggestions
+          when there is nothing useful to say.
 
           Use this exact structure:
           VERDICT: PASS or CHANGES_REQUESTED
@@ -83,11 +90,15 @@ jobs:
           - [severity: critical|high|medium|low] path:line - concise title
             Evidence: what the changed code does and why it is a real problem.
             Fix: the smallest concrete fix required, if applicable.
+          SUGGESTIONS:
+          - [style|ux|preference] path:line - concise optional idea
+            Rationale: why a user or maintainer might prefer this alternative.
           SUMMARY: one sentence
 
           Use CHANGES_REQUESTED only for a confirmed actionable issue. Use PASS and
-          SCORE: 10 when there are no such findings. Do not pad the review to make it
-          look thorough. Keep the response under 500 words.
+          SCORE: 10 when there are no such findings, even if suggestions are present.
+          Write "(none)" for an empty FINDINGS or SUGGESTIONS section. Do not pad either
+          section to make the review look thorough. Keep the response under 600 words.
 
           Do not use any tools. Analyze the diff above and respond with the review.
           PROMPT
