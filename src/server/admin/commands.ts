@@ -83,7 +83,7 @@ export function createAdminCommands({
         throw new AdminError("validation", `Unknown role "${role}".`);
       }
       const target = await store.getEmployee(employeeId);
-      if (!target) {
+      if (!target || target.organizationId !== actor.organizationId) {
         throw new AdminError("not-found", "Employee does not exist.");
       }
       if (target.role === role) {
@@ -114,6 +114,16 @@ export function createAdminCommands({
         if (!isAdminRole(step)) {
           throw new AdminError("validation", `Unknown role "${step}" in flow steps.`);
         }
+      }
+      const existingFlows = await store.listFlows(actor.organizationId);
+      const duplicate = existingFlows.find(
+        (flow) => flow.name === name && flow.scope === scope && flow.status === "draft",
+      );
+      if (duplicate) {
+        throw new AdminError(
+          "validation",
+          `A draft flow named "${name}" for ${scope} already exists.`,
+        );
       }
       const flow = await store.createFlow(actor.organizationId, {
         name,

@@ -95,6 +95,17 @@ describe("assignRole", () => {
     ).rejects.toMatchObject({ code: "not-found" });
   });
 
+  it("rejects assigning a role to an employee outside the actor's organization", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(
+      admin.assignRole("emp-grace", {
+        employeeId: "emp-other-org",
+        role: "Manager",
+      }),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
   it("rejects an invalid role value", async () => {
     const { admin } = buildAdmin();
 
@@ -169,6 +180,21 @@ describe("createFlowDraft", () => {
         steps: ["Manager"],
       }),
     ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects a duplicate draft flow with the same name and scope", async () => {
+    const { admin } = buildAdmin();
+    const input = {
+      name: "Standard reimbursement",
+      scope: "All departments",
+      steps: ["Manager", "Finance reviewer"],
+    };
+
+    await admin.createFlowDraft("emp-grace", input);
+
+    await expect(admin.createFlowDraft("emp-grace", input)).rejects.toMatchObject({
+      code: "validation",
+    });
   });
 
   it("rejects a flow without any steps", async () => {

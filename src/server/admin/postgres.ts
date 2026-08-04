@@ -69,8 +69,11 @@ export class PostgresAdminStore implements AdminStore {
       await client.query("BEGIN");
       await client.query("DELETE FROM employee_roles WHERE employee_id = $1", [employeeId]);
       const roleResult = await client.query<Row>(
-        "SELECT id FROM roles WHERE display_name = $1",
-        [role],
+        `SELECT r.id
+         FROM roles r
+         JOIN employees e ON e.organization_id = r.organization_id
+         WHERE r.display_name = $1 AND e.id = $2`,
+        [role, employeeId],
       );
       if (roleResult.rows.length === 0) {
         throw new Error(`Role "${role}" is not seeded.`);
@@ -100,8 +103,8 @@ export class PostgresAdminStore implements AdminStore {
       );
       for (let index = 0; index < input.steps.length; index += 1) {
         const roleResult = await client.query<Row>(
-          "SELECT id FROM roles WHERE display_name = $1",
-          [input.steps[index]],
+          "SELECT id FROM roles WHERE display_name = $1 AND organization_id = $2",
+          [input.steps[index], organizationId],
         );
         if (roleResult.rows.length === 0) {
           throw new Error(`Role "${input.steps[index]}" is not seeded.`);
@@ -129,7 +132,10 @@ export class PostgresAdminStore implements AdminStore {
 
   async listFlows(organizationId: string): Promise<FlowDraft[]> {
     const flows = await this.pool.query<Row>(
-      "SELECT * FROM flows WHERE organization_id = $1 ORDER BY created_at DESC",
+      `SELECT id, organization_id, name, scope, status, created_at, updated_at
+       FROM flows
+       WHERE organization_id = $1
+       ORDER BY created_at DESC`,
       [organizationId],
     );
     const steps = await this.pool.query<Row>(
