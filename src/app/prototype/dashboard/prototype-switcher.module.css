@@ -1,0 +1,51 @@
+.bar {
+  position: fixed;
+  bottom: 22px;
+  left: 50%;
+  z-index: 50;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  transform: translateX(-50%);
+  border: 1px solid #2c3e5c;
+  border-radius: 999px;
+  background: #10233f;
+  box-shadow: 0 14px 34px rgba(10, 24, 44, 0.45);
+  color: #e7f0fa;
+  padding: 6px 8px;
+}
+
+.arrow {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 0;
+  border-radius: 50%;
+  background: #ffd166;
+  color: #10233f;
+  cursor: pointer;
+  font: inherit;
+  font-size: 1rem;
+  font-weight: 800;
+  line-height: 1;
+  transition: filter 150ms ease, transform 150ms ease;
+}
+
+.arrow:hover {
+  filter: brightness(1.06);
+  transform: scale(1.05);
+}
+
+.arrow:focus-visible {
+  outline: 2px solid #ffd166;
+  outline-offset: 2px;
+}
+
+.label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  padding: 0 12px;
+  white-space: nowrap;
+}
