@@ -58,7 +58,7 @@ jobs:
           COMMENT_BODY: ${{ github.event.comment.body }}
           REPO: ${{ github.repository }}
         run: |
-          set -e
+          set -euo pipefail
 
           INSTRUCTION=$(echo "$COMMENT_BODY" | sed 's|^[^/]*/oc *||' | sed 's|^[^/]*/opencode *||' | xargs)
           if [ -z "$INSTRUCTION" ]; then
@@ -144,13 +144,23 @@ jobs:
           Analyze the repository evidence and diff above, then respond with the review.
           PROMPT
 
-          opencode run --model "$MODEL" --format json --pure "$(cat /tmp/prompt.txt)" 2>/dev/null \
-            | jq -r 'select(.type == "text") | .part.text // empty' \
+          if ! opencode run --model "$MODEL" --format json --pure "$(cat /tmp/prompt.txt)" \
+            > /tmp/opencode.jsonl 2> /tmp/opencode.stderr; then
+            echo "OpenCode failed to produce a review." >&2
+            cat /tmp/opencode.stderr >&2 || true
+            cat /tmp/opencode.jsonl >&2 || true
+            exit 1
+          fi
+
+          jq -r 'select(.type == "text") | .part.text // empty' /tmp/opencode.jsonl \
             | sed 's/\x1b\[[0-9;]*m//g' \
             > /tmp/review.md
 
           if [ ! -s /tmp/review.md ]; then
-            echo "_No review output generated._" > /tmp/review.md
+            echo "OpenCode returned no review text." >&2
+            cat /tmp/opencode.stderr >&2 || true
+            jq -c 'select(.type == "error" or .type == "session.error")' /tmp/opencode.jsonl >&2 || true
+            exit 1
           fi
 
           {
