@@ -16,7 +16,7 @@ import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
 import { STATUS_META, type Expense } from "./mock-data";
 import { isTerminal, nextActionFor } from "./next-action";
-import { KIND_META, formatMoney, initials, statusBadgeClass } from "./journey-meta";
+import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 
 const PRIMARY_ACTION: Record<Expense["status"], string> = {
   draft: "Continue draft",
@@ -26,21 +26,23 @@ const PRIMARY_ACTION: Record<Expense["status"], string> = {
   approved: "Add note",
   "in-finance": "Add note",
   paid: "Download summary",
-  rejected: "Appeal decision",
+  rejected: "Resubmit claim",
 };
 
 export function ExpenseDrawer({
   open,
   onOpenChange,
   expense,
+  currentUser,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   expense: Expense | null;
+  currentUser: string;
 }) {
   const statusMeta = expense ? STATUS_META[expense.status] : null;
   const terminal = expense ? isTerminal(expense.status) : false;
-  const next = expense ? nextActionFor(expense) : null;
+  const next = expense ? nextActionFor(expense, currentUser) : null;
 
   return (
     <Drawer
@@ -86,7 +88,7 @@ export function ExpenseDrawer({
                 </p>
               </div>
               <div className="text-right text-xs text-muted-foreground">
-                <p>Submitted {expense.date}</p>
+                <p>Submitted {submittedLabel(expense.submittedAt)}</p>
                 <p className="mt-1">
                   {expense.permission ? `Linked to ${expense.permission}` : "No pre-approval"}
                 </p>

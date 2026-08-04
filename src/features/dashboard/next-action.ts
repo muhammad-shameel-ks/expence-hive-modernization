@@ -1,4 +1,4 @@
-import { ME, type Expense, type ExpenseStatus } from "./mock-data";
+import type { Expense, ExpenseStatus } from "./mock-data";
 
 export interface NextAction {
   label: string;
@@ -6,14 +6,13 @@ export interface NextAction {
   mine: boolean;
 }
 
-export function nextActionFor(expense: Expense, me = ME): NextAction {
+export function nextActionFor(expense: Expense, me: string): NextAction {
   switch (expense.status) {
     case "draft":
       return { label: "Continue draft", actor: me, mine: true };
+    case "rejected":
     case "needs-correction":
       return { label: "Resubmit", actor: me, mine: true };
-    case "rejected":
-      return { label: "Appeal", actor: me, mine: true };
     case "in-approval":
     case "submitted":
       return { label: expense.nextStage ?? "Approval", actor: expense.nextActor, mine: false };
@@ -26,5 +25,5 @@ export function nextActionFor(expense: Expense, me = ME): NextAction {
 }
 
 export function isTerminal(status: ExpenseStatus) {
-  return status === "paid" || status === "rejected";
+  return status === "paid";
 }

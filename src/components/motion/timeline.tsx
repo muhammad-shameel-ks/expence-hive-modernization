@@ -249,7 +249,7 @@ export function TimelineDot({
       {current ? (
         <span
           aria-hidden
-          className="absolute inset-0 animate-ping rounded-full bg-current opacity-30"
+          className="absolute inset-0 animate-ping rounded-full bg-current opacity-30 motion-reduce:animate-none"
         />
       ) : null}
       {content ? (

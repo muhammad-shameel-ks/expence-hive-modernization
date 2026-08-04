@@ -21,7 +21,7 @@ function expense(overrides: Partial<Expense>): Expense {
 
 describe("nextActionFor", () => {
   it("returns Continue draft for a draft, owned by me", () => {
-    expect(nextActionFor(expense({ status: "draft" }))).toEqual({
+    expect(nextActionFor(expense({ status: "draft" }), ME)).toEqual({
       label: "Continue draft",
       actor: ME,
       mine: true,
@@ -29,16 +29,16 @@ describe("nextActionFor", () => {
   });
 
   it("returns Resubmit for needs-correction, owned by me", () => {
-    expect(nextActionFor(expense({ status: "needs-correction" }))).toEqual({
+    expect(nextActionFor(expense({ status: "needs-correction" }), ME)).toEqual({
       label: "Resubmit",
       actor: ME,
       mine: true,
     });
   });
 
-  it("returns Appeal for a rejected expense, owned by me", () => {
-    expect(nextActionFor(expense({ status: "rejected" }))).toEqual({
-      label: "Appeal",
+  it("sends a rejected expense back into the correction loop, owned by me", () => {
+    expect(nextActionFor(expense({ status: "rejected" }), ME)).toEqual({
+      label: "Resubmit",
       actor: ME,
       mine: true,
     });
@@ -57,7 +57,7 @@ describe("nextActionFor", () => {
   });
 
   it("falls back to a generic Approval label when no stage is assigned", () => {
-    expect(nextActionFor(expense({ status: "submitted" }))).toEqual({
+    expect(nextActionFor(expense({ status: "submitted" }), ME)).toEqual({
       label: "Approval",
       actor: undefined,
       mine: false,
@@ -65,12 +65,12 @@ describe("nextActionFor", () => {
   });
 
   it("points at Finance verification for approved and in-finance", () => {
-    expect(nextActionFor(expense({ status: "approved", nextActor: "Finance Officer" }))).toEqual({
+    expect(nextActionFor(expense({ status: "approved", nextActor: "Finance Officer" }), ME)).toEqual({
       label: "Finance verification",
       actor: "Finance Officer",
       mine: false,
     });
-    expect(nextActionFor(expense({ status: "in-finance", nextActor: "Finance Officer" }))).toEqual({
+    expect(nextActionFor(expense({ status: "in-finance", nextActor: "Finance Officer" }), ME)).toEqual({
       label: "Finance verification",
       actor: "Finance Officer",
       mine: false,
@@ -78,23 +78,35 @@ describe("nextActionFor", () => {
   });
 
   it("is Done for a paid expense, owned by no one", () => {
-    expect(nextActionFor(expense({ status: "paid" }))).toEqual({ label: "Done", mine: false });
+    expect(nextActionFor(expense({ status: "paid" }), ME)).toEqual({ label: "Done", mine: false });
   });
 
   it("honours an explicit current user instead of the mock identity", () => {
     const result = nextActionFor(expense({ status: "needs-correction" }), "Ada Lovelace");
     expect(result.actor).toBe("Ada Lovelace");
   });
+
+  it("attributes the resubmit of a rejected expense to the explicit current user", () => {
+    const result = nextActionFor(expense({ status: "rejected" }), "Ada Lovelace");
+    expect(result).toEqual({ label: "Resubmit", actor: "Ada Lovelace", mine: true });
+  });
 });
 
 describe("isTerminal", () => {
-  it("is true for paid and rejected expenses", () => {
+  it("is true only for paid expenses", () => {
     expect(isTerminal("paid")).toBe(true);
-    expect(isTerminal("rejected")).toBe(true);
   });
 
-  it("is false for every non-terminal status", () => {
-    for (const status of ["draft", "submitted", "in-approval", "needs-correction", "approved", "in-finance"] as const) {
+  it("is false for every status that can still move, including rejected", () => {
+    for (const status of [
+      "draft",
+      "submitted",
+      "in-approval",
+      "needs-correction",
+      "approved",
+      "in-finance",
+      "rejected",
+    ] as const) {
       expect(isTerminal(status)).toBe(false);
     }
   });

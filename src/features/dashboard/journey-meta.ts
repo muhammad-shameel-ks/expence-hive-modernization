@@ -39,9 +39,23 @@ export function statusBadgeClass(status: ExpenseStatus) {
 }
 
 export function formatMoney(amount: number, currency = "USD") {
-  return new Intl.NumberFormat("en-US", { style: "currency", currency, maximumFractionDigits: 0 }).format(
-    amount,
-  );
+  return new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency,
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  }).format(amount);
+}
+
+/** "Aug 3" from an ISO submission timestamp, in UTC so the date never shifts. */
+export function submittedLabel(submittedAt: string) {
+  const date = new Date(submittedAt);
+  if (Number.isNaN(date.getTime())) return submittedAt;
+  return date.toLocaleDateString("en-US", {
+    month: "short",
+    day: "numeric",
+    timeZone: "UTC",
+  });
 }
 
 export function initials(name: string) {
