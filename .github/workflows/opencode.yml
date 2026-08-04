@@ -18,7 +18,7 @@ jobs:
       contains(github.event.comment.body, '/oc') ||
       contains(github.event.comment.body, '/opencode')
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
       contents: read
       pull-requests: write
@@ -46,7 +46,7 @@ jobs:
 
           INSTRUCTION=$(echo "$COMMENT_BODY" | sed 's|^[^/]*/oc *||' | sed 's|^[^/]*/opencode *||' | xargs)
           if [ -z "$INSTRUCTION" ]; then
-            INSTRUCTION="Review this PR thoroughly for code quality, bugs, security issues, and style problems."
+            INSTRUCTION="Review the pull request using the evidence-based rubric below."
           fi
 
           DIFF=$(gh pr diff "$PR_NUMBER" --repo "$REPO")
@@ -60,13 +60,36 @@ jobs:
           $DIFF
           \`\`\`
 
-          Provide a concise code review. Focus on:
-          - Security vulnerabilities (SQL injection, command injection, hardcoded secrets)
-          - Bugs and logic errors
-          - Missing error handling
-          - Code quality issues
+          Review only the supplied diff. Do not invent repository context, assume
+          requirements that are not visible in the diff, or report issues in unchanged
+          code unless the diff clearly introduces or worsens them.
 
-          Do not use any tools. Just analyze the diff above and respond with the review.
+          Report only concrete, actionable findings that have all of these properties:
+          - The behavior is demonstrably possible from the changed code.
+          - It affects correctness, security, data integrity, reliability, or a clear
+            maintainability contract.
+          - The finding is not merely a preference, style nit, speculative future risk,
+            or a feature that is explicitly out of scope.
+          - You can identify the changed file and line or a precise changed hunk.
+
+          Do not repeat a concern merely because it could be improved. If the diff
+          already addresses a concern, treat it as addressed. If evidence is
+          insufficient, omit the concern. It is valid and expected to return no findings.
+
+          Use this exact structure:
+          VERDICT: PASS or CHANGES_REQUESTED
+          SCORE: 0-10, where 10 means no actionable findings
+          FINDINGS:
+          - [severity: critical|high|medium|low] path:line - concise title
+            Evidence: what the changed code does and why it is a real problem.
+            Fix: the smallest concrete fix required, if applicable.
+          SUMMARY: one sentence
+
+          Use CHANGES_REQUESTED only for a confirmed actionable issue. Use PASS and
+          SCORE: 10 when there are no such findings. Do not pad the review to make it
+          look thorough. Keep the response under 500 words.
+
+          Do not use any tools. Analyze the diff above and respond with the review.
           PROMPT
 
           opencode run --model "$MODEL" --format json --pure "$(cat /tmp/prompt.txt)" 2>/dev/null \
