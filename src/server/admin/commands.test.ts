@@ -233,6 +233,36 @@ describe("createFlowDraft", () => {
     });
   });
 
+  it("enforces draft uniqueness in the store itself, matching the pg invariant", async () => {
+    const { store } = buildAdmin();
+    const input = {
+      name: "Standard reimbursement",
+      scope: "All departments",
+      steps: ["Manager"],
+    };
+
+    await store.createFlow("org-1", input);
+
+    await expect(store.createFlow("org-1", input)).rejects.toMatchObject({
+      code: "validation",
+    });
+  });
+
+  it("allows the same draft name for a different scope", async () => {
+    const { admin } = buildAdmin();
+    const base = {
+      name: "Standard reimbursement",
+      scope: "All departments",
+      steps: ["Manager"],
+    };
+
+    await admin.createFlowDraft("emp-grace", base);
+
+    await expect(
+      admin.createFlowDraft("emp-grace", { ...base, scope: "Engineering" }),
+    ).resolves.toMatchObject({ scope: "Engineering" });
+  });
+
   it("rejects a flow without any steps", async () => {
     const { admin } = buildAdmin();
 

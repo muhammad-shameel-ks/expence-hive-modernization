@@ -19,19 +19,27 @@ function handleUnexpectedError(error: unknown): Response {
   return internalErrorResponse();
 }
 
+function invalidBodyResponse(): Response {
+  return Response.json({ error: "validation" }, { status: 422 });
+}
+
 export async function handleAssignRoleRequest(
   request: Request,
   commands: AdminCommands,
   actorId: string,
 ): Promise<Response> {
   try {
-    const body = (await request.json()) as { employeeId?: unknown; role?: unknown };
-    if (typeof body.employeeId !== "string" || typeof body.role !== "string") {
-      return Response.json({ error: "validation" }, { status: 422 });
+    const body = await readJsonBody(request);
+    if (body === null) {
+      return invalidBodyResponse();
+    }
+    const { employeeId, role } = body as { employeeId?: unknown; role?: unknown };
+    if (typeof employeeId !== "string" || typeof role !== "string") {
+      return invalidBodyResponse();
     }
     await commands.assignRole(actorId, {
-      employeeId: body.employeeId,
-      role: body.role as AdminRole,
+      employeeId,
+      role: role as AdminRole,
     });
     return Response.json({ ok: true });
   } catch (error) {
@@ -48,23 +56,27 @@ export async function handleCreateFlowRequest(
   actorId: string,
 ): Promise<Response> {
   try {
-    const body = (await request.json()) as {
+    const body = await readJsonBody(request);
+    if (body === null) {
+      return invalidBodyResponse();
+    }
+    const { name, scope, steps } = body as {
       name?: unknown;
       scope?: unknown;
       steps?: unknown;
     };
     if (
-      typeof body.name !== "string" ||
-      typeof body.scope !== "string" ||
-      !Array.isArray(body.steps) ||
-      body.steps.some((step) => typeof step !== "string")
+      typeof name !== "string" ||
+      typeof scope !== "string" ||
+      !Array.isArray(steps) ||
+      steps.some((step) => typeof step !== "string")
     ) {
-      return Response.json({ error: "validation" }, { status: 422 });
+      return invalidBodyResponse();
     }
     const flow = await commands.createFlowDraft(actorId, {
-      name: body.name,
-      scope: body.scope,
-      steps: body.steps as AdminRole[],
+      name,
+      scope,
+      steps: steps as AdminRole[],
     });
     return Response.json({ ok: true, flow }, { status: 201 });
   } catch (error) {
@@ -72,5 +84,13 @@ export async function handleCreateFlowRequest(
       return adminErrorResponse(error);
     }
     return handleUnexpectedError(error);
+  }
+}
+
+async function readJsonBody(request: Request): Promise<unknown | null> {
+  try {
+    return (await request.json()) as unknown;
+  } catch {
+    return null;
   }
 }

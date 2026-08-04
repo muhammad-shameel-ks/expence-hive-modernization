@@ -58,9 +58,13 @@ function sessionIdFrom(request: Request): string | null {
 }
 
 function sessionCookie(sessionId: string): string {
-  return `eh_session=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax`;
+  return `eh_session=${encodeURIComponent(sessionId)}; Path=/; HttpOnly; SameSite=Lax${secureFlag()}`;
 }
 
 function expiredSessionCookie(): string {
-  return `eh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0`;
+  return `eh_session=; Path=/; HttpOnly; SameSite=Lax; Max-Age=0${secureFlag()}`;
+}
+
+function secureFlag(): string {
+  return process.env.NODE_ENV === "production" ? "; Secure" : "";
 }

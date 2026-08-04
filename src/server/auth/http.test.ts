@@ -83,6 +83,26 @@ describe("GET /verify", () => {
     expect(cookie).toContain("HttpOnly");
   });
 
+  it("marks the session cookie Secure in production", async () => {
+    const { auth, emailProvider } = buildRouteAuth();
+    await auth.requestLogin({ email: ada.email });
+    const token = new URL(emailProvider.sent[0].url).searchParams.get("token")!;
+    const previous = process.env.NODE_ENV;
+    process.env.NODE_ENV = "production";
+
+    try {
+      const response = await handleVerifyRequest(
+        new Request(`${baseOrigin}/verify?token=${token}`),
+        auth,
+      );
+
+      const cookie = response.headers.get("set-cookie") ?? "";
+      expect(cookie).toContain("; Secure");
+    } finally {
+      process.env.NODE_ENV = previous;
+    }
+  });
+
   it("rejects a used magic link by redirecting to the login error state", async () => {
     const { auth, emailProvider } = buildRouteAuth();
     await auth.requestLogin({ email: ada.email });

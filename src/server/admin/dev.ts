@@ -1,10 +1,7 @@
 import { Pool } from "pg";
 import { createAdminCommands, type AdminCommands } from "./commands";
 import { PostgresAdminStore } from "./postgres";
-
-const connectionString =
-  process.env.DATABASE_URL ??
-  "postgresql://expensehive:expensehive@127.0.0.1:5432/expensehive";
+import { databaseUrl } from "@/server/db/connection";
 
 // Dev-only adapter. The Pool and the AdminCommands singleton live for the
 // process lifetime and are never closed: acceptable for local development,
@@ -18,7 +15,7 @@ export function adminCommands(): AdminCommands {
     throw new Error("The development admin adapter must not run in production.");
   }
   if (!globalStore[globalKey]) {
-    const pool = new Pool({ connectionString });
+    const pool = new Pool({ connectionString: databaseUrl });
     globalStore[globalKey] = createAdminCommands({
       store: new PostgresAdminStore(pool),
     });

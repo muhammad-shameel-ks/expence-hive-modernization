@@ -72,6 +72,19 @@ describe("handleAssignRoleRequest", () => {
     expect(response.status).toBe(422);
   });
 
+  it("rejects a malformed JSON body with 422, not 500", async () => {
+    const response = await handleAssignRoleRequest(
+      new Request("http://localhost/api/admin/roles", {
+        method: "POST",
+        body: "{not json",
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(422);
+  });
+
   it("returns 500 for unexpected failures", async () => {
     const commands = buildCommands({
       assignRole: async () => {
@@ -116,6 +129,19 @@ describe("handleCreateFlowRequest", () => {
       new Request("http://localhost/api/admin/flows", {
         method: "POST",
         body: JSON.stringify({ name: "x", scope: "All departments", steps: [1] }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("rejects a malformed JSON body with 422, not 500", async () => {
+    const response = await handleCreateFlowRequest(
+      new Request("http://localhost/api/admin/flows", {
+        method: "POST",
+        body: "{not json",
       }),
       buildCommands(),
       "emp-grace",

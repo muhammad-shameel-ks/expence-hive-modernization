@@ -1,3 +1,4 @@
+import { AdminError } from "./commands";
 import type {
   AdminEmployee,
   AdminRole,
@@ -42,6 +43,22 @@ export class InMemoryAdminStore implements AdminStore {
   }
 
   async createFlow(organizationId: string, input: FlowInput): Promise<FlowDraft> {
+    // Mirrors the pg store's invariant (migration 0003): at most one draft
+    // per (organization, name, scope). The command layer checks first; this
+    // keeps both stores consistent when the check is bypassed.
+    const duplicate = this.flows.find(
+      (flow) =>
+        flow.organizationId === organizationId &&
+        flow.name === input.name &&
+        flow.scope === input.scope &&
+        flow.status === "draft",
+    );
+    if (duplicate) {
+      throw new AdminError(
+        "validation",
+        `A draft flow named "${input.name}" for ${input.scope} already exists.`,
+      );
+    }
     const flow: StoredFlow = {
       id: `flow-${crypto.randomUUID()}`,
       organizationId,

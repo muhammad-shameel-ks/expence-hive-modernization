@@ -5,16 +5,13 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
+import { databaseUrl } from "../src/server/db/connection.ts";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(dirname, "../db/migrations");
 
-const connectionString =
-  process.env.DATABASE_URL ??
-  "postgresql://expensehive:expensehive@127.0.0.1:5432/expensehive";
-
 async function main() {
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({ connectionString: databaseUrl });
   const client = await pool.connect();
   try {
     await client.query(`

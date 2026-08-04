@@ -3,10 +3,7 @@
 // Usage: npm run db:seed
 
 import { Pool } from "pg";
-
-const connectionString =
-  process.env.DATABASE_URL ??
-  "postgresql://expensehive:expensehive@127.0.0.1:5432/expensehive";
+import { databaseUrl } from "../src/server/db/connection.ts";
 
 const ORGANIZATION = { id: "org-1", name: "Hive" };
 
@@ -46,7 +43,7 @@ const FLOW = {
 };
 
 async function main() {
-  const pool = new Pool({ connectionString });
+  const pool = new Pool({ connectionString: databaseUrl });
   const client = await pool.connect();
   try {
     await client.query("BEGIN");
@@ -84,8 +81,8 @@ async function main() {
     }
 
     const existingFlow = await client.query(
-      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2",
-      [FLOW.name, ORGANIZATION.id],
+      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND scope = $3",
+      [FLOW.name, ORGANIZATION.id, FLOW.scope],
     );
     let flowId = existingFlow.rows[0]?.id;
     if (!flowId) {

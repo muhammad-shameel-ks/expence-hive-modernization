@@ -35,6 +35,11 @@ const ADMIN_AUTHORIZED_ROLES: readonly AdminRole[] = [
   "System administrator",
 ];
 
+const MAX_FLOW_NAME_LENGTH = 120;
+const MAX_FLOW_SCOPE_LENGTH = 60;
+const MAX_FLOW_STEPS = 15;
+const MAX_EMPLOYEE_ID_LENGTH = 100;
+
 export type AdminCommands = {
   listEmployees(actorId: string): Promise<AdminEmployee[]>;
   listFlows(actorId: string): Promise<FlowDraft[]>;
@@ -66,7 +71,11 @@ export function createAdminCommands({
 
   function getAdminActor(actorId: string): Promise<AdminEmployee | null> {
     return store.getEmployee(actorId).then((actor) =>
-      actor && ADMIN_AUTHORIZED_ROLES.includes(actor.role ?? "Employee") ? actor : null,
+      actor !== null &&
+      actor.role !== null &&
+      ADMIN_AUTHORIZED_ROLES.includes(actor.role)
+        ? actor
+        : null,
     );
   }
 
@@ -103,7 +112,7 @@ export function createAdminCommands({
       if (!isAdminRole(role)) {
         throw new AdminError("validation", `Unknown role "${role}".`);
       }
-      if (employeeId.length > 100) {
+      if (employeeId.length > MAX_EMPLOYEE_ID_LENGTH) {
         throw new AdminError("validation", "Employee id is too long.");
       }
       const target = await store.getEmployee(employeeId);
@@ -127,20 +136,20 @@ export function createAdminCommands({
       if (!name) {
         throw new AdminError("validation", "Flow needs a name.");
       }
-      if (name.length > 120) {
+      if (name.length > MAX_FLOW_NAME_LENGTH) {
         throw new AdminError("validation", "Flow name is too long (max 120 characters).");
       }
       const scope = input.scope.trim();
       if (!scope) {
         throw new AdminError("validation", "Flow needs a scope.");
       }
-      if (scope.length > 60) {
+      if (scope.length > MAX_FLOW_SCOPE_LENGTH) {
         throw new AdminError("validation", "Flow scope is too long (max 60 characters).");
       }
       if (input.steps.length === 0) {
         throw new AdminError("validation", "Flow needs at least one step.");
       }
-      if (input.steps.length > 15) {
+      if (input.steps.length > MAX_FLOW_STEPS) {
         throw new AdminError("validation", "Flow cannot have more than 15 steps.");
       }
       for (const step of input.steps) {
