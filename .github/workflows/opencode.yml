@@ -8,12 +8,11 @@ on:
   pull_request_review_comment:
     types: [created]
 
-concurrency:
-  group: opencode-review-${{ github.event.pull_request.number || github.event.issue.number }}
-  cancel-in-progress: true
-
 jobs:
   review:
+    concurrency:
+      group: opencode-review-${{ github.event.pull_request.number || github.event.issue.number }}
+      cancel-in-progress: ${{ github.event_name == 'pull_request' }}
     if: |
       github.event_name == 'pull_request' ||
       contains(github.event.comment.body, '/oc') ||
