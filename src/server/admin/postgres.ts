@@ -38,7 +38,7 @@ export class PostgresAdminStore implements AdminStore {
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {
     const result = await this.pool.query<Row>(
       `
-        SELECT e.id, e.organization_id, e.name, e.email, e.department, r.display_name AS role_name
+        SELECT DISTINCT e.id, e.organization_id, e.name, e.email, e.department, r.display_name AS role_name
         FROM employees e
         LEFT JOIN employee_roles er ON er.employee_id = e.id
         LEFT JOIN roles r ON r.id = er.role_id

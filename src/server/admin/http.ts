@@ -12,7 +12,10 @@ export function internalErrorResponse(): Response {
 }
 
 function handleUnexpectedError(error: unknown): Response {
-  console.error("admin command failed", error);
+  console.error(
+    "admin command failed",
+    error instanceof Error ? error : String(error),
+  );
   return internalErrorResponse();
 }
 

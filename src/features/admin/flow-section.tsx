@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useRef, useState } from "react";
 import {
   ArrowDown,
   ArrowRight,
@@ -46,6 +46,9 @@ export function FlowSection({
     ],
   );
   const [saving, setSaving] = useState(false);
+  const nextStepId = useRef(
+    Math.max(0, ...steps.map((step) => step.id)) + 1,
+  );
 
   const saveFlowDraft = async () => {
     setSaving(true);
@@ -77,7 +80,9 @@ export function FlowSection({
   };
 
   const addStep = () => {
-    setSteps((current) => [...current, { id: Date.now(), role: newRole }]);
+    const id = nextStepId.current;
+    nextStepId.current += 1;
+    setSteps((current) => [...current, { id, role: newRole }]);
     onMessage(`${newRole} added to the flow.`);
   };
 

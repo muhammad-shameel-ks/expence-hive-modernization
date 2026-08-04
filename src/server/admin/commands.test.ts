@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { createAdminCommands } from "./commands";
+import { AdminError, createAdminCommands } from "./commands";
 import { InMemoryAdminStore } from "./in-memory";
 import type { AdminEmployee, AuditEvent } from "./ports";
 
@@ -137,6 +137,20 @@ describe("assignRole", () => {
         role: "Superuser" as never,
       }),
     ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("names AdminError for readable stack traces", async () => {
+    const { admin } = buildAdmin();
+
+    const error = await admin
+      .assignRole("emp-grace", {
+        employeeId: "emp-katherine",
+        role: "Superuser" as never,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AdminError);
+    expect((error as AdminError).name).toBe("AdminError");
   });
 
   it("records an audit event for a role assignment", async () => {

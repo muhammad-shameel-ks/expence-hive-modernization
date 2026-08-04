@@ -17,6 +17,7 @@ export class AdminError extends Error {
     message: string,
   ) {
     super(message);
+    this.name = "AdminError";
   }
 }
 

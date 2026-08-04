@@ -30,6 +30,10 @@ export class InMemoryAdminStore implements AdminStore {
     return this.employeesById.get(id) ?? null;
   }
 
+  // Organization scoping is the caller's contract: the command layer resolves
+  // the actor's organization and checks the target belongs to it before
+  // calling this store, matching the pg store which is also called only from
+  // within an org-scoped command.
   async setEmployeeRole(employeeId: string, role: AdminRole): Promise<void> {
     const employee = this.employeesById.get(employeeId);
     if (employee) {
