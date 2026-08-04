@@ -156,9 +156,11 @@ export function TimelineSeparator({
 
   const colStart = !vertical
     ? "row-start-2"
-    : position === "alternate" || position === "right"
+    : position === "alternate"
       ? "row-start-1 col-start-2"
-      : "row-start-1 col-start-1";
+      : position === "right"
+        ? "row-start-1 col-start-1"
+        : "row-start-1 col-start-2";
 
   return (
     <div

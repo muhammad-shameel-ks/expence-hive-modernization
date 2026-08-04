@@ -21,15 +21,11 @@ import { currentExpense } from "./current-expense";
 import { dashboardStats } from "./dashboard-stats";
 import { ExpenseDrawer } from "./expense-drawer";
 import { ExpenseTable } from "./expense-table";
-import { expenses, STATUS_META, type Expense } from "./mock-data";
+import { STATUS_META, type Expense } from "./mock-data";
 import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { nextActionFor } from "./next-action";
 
-const DASHBOARD_MONTH = expenses
-  .reduce((latest, expense) => (expense.submittedAt > latest.submittedAt ? expense : latest))
-  .submittedAt.slice(0, 7);
-
-export function ExpenseDashboard({ currentUser }: { currentUser: string }) {
+export function ExpenseDashboard({ currentUser, expenses }: { currentUser: string; expenses: Expense[] }) {
   const [selected, setSelected] = useState<Expense | null>(null);
   const [open, setOpen] = useState(false);
 
@@ -40,7 +36,7 @@ export function ExpenseDashboard({ currentUser }: { currentUser: string }) {
 
   const hero = currentExpense(expenses);
   const heroNext = hero ? nextActionFor(hero, currentUser) : null;
-  const stats = dashboardStats(expenses, DASHBOARD_MONTH);
+  const stats = dashboardStats(expenses, new Date().toISOString().slice(0, 7));
 
   const statCards = [
     {
@@ -197,9 +193,11 @@ export function ExpenseDashboard({ currentUser }: { currentUser: string }) {
               Every claim from {currentUser.split(" ")[0]}, newest first.
             </p>
           </div>
-          <Button className="gap-1.5">
+          <Button className="gap-1.5" asChild>
+            <a href="/expenses/new">
             <Plus className="h-4 w-4" />
             New expense
+            </a>
           </Button>
         </header>
         <ExpenseTable

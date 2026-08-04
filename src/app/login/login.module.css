@@ -409,6 +409,42 @@
   text-align: center;
 }
 
+.devLogin {
+  display: grid;
+  gap: 8px;
+  margin-top: 22px;
+  border: 1px dashed #c9d8e4;
+  border-radius: 10px;
+  background: #f7fafc;
+  padding: 12px;
+}
+
+.devLoginLabel {
+  color: #7c8c9c;
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.devLogin select,
+.devLogin button {
+  min-height: 36px;
+  border: 1px solid #c9d8e4;
+  border-radius: 7px;
+  background: #fff;
+  color: #31455d;
+  font: inherit;
+  font-size: 0.74rem;
+  padding: 0 9px;
+}
+
+.devLogin button {
+  background: #e8f2f6;
+  color: #175d75;
+  cursor: pointer;
+  font-weight: 750;
+}
+
 .linkButton {
   border: 0;
   background: transparent;

@@ -23,6 +23,7 @@ function Login() {
   const searchParams = useSearchParams();
   const showInvalidLink = searchParams.get("error") === "invalid-token";
   const [email, setEmail] = useState("");
+  const [devEmployee, setDevEmployee] = useState("emp-shameel");
   const [state, setState] = useState<LoginState>({ status: "idle" });
   const sentTitleRef = useRef<HTMLHeadingElement>(null);
 
@@ -52,6 +53,15 @@ function Login() {
           "We could not send the sign-in link right now. Please try again in a moment.",
       });
     }
+  }
+
+  async function handleDevLogin() {
+    const response = await fetch("/api/auth/dev-login", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ employeeId: devEmployee }),
+    });
+    if (response.ok) window.location.href = "/expenses";
   }
 
   return (
@@ -201,6 +211,19 @@ function Login() {
                 <p className={styles.formLegal}>
                   Your access is managed by your organization.
                 </p>
+                {process.env.NODE_ENV !== "production" ? (
+                  <div className={styles.devLogin}>
+                    <span className={styles.devLoginLabel}>LOCAL DEVELOPMENT</span>
+                    <select value={devEmployee} aria-label="Development identity" onChange={(event) => setDevEmployee(event.target.value)}>
+                      <option value="emp-shameel">Muhammad Shameel / Employee</option>
+                      <option value="emp-ada">Ada Lovelace / Manager</option>
+                      <option value="emp-it">IT Head / IT reviewer</option>
+                      <option value="emp-ceo">CEO / CEO</option>
+                      <option value="emp-finance">Finance Officer / Finance</option>
+                    </select>
+                    <button type="button" onClick={handleDevLogin}>Open as this user</button>
+                  </div>
+                ) : null}
               </>
             )}
           </div>

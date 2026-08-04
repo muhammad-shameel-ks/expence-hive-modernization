@@ -9,7 +9,7 @@ function expense(overrides: Partial<Expense>): Expense {
     title: "Test expense",
     category: "Other",
     amount: 100,
-    currency: "USD",
+    currency: "INR",
     date: "Aug 4",
     submittedAt: "2026-08-04T09:00:00Z",
     status: "submitted",
@@ -54,6 +54,14 @@ describe("nextActionFor", () => {
 
     const inApproval = expense({ status: "in-approval", nextStage: "Team Lead approval", nextActor: "Ada Lovelace" });
     expect(nextActionFor(inApproval)).toEqual({ label: "Team Lead approval", actor: "Ada Lovelace", mine: false });
+  });
+
+  it("marks an approval as mine when the current user is the assigned approver", () => {
+    expect(nextActionFor(expense({ status: "in-approval", nextStage: "Manager approval", nextActor: "Ada Lovelace" }), "Ada Lovelace")).toEqual({
+      label: "Manager approval",
+      actor: "Ada Lovelace",
+      mine: true,
+    });
   });
 
   it("falls back to a generic Approval label when no stage is assigned", () => {
