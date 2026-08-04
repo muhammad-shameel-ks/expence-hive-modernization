@@ -133,6 +133,12 @@ export class PostgresAdminStore implements AdminStore {
       };
     } catch (error) {
       await client.query("ROLLBACK");
+      if (isUniqueViolation(error)) {
+        throw new AdminError(
+          "validation",
+          `A draft flow named "${input.name}" for ${input.scope} already exists.`,
+        );
+      }
       throw error;
     } finally {
       client.release();
@@ -186,4 +192,15 @@ export class PostgresAdminStore implements AdminStore {
       [event.id, organizationId, event.actorId, event.action, event.detail, event.createdAt],
     );
   }
+}
+
+function isUniqueViolation(error: unknown): boolean {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    (error as { code?: unknown }).code === "23505" &&
+    (!("constraint" in error) ||
+      (error as { constraint?: unknown }).constraint ===
+        "idx_flows_org_name_scope_draft")
+  );
 }

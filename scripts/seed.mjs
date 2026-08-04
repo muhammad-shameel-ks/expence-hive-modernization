@@ -3,7 +3,7 @@
 // Usage: npm run db:seed
 
 import { Pool } from "pg";
-import { databaseUrl } from "../src/server/db/connection.ts";
+import { databaseUrl } from "../src/server/db/connection.mjs";
 
 const ORGANIZATION = { id: "org-1", name: "Hive" };
 
@@ -86,18 +86,32 @@ async function main() {
     );
     let flowId = existingFlow.rows[0]?.id;
     if (!flowId) {
-      flowId = `flow-${crypto.randomUUID()}`;
-      await client.query(
+      const insertedFlow = await client.query(
         `INSERT INTO flows (id, organization_id, name, scope, status)
-         VALUES ($1, $2, $3, $4, 'draft')`,
-        [flowId, ORGANIZATION.id, FLOW.name, FLOW.scope],
+         VALUES ($1, $2, $3, $4, 'draft')
+         ON CONFLICT (organization_id, name, scope) WHERE status = 'draft'
+         DO NOTHING
+         RETURNING id`,
+        [`flow-${crypto.randomUUID()}`, ORGANIZATION.id, FLOW.name, FLOW.scope],
       );
-      for (let index = 0; index < FLOW.steps.length; index += 1) {
-        await client.query(
-          "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
-          [flowId, index, `role-${FLOW.steps[index]}`],
+      flowId = insertedFlow.rows[0]?.id;
+      if (flowId) {
+        for (let index = 0; index < FLOW.steps.length; index += 1) {
+          await client.query(
+            "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
+            [flowId, index, `role-${FLOW.steps[index]}`],
+          );
+        }
+      } else {
+        const concurrentFlow = await client.query(
+          "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND scope = $3",
+          [FLOW.name, ORGANIZATION.id, FLOW.scope],
         );
+        flowId = concurrentFlow.rows[0]?.id;
       }
+    }
+    if (!flowId) {
+      throw new Error("Could not create or find the seeded flow.");
     }
 
     await client.query("COMMIT");

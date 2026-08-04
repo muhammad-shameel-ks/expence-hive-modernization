@@ -1,7 +1,7 @@
 import { Pool } from "pg";
 import { createAdminCommands, type AdminCommands } from "./commands";
 import { PostgresAdminStore } from "./postgres";
-import { databaseUrl } from "@/server/db/connection";
+import { databaseUrl } from "@/server/db/connection.mjs";
 
 // Dev-only adapter. The Pool and the AdminCommands singleton live for the
 // process lifetime and are never closed: acceptable for local development,

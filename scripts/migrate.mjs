@@ -5,7 +5,7 @@ import { readdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { Pool } from "pg";
-import { databaseUrl } from "../src/server/db/connection.ts";
+import { databaseUrl } from "../src/server/db/connection.mjs";
 
 const dirname = path.dirname(fileURLToPath(import.meta.url));
 const migrationsDir = path.resolve(dirname, "../db/migrations");
