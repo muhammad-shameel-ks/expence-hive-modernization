@@ -31,6 +31,15 @@ The local service endpoints are:
 - Mailpit SMTP: `127.0.0.1:1025`
 - Mailpit inbox: [http://localhost:8025](http://localhost:8025)
 
+Apply the database schema and seed the local organization, employees, roles, and a draft workflow before starting the application:
+
+```bash
+npm run db:migrate
+npm run db:seed
+```
+
+The seed is idempotent and can be rerun after migrations.
+
 Stop the services while keeping their local data:
 
 ```bash
