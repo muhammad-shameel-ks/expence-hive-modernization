@@ -1,19 +1,13 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Plus } from "lucide-react";
-import { Button } from "@/components/ui/button";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
-import styles from "./expenses.module.css";
-import { PrototypeDashboard, type PrototypeVariant } from "@/features/dashboard/prototype-dashboard";
+import styles from "../expenses.module.css";
+import { AllExpensesView } from "@/features/dashboard/all-expenses-view";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 
-export default async function ExpensesPage({
-  searchParams,
-}: {
-  searchParams: Promise<{ variant?: string }>;
-}) {
-  const { variant } = await searchParams;
+export default async function AllExpensesPage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) {
@@ -36,10 +30,10 @@ export default async function ExpensesPage({
         </div>
 
         <nav className={styles.nav} aria-label="Workspace">
-          <a className={`${styles.navLink} ${styles.navLinkActive}`} href="/expenses">
+          <a className={styles.navLink} href="/expenses">
             Dashboard
           </a>
-          <a className={styles.navLink} href="/expenses/all">
+          <a className={`${styles.navLink} ${styles.navLinkActive}`} href="/expenses/all">
             All Expenses
           </a>
           <span className={styles.navLink} title="Coming in a later milestone">
@@ -61,38 +55,7 @@ export default async function ExpensesPage({
       </header>
 
       <div className="mx-auto w-full max-w-7xl px-4 py-8 pb-32 sm:px-6 lg:px-10">
-        <div className="flex flex-wrap items-center justify-between gap-4">
-          <div>
-            <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-              Expense operations / dashboard prototype
-            </p>
-            <h1 className="mt-1.5 text-3xl font-extrabold tracking-tight text-foreground sm:text-4xl">
-              Expense Dashboard
-            </h1>
-            <p className="mt-1 max-w-2xl text-sm text-muted-foreground">
-              Clutter-free dashboard with bento grid layout and actionable task inbox.
-            </p>
-          </div>
-
-          <Button
-            size="lg"
-            className="h-11 rounded-xl bg-foreground px-5 font-extrabold text-background shadow-lg transition hover:bg-foreground/90 hover:shadow-xl gap-2"
-            asChild
-          >
-            <a href="/expenses/new">
-              <Plus className="h-5 w-5 stroke-[2.5]" />
-              <span>New expense</span>
-            </a>
-          </Button>
-        </div>
-
-        <div className="mt-8">
-          <PrototypeDashboard
-            currentUser={employee.name}
-            expenses={expenses}
-            initialVariant={(variant as PrototypeVariant) || "v1"}
-          />
-        </div>
+        <AllExpensesView currentUser={employee.name} expenses={expenses} />
       </div>
     </main>
   );
