@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
 import styles from "./expenses.module.css";
+import { ExpenseDashboard } from "@/features/dashboard/dashboard";
 
 export default async function ExpensesPage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
@@ -9,8 +10,6 @@ export default async function ExpensesPage() {
   if (!employee) {
     redirect("/login");
   }
-
-  const firstName = employee.name.split(" ")[0];
 
   return (
     <main className={styles.page}>
@@ -50,64 +49,21 @@ export default async function ExpensesPage() {
         </div>
       </header>
 
-      <section className={styles.body}>
-        <p className={styles.eyebrow}>EXPENSE OPERATIONS / HOME</p>
-        <h1 className={styles.title}>
-          Welcome back, <span className={styles.accent}>{firstName}</span>.
+      <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
+        <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
+          Expense operations / dashboard
+        </p>
+        <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
+          Expense dashboard
         </h1>
-        <p className={styles.subtitle}>
-          You are signed in. Here is what your session looks like.
+        <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
+          Track every claim from submission to payment — and see exactly who is holding the ball.
         </p>
 
-        <div className={styles.grid}>
-          <section className={styles.sessionCard} aria-labelledby="session-heading">
-            <div className={styles.sessionIcon}>
-              <CheckIcon />
-            </div>
-            <h2 className={styles.cardHeading} id="session-heading">
-              Signed in
-            </h2>
-            <dl className={styles.sessionDetails}>
-              <div>
-                <dt>Employee</dt>
-                <dd>{employee.name}</dd>
-              </div>
-              <div>
-                <dt>Work email</dt>
-                <dd>{employee.email}</dd>
-              </div>
-              <div>
-                <dt>Sign-in method</dt>
-                <dd>One-time magic link</dd>
-              </div>
-            </dl>
-            <p className={styles.sessionStatus}>
-              <span className={styles.statusDot} />
-              Session active
-            </p>
-          </section>
-
-          <section className={styles.nextUp} aria-labelledby="next-heading">
-            <h2 className={styles.cardHeading} id="next-heading">
-              What comes next
-            </h2>
-            <ul className={styles.nextList}>
-              <li>
-                <span className={styles.nextTitle}>Submit an expense</span>
-                <span className={styles.nextPill}>Next milestone</span>
-              </li>
-              <li>
-                <span className={styles.nextTitle}>Approval inbox</span>
-                <span className={styles.nextPill}>Next milestone</span>
-              </li>
-              <li>
-                <span className={styles.nextTitle}>Reports</span>
-                <span className={styles.nextPill}>Next milestone</span>
-              </li>
-            </ul>
-          </section>
+        <div className="mt-8">
+          <ExpenseDashboard currentUser={employee.name} />
         </div>
-      </section>
+      </div>
     </main>
   );
 }
@@ -126,20 +82,6 @@ function HiveMark() {
         stroke="currentColor"
         strokeLinejoin="round"
         strokeWidth="1.35"
-      />
-    </svg>
-  );
-}
-
-function CheckIcon() {
-  return (
-    <svg aria-hidden="true" fill="none" viewBox="0 0 20 20">
-      <path
-        d="m4 10.5 3.5 3.5L16 5.5"
-        stroke="currentColor"
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        strokeWidth="1.8"
       />
     </svg>
   );

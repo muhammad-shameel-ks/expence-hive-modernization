@@ -1,0 +1,221 @@
+"use client";
+// Right-side expense detail drawer: amount, facts, next action, journey, attachments.
+
+import { AlertTriangle, ArrowUpRight, Paperclip, X } from "lucide-react";
+import { Drawer } from "@/components/motion/drawer";
+import { AnimatedBadge } from "@/components/motion/animated-badge";
+import {
+  Timeline,
+  TimelineContent,
+  TimelineDot,
+  TimelineItem,
+  TimelineSeparator,
+} from "@/components/motion/timeline";
+import { Button } from "@/components/ui/button";
+import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import { cn } from "@/lib/utils";
+import { STATUS_META, type Expense } from "./mock-data";
+import { isTerminal, nextActionFor } from "./next-action";
+import { KIND_META, formatMoney, initials, statusBadgeClass } from "./journey-meta";
+
+const PRIMARY_ACTION: Record<Expense["status"], string> = {
+  draft: "Continue draft",
+  submitted: "Withdraw",
+  "in-approval": "Remind approver",
+  "needs-correction": "Resubmit claim",
+  approved: "Add note",
+  "in-finance": "Add note",
+  paid: "Download summary",
+  rejected: "Appeal decision",
+};
+
+export function ExpenseDrawer({
+  open,
+  onOpenChange,
+  expense,
+}: {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  expense: Expense | null;
+}) {
+  const statusMeta = expense ? STATUS_META[expense.status] : null;
+  const terminal = expense ? isTerminal(expense.status) : false;
+  const next = expense ? nextActionFor(expense) : null;
+
+  return (
+    <Drawer
+      open={open}
+      onOpenChange={onOpenChange}
+      side="right"
+      ariaLabel={expense ? `Expense details: ${expense.title}` : "Expense details"}
+      className="w-full sm:w-[560px] sm:max-w-[94vw]"
+    >
+      {expense && statusMeta && next ? (
+        <>
+          <header className="flex items-start justify-between gap-4 border-b border-border px-6 py-5">
+            <div className="min-w-0">
+              <p className="font-mono text-[11px] font-medium uppercase tracking-wider text-muted-foreground">
+                {expense.ref}
+              </p>
+              <h2 className="mt-1 line-clamp-2 break-words text-lg font-semibold tracking-tight text-foreground">
+                {expense.title}
+              </h2>
+              <div className="mt-2 flex flex-wrap items-center gap-2">
+                <AnimatedBadge status={statusMeta.tone} size="sm" className={statusBadgeClass(expense.status)}>
+                  {statusMeta.label}
+                </AnimatedBadge>
+                <span className="text-xs text-muted-foreground">{expense.category}</span>
+              </div>
+            </div>
+            <button
+              type="button"
+              onClick={() => onOpenChange(false)}
+              aria-label="Close details"
+              className="grid h-9 w-9 shrink-0 place-items-center rounded-full border border-border text-muted-foreground transition-colors hover:bg-muted hover:text-foreground"
+            >
+              <X className="h-4 w-4" />
+            </button>
+          </header>
+
+          <div className="flex-1 overflow-y-auto px-6 py-6">
+            <div className="flex items-end justify-between gap-4">
+              <div>
+                <p className="text-xs font-medium text-muted-foreground">Amount</p>
+                <p className="mt-1 text-3xl font-semibold tracking-tight text-foreground">
+                  {formatMoney(expense.amount, expense.currency)}
+                </p>
+              </div>
+              <div className="text-right text-xs text-muted-foreground">
+                <p>Submitted {expense.date}</p>
+                <p className="mt-1">
+                  {expense.permission ? `Linked to ${expense.permission}` : "No pre-approval"}
+                </p>
+              </div>
+            </div>
+
+            <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 rounded-xl border border-border bg-muted/40 p-4 text-sm">
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">Payment method</dt>
+                <dd className="mt-1 font-medium text-foreground">
+                  {expense.paymentMethod ?? "—"}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">Category</dt>
+                <dd className="mt-1 font-medium text-foreground">{expense.category}</dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">Current stage</dt>
+                <dd className="mt-1 font-medium text-foreground">
+                  {expense.nextStage ?? statusMeta.label}
+                </dd>
+              </div>
+              <div>
+                <dt className="text-xs font-medium text-muted-foreground">Responsible</dt>
+                <dd className="mt-1 flex items-center gap-2 font-medium text-foreground">
+                  {expense.nextActor ? (
+                    <>
+                      <Avatar className="h-5 w-5">
+                        <AvatarFallback className="bg-primary/10 text-[9px] text-primary">
+                          {initials(expense.nextActor)}
+                        </AvatarFallback>
+                      </Avatar>
+                      {expense.nextActor}
+                    </>
+                  ) : (
+                    "None"
+                  )}
+                </dd>
+              </div>
+            </dl>
+
+            <section className="mt-6" aria-label="What happens next">
+              <h3 className="text-sm font-semibold text-foreground">What happens next</h3>
+              {terminal ? (
+                <p className="mt-2 text-sm text-muted-foreground">
+                  This expense is {statusMeta.label.toLowerCase()}. No action is required.
+                </p>
+              ) : (
+                <div
+                  className={cn(
+                    "mt-2 rounded-xl border p-4 text-sm",
+                    next.mine
+                      ? "border-amber-300/60 bg-amber-50/70"
+                      : "border-border bg-card",
+                  )}
+                >
+                  <p className="font-medium text-foreground">{next.label}</p>
+                  <p className="mt-1 text-muted-foreground">
+                    {next.mine
+                      ? "Waiting on you."
+                      : `Waiting on ${next.actor ?? "the next approver"}.`}
+                  </p>
+                  {expense.blockingReason ? (
+                    <p className="mt-2 flex gap-2 text-amber-700 dark:text-amber-400">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                      {expense.blockingReason}
+                    </p>
+                  ) : null}
+                </div>
+              )}
+            </section>
+
+            <section className="mt-6" aria-label="Expense journey">
+              <h3 className="text-sm font-semibold text-foreground">Journey</h3>
+              <Timeline position="right" className="mt-4">
+                {expense.history.map((event, i) => {
+                  const meta = KIND_META[event.kind];
+                  const Icon = meta.icon;
+                  const isCurrent = !terminal && i === expense.history.length - 1;
+                  return (
+                    <TimelineItem key={event.id}>
+                      <TimelineSeparator>
+                        <TimelineDot tone={meta.tone} current={isCurrent}>
+                          <Icon />
+                        </TimelineDot>
+                      </TimelineSeparator>
+                      <TimelineContent>
+                        <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
+                          <p className="text-sm font-medium text-foreground">{meta.label}</p>
+                          <p className="text-xs tabular-nums text-muted-foreground">{event.date}</p>
+                        </div>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{event.actor}</p>
+                        {event.detail ? (
+                          <p className="mt-1 text-xs text-muted-foreground">{event.detail}</p>
+                        ) : null}
+                      </TimelineContent>
+                    </TimelineItem>
+                  );
+                })}
+              </Timeline>
+            </section>
+
+            {expense.attachments.length > 0 ? (
+              <section className="mt-6" aria-label="Attachments">
+                <h3 className="text-sm font-semibold text-foreground">Attachments</h3>
+                <ul className="mt-2 flex flex-wrap gap-2">
+                  {expense.attachments.map((file) => (
+                    <li key={file}>
+                      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                        <Paperclip className="h-3 w-3" />
+                        {file}
+                      </span>
+                    </li>
+                  ))}
+                </ul>
+              </section>
+            ) : null}
+          </div>
+
+          <footer className="flex items-center gap-3 border-t border-border bg-card px-6 py-4">
+            <Button className="flex-1">{PRIMARY_ACTION[expense.status]}</Button>
+            <Button variant="outline" className="gap-1.5">
+              Full record
+              <ArrowUpRight className="h-3.5 w-3.5" />
+            </Button>
+          </footer>
+        </>
+      ) : null}
+    </Drawer>
+  );
+}
