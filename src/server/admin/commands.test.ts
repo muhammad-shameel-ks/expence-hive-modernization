@@ -209,6 +209,39 @@ describe("createFlowDraft", () => {
     ).rejects.toMatchObject({ code: "validation" });
   });
 
+  it("rejects a flow with an overlong name or scope", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(
+      admin.createFlowDraft("emp-grace", {
+        name: "x".repeat(121),
+        scope: "All departments",
+        steps: ["Manager"],
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+
+    await expect(
+      admin.createFlowDraft("emp-grace", {
+        name: "Standard reimbursement",
+        scope: "y".repeat(61),
+        steps: ["Manager"],
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects a flow with more than 15 steps", async () => {
+    const { admin } = buildAdmin();
+    const steps = Array.from({ length: 16 }, () => "Manager");
+
+    await expect(
+      admin.createFlowDraft("emp-grace", {
+        name: "Standard reimbursement",
+        scope: "All departments",
+        steps,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
   it("rejects a flow step that is not a known role", async () => {
     const { admin } = buildAdmin();
 

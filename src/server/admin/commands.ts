@@ -9,6 +9,8 @@ import {
 
 export type AdminErrorCode = "unauthorized" | "validation" | "not-found";
 
+const ADMIN_ERROR_CODES = ["unauthorized", "validation", "not-found"] as const;
+
 export class AdminError extends Error {
   constructor(
     readonly code: AdminErrorCode,
@@ -16,6 +18,15 @@ export class AdminError extends Error {
   ) {
     super(message);
   }
+}
+
+export function isAdminError(error: unknown): error is AdminError {
+  return (
+    typeof error === "object" &&
+    error !== null &&
+    typeof (error as { code?: unknown }).code === "string" &&
+    (ADMIN_ERROR_CODES as readonly string[]).includes((error as { code: string }).code)
+  );
 }
 
 const ADMIN_AUTHORIZED_ROLES: readonly AdminRole[] = [
@@ -82,6 +93,9 @@ export function createAdminCommands({
       if (!isAdminRole(role)) {
         throw new AdminError("validation", `Unknown role "${role}".`);
       }
+      if (employeeId.length > 100) {
+        throw new AdminError("validation", "Employee id is too long.");
+      }
       const target = await store.getEmployee(employeeId);
       if (!target || target.organizationId !== actor.organizationId) {
         throw new AdminError("not-found", "Employee does not exist.");
@@ -103,12 +117,21 @@ export function createAdminCommands({
       if (!name) {
         throw new AdminError("validation", "Flow needs a name.");
       }
+      if (name.length > 120) {
+        throw new AdminError("validation", "Flow name is too long (max 120 characters).");
+      }
       const scope = input.scope.trim();
       if (!scope) {
         throw new AdminError("validation", "Flow needs a scope.");
       }
+      if (scope.length > 60) {
+        throw new AdminError("validation", "Flow scope is too long (max 60 characters).");
+      }
       if (input.steps.length === 0) {
         throw new AdminError("validation", "Flow needs at least one step.");
+      }
+      if (input.steps.length > 15) {
+        throw new AdminError("validation", "Flow cannot have more than 15 steps.");
       }
       for (const step of input.steps) {
         if (!isAdminRole(step)) {

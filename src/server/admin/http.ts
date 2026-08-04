@@ -1,9 +1,19 @@
-import { AdminError, type AdminCommands } from "./commands";
+import { isAdminError, type AdminCommands } from "./commands";
 import type { AdminRole } from "./ports";
 
-export function adminErrorResponse(error: AdminError): Response {
-  const status = error.code === "unauthorized" ? 403 : error.code === "not-found" ? 404 : 422;
+export function adminErrorResponse(error: { code: string }): Response {
+  const status =
+    error.code === "unauthorized" ? 403 : error.code === "not-found" ? 404 : 422;
   return Response.json({ error: error.code }, { status });
+}
+
+export function internalErrorResponse(): Response {
+  return Response.json({ error: "internal" }, { status: 500 });
+}
+
+function handleUnexpectedError(error: unknown): Response {
+  console.error("admin command failed", error);
+  return internalErrorResponse();
 }
 
 export async function handleAssignRoleRequest(
@@ -22,10 +32,10 @@ export async function handleAssignRoleRequest(
     });
     return Response.json({ ok: true });
   } catch (error) {
-    if (error instanceof AdminError) {
+    if (isAdminError(error)) {
       return adminErrorResponse(error);
     }
-    throw error;
+    return handleUnexpectedError(error);
   }
 }
 
@@ -55,9 +65,9 @@ export async function handleCreateFlowRequest(
     });
     return Response.json({ ok: true, flow }, { status: 201 });
   } catch (error) {
-    if (error instanceof AdminError) {
+    if (isAdminError(error)) {
       return adminErrorResponse(error);
     }
-    throw error;
+    return handleUnexpectedError(error);
   }
 }

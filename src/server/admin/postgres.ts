@@ -143,8 +143,9 @@ export class PostgresAdminStore implements AdminStore {
         SELECT fs.flow_id, r.display_name
         FROM flow_steps fs
         JOIN roles r ON r.id = fs.role_id
-        JOIN flows f ON f.id = fs.flow_id
-        WHERE f.organization_id = $1
+        WHERE fs.flow_id IN (
+          SELECT id FROM flows WHERE organization_id = $1
+        )
         ORDER BY fs.flow_id, fs.position
       `,
       [organizationId],

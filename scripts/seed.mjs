@@ -84,7 +84,7 @@ async function main() {
     }
 
     const existingFlow = await client.query(
-      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND status = 'draft'",
+      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2",
       [FLOW.name, ORGANIZATION.id],
     );
     let flowId = existingFlow.rows[0]?.id;

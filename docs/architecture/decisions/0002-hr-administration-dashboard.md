@@ -40,3 +40,10 @@ The first dashboard can be built before the complete reimbursement workflow exis
 - Define the exact HR, system administrator, Finance, and executive permission matrix.
 - Define the request and payment tables that will replace seeded operational analytics.
 - Define workflow assignment effective dates and behavior when a department or employee override is removed.
+
+## Implementation Notes
+
+- The first slice models one administration role per employee. The schema keeps the many-to-many `employee_roles` table so multiple roles per employee can be supported later, but the store currently replaces the existing role on assignment.
+- Role matching uses `roles.display_name` as the application vocabulary; `roles.code` remains a stable storage key for seeds and future references.
+- Input limits on the command layer are name (max 120), scope (max 60), steps (max 15), and employee id (max 100).
+- The dev-only PostgreSQL connection string is documented in the README and repeated as a fallback while the database provider module is still being introduced.

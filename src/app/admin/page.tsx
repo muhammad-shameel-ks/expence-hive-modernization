@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminCommands } from "@/server/admin/dev";
-import { AdminError } from "@/server/admin/commands";
+import { isAdminError } from "@/server/admin/commands";
 import type { AdminEmployee, FlowDraft } from "@/server/admin/ports";
 import { AdminSetup } from "@/features/admin/admin-setup";
 import { devAuth } from "@/server/auth/dev";
@@ -22,7 +22,7 @@ export default async function AdminPage() {
       admin.listFlows(employee.id),
     ]);
   } catch (error) {
-    if (error instanceof AdminError && error.code === "unauthorized") {
+    if (isAdminError(error) && error.code === "unauthorized") {
       redirect("/expenses");
     }
     throw error;
