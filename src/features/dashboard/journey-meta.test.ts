@@ -87,5 +87,35 @@ describe("getJourneyFlowItems", () => {
     expect(steps.length).toBe(4);
     expect(steps.every((s) => !s.pending)).toBe(true);
   });
+
+  it("includes pending approval step for multi-stage approval flows with earlier approvals", () => {
+    const multiApprovalExpense = {
+      id: "ex-flight",
+      ref: "EXP-FLIGHT",
+      title: "Flight ticket",
+      category: "Travel",
+      amount: 1200,
+      currency: "INR",
+      date: "Aug 4",
+      submittedAt: "2026-08-04T10:00:00Z",
+      status: "in-approval" as const,
+      nextStage: "Team Lead approval",
+      nextActor: "Grace Hopper",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 4", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 4", actor: "IT Head", kind: "approved" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(multiApprovalExpense);
+    const pendingApproval = steps.find((s) => s.id === "pending-approval");
+    expect(pendingApproval).toBeDefined();
+    expect(pendingApproval).toMatchObject({
+      label: "Team Lead approval",
+      actor: "Grace Hopper",
+      pending: true,
+    });
+  });
 });
 

@@ -83,11 +83,19 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
     });
   }
 
-  if (
-    !historyKinds.has("approved") &&
-    !historyKinds.has("takeover") &&
-    expense.status !== "rejected"
-  ) {
+  const needsApprovalStep =
+    expense.status === "in-approval" ||
+    expense.status === "submitted" ||
+    expense.status === "draft" ||
+    expense.status === "needs-correction" ||
+    (!historyKinds.has("approved") &&
+      !historyKinds.has("takeover") &&
+      expense.status !== "approved" &&
+      expense.status !== "in-finance" &&
+      expense.status !== "paid" &&
+      expense.status !== "rejected");
+
+  if (needsApprovalStep) {
     pendingSteps.push({
       id: "pending-approval",
       label:
@@ -107,7 +115,12 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
     });
   }
 
-  if (!historyKinds.has("verified") && expense.status !== "rejected") {
+  const needsVerificationStep =
+    expense.status !== "paid" &&
+    expense.status !== "rejected" &&
+    (!historyKinds.has("verified") || expense.status === "in-finance");
+
+  if (needsVerificationStep) {
     pendingSteps.push({
       id: "pending-verification",
       label:

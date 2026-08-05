@@ -345,7 +345,7 @@ export function TimelineOppositeContent({
   className?: string;
   children?: ReactNode;
 }) {
-  const { orientation, position, even } = useTimelineItem();
+  const { orientation, position, even, pending } = useTimelineItem();
   const vertical = orientation === "vertical";
 
   if (vertical && position !== "alternate") return null;
@@ -356,6 +356,17 @@ export function TimelineOppositeContent({
       : "row-start-1 col-start-3 text-left"
     : "row-start-3 text-center";
 
-  return <div className={cn(vertical ? "px-3 py-1" : "px-1 pb-1", side, className)}>{children}</div>;
+  return (
+    <div
+      className={cn(
+        vertical ? "px-3 py-1" : "px-1 pb-1",
+        side,
+        pending && "text-muted-foreground/75",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
