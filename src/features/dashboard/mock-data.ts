@@ -32,6 +32,15 @@ export interface HistoryEvent {
   detail?: string;
 }
 
+export interface ExpenseStepView {
+  id: string;
+  roleId: string;
+  roleName: string;
+  assignedActorId?: string;
+  assignedActorName?: string;
+  status: "pending" | "approved" | "skipped" | "verified" | "paid";
+}
+
 export interface Expense {
   id: string;
   ref: string;
@@ -51,6 +60,7 @@ export interface Expense {
   permission?: string;
   attachments: string[];
   history: HistoryEvent[];
+  steps?: ExpenseStepView[];
   primaryAction?: "approve" | "verify" | "pay";
 }
 

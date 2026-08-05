@@ -83,6 +83,40 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
     });
   }
 
+  if (expense.steps && expense.steps.length > 0) {
+    const remaining = expense.steps.filter((s) => s.status === "pending" || s.status === "verified");
+    remaining.forEach((step, idx) => {
+      const isFinance = step.roleName.toLowerCase().includes("finance") || step.roleName.toLowerCase().includes("treasury");
+      pendingSteps.push({
+        id: `pending-step-${step.id}`,
+        label: step.roleName,
+        date: "Pending",
+        actor: step.assignedActorName ?? "Pending assignment",
+        detail: isFinance ? `Pending ${step.roleName} verification` : `Pending ${step.roleName} decision`,
+        tone: isFinance ? "primary" : "success",
+        icon: isFinance ? KIND_META.verified.icon : KIND_META.approved.icon,
+        isCurrent: idx === 0,
+        pending: true,
+      });
+    });
+
+    if (!historyKinds.has("paid") && expense.status !== "rejected") {
+      pendingSteps.push({
+        id: "pending-payment",
+        label: "Paid",
+        date: "Pending",
+        actor: "Finance / Treasury",
+        detail: "Pending payment disbursement",
+        tone: "success",
+        icon: KIND_META.paid.icon,
+        isCurrent: false,
+        pending: true,
+      });
+    }
+
+    return [...historySteps, ...pendingSteps];
+  }
+
   const needsApprovalStep =
     expense.status === "in-approval" ||
     expense.status === "submitted" ||

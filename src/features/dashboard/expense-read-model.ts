@@ -40,6 +40,14 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
       kind: HISTORY_KINDS[event.kind],
       detail: event.detail,
     })),
+    steps: claim.steps.map((step) => ({
+      id: step.id,
+      roleId: step.roleId,
+      roleName: roleNames.get(step.roleId) ?? (step.roleId.startsWith("role-") ? step.roleId.replace(/^role-/, "").replace(/-/g, " ") : step.roleId),
+      assignedActorId: step.assignedActorId,
+      assignedActorName: step.assignedActorId ? names.get(step.assignedActorId) : undefined,
+      status: step.status,
+    })),
     primaryAction: actionFor(claim),
   };
 }
