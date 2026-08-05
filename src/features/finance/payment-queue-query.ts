@@ -48,8 +48,8 @@ export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: Payme
         claim.title.toLowerCase().includes(q) ||
         claim.ref.toLowerCase().includes(q) ||
         claim.category.toLowerCase().includes(q) ||
-        claim.subCategory.toLowerCase().includes(q) ||
-        claim.remark.toLowerCase().includes(q),
+        (claim.subCategory ?? "").toLowerCase().includes(q) ||
+        (claim.remark ?? "").toLowerCase().includes(q),
     );
   }
 

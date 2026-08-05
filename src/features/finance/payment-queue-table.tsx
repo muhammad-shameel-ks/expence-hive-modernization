@@ -18,14 +18,6 @@ import {
 
 const FILTERS: PaymentQueueFilter[] = ["All", "Awaiting payment", "Paid"];
 
-const SORT_COLUMNS: { key: PaymentQueueSortKey; label: string; className: string }[] = [
-  { key: "ref", label: "Reference", className: "" },
-  { key: "category", label: "Category", className: "hidden md:table-cell" },
-  { key: "submitted", label: "Bill submission", className: "hidden sm:table-cell" },
-  { key: "amount", label: "Amount", className: "text-right" },
-  { key: "status", label: "Status", className: "" },
-];
-
 export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseClaim[]; employees?: ExpenseEmployee[] }) {
   const employeeNameById = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee.name])),
@@ -102,6 +94,24 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
     setDateFrom("");
     setDateTo("");
   };
+
+  function sortHeader(sortKey: PaymentQueueSortKey, label: string, className?: string) {
+    return (
+      <th key={sortKey} className={cn("px-4 py-3 font-medium", className)}>
+        <button
+          type="button"
+          onClick={() => toggleSort(sortKey)}
+          className={cn(
+            "inline-flex items-center gap-1 font-medium hover:text-foreground",
+            sort.key === sortKey && "text-foreground",
+          )}
+        >
+          {label}
+          <ArrowUpDown className={cn("h-3 w-3", sort.key === sortKey && "text-foreground")} />
+        </button>
+      </th>
+    );
+  }
 
   return (
     <div>
@@ -244,40 +254,30 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
         </div>
       ) : null}
 
-      <div className="overflow-x-auto rounded-xl border border-black/10">
+      <div className="max-h-[70vh] overflow-auto rounded-xl border border-black/10">
         <table className="w-full min-w-[1600px] border-collapse text-sm">
-          <thead>
-            <tr className="bg-black/[0.03] text-left">
+          <thead className="sticky top-0 z-10">
+            <tr className="bg-background text-left shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.1)]">
               <th className="px-4 py-3 font-medium">Name</th>
-              {SORT_COLUMNS.map((col) => (
-                <th key={col.key} className={cn("px-4 py-3 font-medium", col.className)}>
-                  <button
-                    type="button"
-                    onClick={() => toggleSort(col.key)}
-                    className={cn(
-                      "inline-flex items-center gap-1 font-medium hover:text-foreground",
-                      sort.key === col.key && "text-foreground",
-                    )}
-                  >
-                    {col.label}
-                    <ArrowUpDown className={cn("h-3 w-3", sort.key === col.key && "text-foreground")} />
-                  </button>
-                </th>
-              ))}
-              <th className="hidden px-4 py-3 font-medium lg:table-cell">Bill invoice date</th>
+              {sortHeader("ref", "Reference")}
+              {sortHeader("category", "Category", "hidden md:table-cell")}
               <th className="hidden px-4 py-3 font-medium lg:table-cell">Sub category</th>
-              <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
-              <th className="px-4 py-3 font-medium">Account number</th>
-              <th className="px-4 py-3 font-medium">IFSC code</th>
+              {sortHeader("submitted", "Bill submission", "hidden sm:table-cell")}
+              <th className="hidden px-4 py-3 font-medium lg:table-cell">Bill invoice date</th>
+              {sortHeader("amount", "Amount", "text-right")}
+              {sortHeader("status", "Status")}
               <th className="px-4 py-3 font-medium">Payment status</th>
               <th className="hidden px-4 py-3 font-medium xl:table-cell">Approved on</th>
+              <th className="px-4 py-3 font-medium">Account number</th>
+              <th className="px-4 py-3 font-medium">IFSC code</th>
+              <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
               <th className="min-w-[220px] px-4 py-3 font-medium">Comments</th>
             </tr>
           </thead>
           <tbody>
             {rows.length === 0 ? (
               <tr>
-                <td className="px-4 py-6 text-muted-foreground" colSpan={13}>
+                <td className="px-4 py-6 text-muted-foreground" colSpan={14}>
                   No claims match your search.
                 </td>
               </tr>
@@ -293,18 +293,15 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                       <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{claim.ref}</p>
                     </td>
                     <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{claim.category}</td>
+                    <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.subCategory || "-"}</td>
                     <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
                       {(claim.submittedAt ?? claim.createdAt).slice(0, 10)}
                     </td>
+                    <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.expenseDate}</td>
                     <td className="px-4 py-3 text-right font-medium tabular-nums text-foreground">
                       ₹{(claim.amountMinor / 100).toFixed(2)}
                     </td>
                     <td className="px-4 py-3">{claim.status}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.expenseDate}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.subCategory || "-"}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
-                    <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
-                    <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
                     <td className="px-4 py-3">
                       <span
                         className={cn(
@@ -320,6 +317,9 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                     <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">
                       {approvedOn ? approvedOn.slice(0, 10) : "-"}
                     </td>
+                    <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
+                    <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
+                    <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
                     <td className="px-4 py-3">
                       <input
                         type="text"
