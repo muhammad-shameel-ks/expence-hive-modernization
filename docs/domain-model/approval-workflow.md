@@ -61,6 +61,10 @@ It separates confirmed business direction from recommendations and unresolved de
 - Status, payment status, and approval timestamps are workflow state, not payout data, and remain visible to the claim owner and approvers in the chain.
 - Finance payment processing (verifying Payout Details and marking a claim paid) is a distinct view from HR's administrative Requests browsing page, with its own access rule rather than reusing the HR admin console.
 - HR is added as an explicit value in the expense-side role system so claim and payment authorization has one place to check, instead of only existing in the separate administrative role system.
+- The legacy Reimbursement Requests table's remaining columns (Sub Category, Remark, Comments, Payment Status, Approved On) are carried into the new Finance Payment View so Finance and HR keep the columns they already rely on.
+- Sub Category and Remark are captured by the employee on the expense creation flow, alongside Category, the same way Payout Details are.
+- Comments is authored by Finance or HR after submission, not by the employee, and is edited directly from the Finance Payment View.
+- Payment Status and Approved On are not new stored fields; Payment Status is derived from claim status (`paid` versus everything else in the Finance queue), and Approved On is derived from the last `approved` history event, matching the existing "workflow state stays visible, payout data stays restricted" split.
 
 ## Recommendations
 

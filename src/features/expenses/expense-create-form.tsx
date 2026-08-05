@@ -7,6 +7,8 @@ import styles from "./expense-create.module.css";
 type FormState = {
   title: string;
   category: string;
+  subCategory: string;
+  remark: string;
   amount: string;
   expenseDate: string;
   paymentMethod: "Personal card" | "Company card";
@@ -14,9 +16,19 @@ type FormState = {
   ifscCode: string;
 };
 
+const CATEGORY_SUB_CATEGORIES: Record<string, string[]> = {
+  Travel: ["Airfare", "Fuel Expense", "Cab/Taxi", "Public Transport"],
+  Meals: ["Team Lunch/Dinner", "Client Meeting", "Refreshments"],
+  Software: ["Software License & Subscription", "SaaS Tools"],
+  Hardware: ["Equipment Purchase", "Repairs & Maintenance"],
+  Training: ["Course Fee", "Certification", "Conference"],
+};
+
 const initialForm: FormState = {
   title: "",
   category: "Travel",
+  subCategory: CATEGORY_SUB_CATEGORIES.Travel[0],
+  remark: "",
   amount: "",
   expenseDate: new Date().toISOString().slice(0, 10),
   paymentMethod: "Personal card",
@@ -161,13 +173,35 @@ function DetailsStep({
           <form className={styles.fieldStack} onSubmit={onReview}>
             <Field label="What was this expense for?"><input className={styles.textInput} required value={form.title} placeholder="e.g. Client dinner with Acme Corp" onChange={(event) => update("title", event.target.value)} /></Field>
             <div className={styles.formGrid}>
-              <Field label="Category"><select className={styles.select} value={form.category} onChange={(event) => update("category", event.target.value)}><option>Travel</option><option>Meals</option><option>Software</option><option>Hardware</option><option>Training</option></select></Field>
-              <Field label="Amount" hint="Enter the total in INR."><MoneyInput value={form.amount} onChange={(value) => update("amount", value)} /></Field>
+              <Field label="Category">
+                <select
+                  className={styles.select}
+                  value={form.category}
+                  onChange={(event) => {
+                    const category = event.target.value;
+                    update("category", category);
+                    update("subCategory", CATEGORY_SUB_CATEGORIES[category]?.[0] ?? "");
+                  }}
+                >
+                  {Object.keys(CATEGORY_SUB_CATEGORIES).map((category) => (
+                    <option key={category}>{category}</option>
+                  ))}
+                </select>
+              </Field>
+              <Field label="Sub category">
+                <select className={styles.select} value={form.subCategory} onChange={(event) => update("subCategory", event.target.value)}>
+                  {(CATEGORY_SUB_CATEGORIES[form.category] ?? []).map((subCategory) => (
+                    <option key={subCategory}>{subCategory}</option>
+                  ))}
+                </select>
+              </Field>
             </div>
             <div className={styles.formGrid}>
+              <Field label="Amount" hint="Enter the total in INR."><MoneyInput value={form.amount} onChange={(value) => update("amount", value)} /></Field>
               <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
-              <Field label="Paid with"><select className={styles.select} value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value as FormState["paymentMethod"])}><option>Personal card</option><option>Company card</option></select></Field>
             </div>
+            <Field label="Remark" hint="A short note for Finance and HR."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
+            <Field label="Paid with"><select className={styles.select} value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value as FormState["paymentMethod"])}><option>Personal card</option><option>Company card</option></select></Field>
             <div className={styles.formGrid}>
               <Field label="Account number" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.accountNumber} placeholder="Bank account number" onChange={(event) => update("accountNumber", event.target.value)} /></Field>
               <Field label="IFSC code" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.ifscCode} placeholder="e.g. SBIN0012861" onChange={(event) => update("ifscCode", event.target.value.toUpperCase())} /></Field>
@@ -209,7 +243,7 @@ function CaptureRail({ receipt, step }: { receipt: { fileName: string; contentTy
 }
 
 function SummaryPanel({ form, label }: { form: FormState; label: string }) {
-  return <aside className={styles.summaryPanel} aria-label={label}><h2>{label}</h2><p className={styles.summaryAmount}>{form.amount ? `₹${form.amount}` : "₹0.00"}</p><div className={styles.summaryRows}><div className={styles.summaryRow}><span>Title</span><strong>{form.title || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Category</span><strong>{form.category}</strong></div><div className={styles.summaryRow}><span>Date</span><strong>{form.expenseDate || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Payment</span><strong>{form.paymentMethod}</strong></div></div><div className={styles.summaryFooter}><p>Next: Manager → IT → CEO → Finance</p></div></aside>;
+  return <aside className={styles.summaryPanel} aria-label={label}><h2>{label}</h2><p className={styles.summaryAmount}>{form.amount ? `₹${form.amount}` : "₹0.00"}</p><div className={styles.summaryRows}><div className={styles.summaryRow}><span>Title</span><strong>{form.title || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Category</span><strong>{form.category} / {form.subCategory}</strong></div><div className={styles.summaryRow}><span>Date</span><strong>{form.expenseDate || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Payment</span><strong>{form.paymentMethod}</strong></div></div><div className={styles.summaryFooter}><p>Next: Manager → IT → CEO → Finance</p></div></aside>;
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {

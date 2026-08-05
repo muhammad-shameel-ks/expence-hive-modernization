@@ -17,6 +17,7 @@ function maskPayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): Expens
   if (canSeePayoutDetails(claim, viewer)) return claim;
   const masked = { ...claim };
   delete masked.payoutDetails;
+  delete masked.comments;
   return masked;
 }
 
@@ -45,6 +46,7 @@ export type ExpenseCommands = {
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
   listFinancePaymentQueue(actorId: string): Promise<ExpenseClaim[]>;
+  updateComments(actorId: string, claimId: string, comments: string): Promise<ExpenseClaim>;
 };
 
 export function createExpenseCommands({
@@ -104,6 +106,8 @@ export function createExpenseCommands({
         requesterId: actorId,
         title: input.title.trim(),
         category: input.category.trim(),
+        subCategory: (input.subCategory ?? "").trim(),
+        remark: (input.remark ?? "").trim(),
         amountMinor: input.amountMinor,
         currency: "INR",
         expenseDate: input.expenseDate,
@@ -248,6 +252,21 @@ export function createExpenseCommands({
       return claims.filter(
         (claim) => claim.currentStage === "finance" || claim.status === "in-finance" || claim.status === "paid",
       );
+    },
+
+    async updateComments(actorId, claimId, comments) {
+      const employee = await requireEmployee(actorId);
+      if (!employee.roleCodes.some((role) => PAYOUT_DETAILS_ROLES.has(role))) {
+        throw new ExpenseError("unauthorized", "Only Finance or HR can add comments.");
+      }
+      const claim = await store.getClaim(claimId);
+      if (!claim || claim.organizationId !== employee.organizationId) {
+        throw new ExpenseError("not-found", "Expense claim does not exist.");
+      }
+      claim.comments = comments.trim();
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
     },
   };
 }

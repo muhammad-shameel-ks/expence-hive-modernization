@@ -116,9 +116,9 @@ export class PostgresExpenseStore implements ExpenseStore {
       await client.query("BEGIN");
       const result = await client.query(
         `UPDATE reimbursement_claims
-         SET status = $2, current_stage = $3, current_actor_id = $4, version = $5, submitted_at = $6, updated_at = now()
+         SET status = $2, current_stage = $3, current_actor_id = $4, version = $5, submitted_at = $6, comments = $7, updated_at = now()
          WHERE id = $1 AND version < $5`,
-        [claim.id, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.submittedAt ?? null],
+        [claim.id, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.submittedAt ?? null, claim.comments ?? null],
       );
       if (result.rowCount !== 1) throw new Error("Claim was changed by another request.");
       for (let position = 0; position < claim.steps.length; position += 1) {
@@ -180,10 +180,10 @@ function employeeFromRow(row: Row): ExpenseEmployee {
 async function insertClaim(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, claim: ExpenseClaim): Promise<void> {
   await client.query(
     `INSERT INTO reimbursement_claims
-      (id, organization_id, requester_id, reference, title, category, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
     [
-      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
+      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
       claim.payoutDetails?.accountNumber ?? null,
       claim.payoutDetails?.ifscCode ?? null,
     ],
@@ -208,6 +208,8 @@ function claimFromRow(row: Row): ExpenseClaim {
     requesterId: String(row.requester_id),
     title: String(row.title),
     category: String(row.category),
+    subCategory: row.sub_category ? String(row.sub_category) : "",
+    remark: row.remark ? String(row.remark) : "",
     amountMinor: Number(row.amount_minor),
     currency: "INR",
     expenseDate: String(row.expense_date).slice(0, 10),
@@ -223,6 +225,7 @@ function claimFromRow(row: Row): ExpenseClaim {
     payoutDetails: row.account_number && row.ifsc_code
       ? { accountNumber: String(row.account_number), ifscCode: String(row.ifsc_code) }
       : undefined,
+    comments: row.comments ? String(row.comments) : undefined,
   };
 }
 

@@ -4,6 +4,7 @@ import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
 import { AppHeader } from "@/components/layout/app-header";
+import { PaymentQueueTable } from "@/features/finance/payment-queue-table";
 import styles from "../../expenses/expenses.module.css";
 
 export default async function FinancePaymentsPage() {
@@ -51,39 +52,8 @@ export default async function FinancePaymentsPage() {
           Claims at or past Finance verification, with the payout details needed to pay them.
         </p>
 
-        <div className="mt-8 overflow-x-auto rounded-xl border border-black/10">
-          <table className="w-full min-w-[840px] border-collapse text-sm">
-            <thead>
-              <tr className="bg-black/[0.03] text-left">
-                <th className="px-4 py-3 font-medium">Reference</th>
-                <th className="px-4 py-3 font-medium">Title</th>
-                <th className="px-4 py-3 font-medium">Amount</th>
-                <th className="px-4 py-3 font-medium">Status</th>
-                <th className="px-4 py-3 font-medium">Account number</th>
-                <th className="px-4 py-3 font-medium">IFSC code</th>
-              </tr>
-            </thead>
-            <tbody>
-              {claims.length === 0 ? (
-                <tr>
-                  <td className="px-4 py-6 text-muted-foreground" colSpan={6}>
-                    No claims are waiting on Finance right now.
-                  </td>
-                </tr>
-              ) : (
-                claims.map((claim) => (
-                  <tr key={claim.id} className="border-t border-black/10 odd:bg-muted/60">
-                    <td className="px-4 py-3">{claim.ref}</td>
-                    <td className="px-4 py-3">{claim.title}</td>
-                    <td className="px-4 py-3">₹{(claim.amountMinor / 100).toFixed(2)}</td>
-                    <td className="px-4 py-3">{claim.status}</td>
-                    <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
-                    <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
-                  </tr>
-                ))
-              )}
-            </tbody>
-          </table>
+        <div className="mt-8">
+          <PaymentQueueTable claims={claims} employees={workspace.employees} />
         </div>
       </div>
     </main>

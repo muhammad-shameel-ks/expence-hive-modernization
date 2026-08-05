@@ -1,6 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { createExpenseCommands } from "./commands";
-import { handleCreateExpenseRequest, handleFinancePaymentQueueRequest, handleSubmitExpenseRequest } from "./http";
+import {
+  handleCreateExpenseRequest,
+  handleFinancePaymentQueueRequest,
+  handleSubmitExpenseRequest,
+  handleUpdateCommentsRequest,
+} from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
 
 function build() {
@@ -34,6 +39,8 @@ describe("expense HTTP boundary", () => {
         body: JSON.stringify({
           title: "Client dinner",
           category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
           amount: "2400.00",
           expenseDate: "2026-08-04",
           paymentMethod: "Personal card",
@@ -52,6 +59,8 @@ describe("expense HTTP boundary", () => {
         status: "draft",
         amountMinor: 240000,
         currency: "INR",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
         attachment: { fileName: "receipt.jpg" },
         payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
       },
@@ -86,6 +95,8 @@ describe("expense HTTP boundary", () => {
         body: JSON.stringify({
           title: "Taxi",
           category: "Travel",
+          subCategory: "Cab/Taxi",
+          remark: "Airport pickup",
           amount: "850.00",
           expenseDate: "2026-08-04",
           paymentMethod: "Company card",
@@ -119,6 +130,8 @@ describe("expense HTTP boundary", () => {
         body: JSON.stringify({
           title: "No receipt taxi",
           category: "Travel",
+          subCategory: "Cab/Taxi",
+          remark: "No receipt available",
           amount: "500.00",
           expenseDate: "2026-08-04",
           paymentMethod: "Personal card",
@@ -151,6 +164,52 @@ describe("expense HTTP boundary", () => {
       new Request("http://localhost/api/expenses/finance-queue"),
       commands,
       "emp-shameel",
+    );
+    expect(deniedResponse.status).toBe(403);
+  });
+
+  it("lets Finance add a comment to a claim and rejects an employee", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          paymentMethod: "Personal card",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+
+    const okResponse = await handleUpdateCommentsRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/comments`, {
+        method: "PATCH",
+        body: JSON.stringify({ comments: "Awaiting invoice copy" }),
+      }),
+      commands,
+      "emp-finance",
+      claim.id,
+    );
+    expect(okResponse.status).toBe(200);
+    await expect(okResponse.json()).resolves.toMatchObject({ claim: { comments: "Awaiting invoice copy" } });
+
+    const deniedResponse = await handleUpdateCommentsRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/comments`, {
+        method: "PATCH",
+        body: JSON.stringify({ comments: "Not allowed" }),
+      }),
+      commands,
+      "emp-shameel",
+      claim.id,
     );
     expect(deniedResponse.status).toBe(403);
   });

@@ -211,6 +211,86 @@ describe("expense commands", () => {
     await expect(commands.listFinancePaymentQueue("emp-ceo")).rejects.toMatchObject({ code: "unauthorized" });
   });
 
+  it("captures sub category and remark on the draft and surfaces them on the finance queue", async () => {
+    const commands = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Bengaluru client flight",
+      category: "Travel",
+      subCategory: "Airfare",
+      remark: "Round trip for the Bengaluru client kickoff",
+      amountMinor: 1250000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      paymentMethod: "Personal card",
+      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
+    });
+
+    expect(draft).toMatchObject({ subCategory: "Airfare", remark: "Round trip for the Bengaluru client kickoff" });
+
+    await commands.submitClaim(employee.id, draft.id);
+    await commands.approveStage("emp-ada", draft.id);
+    await commands.approveStage("emp-it", draft.id);
+    await commands.approveStage("emp-ceo", draft.id);
+
+    const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
+    expect(financeQueue.find((claim) => claim.id === draft.id)).toMatchObject({
+      subCategory: "Airfare",
+      remark: "Round trip for the Bengaluru client kickoff",
+    });
+  });
+
+  it("lets Finance and HR add comments to a claim, but rejects everyone else", async () => {
+    const commands = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Bengaluru client flight",
+      category: "Travel",
+      subCategory: "Airfare",
+      remark: "Round trip for the Bengaluru client kickoff",
+      amountMinor: 1250000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      paymentMethod: "Personal card",
+      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
+    });
+
+    const updated = await commands.updateComments("emp-finance", draft.id, "Awaiting invoice copy before payout");
+    expect(updated.comments).toBe("Awaiting invoice copy before payout");
+
+    await expect(commands.updateComments("emp-grace", draft.id, "HR follow-up note")).resolves.toMatchObject({
+      comments: "HR follow-up note",
+    });
+
+    await expect(commands.updateComments(employee.id, draft.id, "Not allowed")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    await expect(commands.updateComments("emp-ada", draft.id, "Not allowed")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("hides Finance/HR comments from an approver, but shows them to the owner", async () => {
+    const commands = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Bengaluru client flight",
+      category: "Travel",
+      subCategory: "Airfare",
+      remark: "Round trip for the Bengaluru client kickoff",
+      amountMinor: 1250000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      paymentMethod: "Personal card",
+      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
+    });
+    await commands.updateComments("emp-finance", draft.id, "Awaiting invoice copy before payout");
+    await commands.submitClaim(employee.id, draft.id);
+
+    const managerClaims = await commands.listClaims("emp-ada");
+    expect(managerClaims.find((claim) => claim.id === draft.id)?.comments).toBeUndefined();
+
+    const ownerClaim = await commands.getClaim(employee.id, draft.id);
+    expect(ownerClaim.comments).toBe("Awaiting invoice copy before payout");
+  });
+
   it("prevents a requester from approving their own claim", async () => {
     const commands = buildCommands();
     const draft = await commands.createDraft(employee.id, {

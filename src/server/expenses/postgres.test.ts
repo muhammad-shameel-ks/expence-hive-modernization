@@ -11,6 +11,8 @@ function buildClaim(): ExpenseClaim {
     requesterId: "emp-shameel",
     title: "Bengaluru client flight",
     category: "Travel",
+    subCategory: "Airfare",
+    remark: "Round trip for the Bengaluru client kickoff",
     amountMinor: 1250000,
     currency: "INR",
     expenseDate: "2026-08-04",
@@ -36,7 +38,27 @@ describe("PostgresExpenseStore", () => {
     const insertCall = query.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO reimbursement_claims"));
     expect(insertCall?.[0]).toContain("account_number");
     expect(insertCall?.[0]).toContain("ifsc_code");
-    expect(insertCall?.[1]).toEqual(expect.arrayContaining(["32534240620", "SBIN0012861"]));
+    expect(insertCall?.[0]).toContain("sub_category");
+    expect(insertCall?.[0]).toContain("remark");
+    expect(insertCall?.[1]).toEqual(
+      expect.arrayContaining(["32534240620", "SBIN0012861", "Airfare", "Round trip for the Bengaluru client kickoff"]),
+    );
+  });
+
+  it("persists comments when updating a claim", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = buildClaim();
+    claim.comments = "Awaiting invoice copy before payout";
+    claim.version = 2;
+    await store.updateClaim(claim);
+
+    const updateCall = query.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("UPDATE reimbursement_claims"));
+    expect(updateCall?.[0]).toContain("comments");
+    expect(updateCall?.[1]).toEqual(expect.arrayContaining(["Awaiting invoice copy before payout"]));
   });
 
   it("maps account_number and ifsc_code columns back into payoutDetails", async () => {
@@ -51,6 +73,8 @@ describe("PostgresExpenseStore", () => {
               reference: "EXP-2026-0001",
               title: "Bengaluru client flight",
               category: "Travel",
+              sub_category: "Airfare",
+              remark: "Round trip for the Bengaluru client kickoff",
               amount_minor: "1250000",
               expense_date: "2026-08-04",
               payment_method: "Personal card",
@@ -62,6 +86,7 @@ describe("PostgresExpenseStore", () => {
               submitted_at: null,
               account_number: "32534240620",
               ifsc_code: "SBIN0012861",
+              comments: "Awaiting invoice copy before payout",
             },
           ],
         });
@@ -74,6 +99,11 @@ describe("PostgresExpenseStore", () => {
     const claim = await store.getClaim("claim-1");
 
     expect(claim?.payoutDetails).toEqual({ accountNumber: "32534240620", ifscCode: "SBIN0012861" });
+    expect(claim).toMatchObject({
+      subCategory: "Airfare",
+      remark: "Round trip for the Bengaluru client kickoff",
+      comments: "Awaiting invoice copy before payout",
+    });
   });
 
   it("lists every claim in an organization regardless of requester or assigned actor", async () => {

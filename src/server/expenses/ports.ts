@@ -54,6 +54,8 @@ export type ExpenseClaim = {
   requesterId: string;
   title: string;
   category: string;
+  subCategory: string;
+  remark: string;
   amountMinor: number;
   currency: "INR";
   expenseDate: string;
@@ -63,6 +65,7 @@ export type ExpenseClaim = {
   currentActorId?: string;
   attachment?: ExpenseAttachment;
   payoutDetails?: ExpensePayoutDetails;
+  comments?: string;
   steps: ExpenseStep[];
   history: ExpenseHistoryEvent[];
   version: number;
@@ -73,6 +76,8 @@ export type ExpenseClaim = {
 export type CreateExpenseDraftInput = {
   title: string;
   category: string;
+  subCategory: string;
+  remark: string;
   amountMinor: number;
   currency: string;
   expenseDate: string;

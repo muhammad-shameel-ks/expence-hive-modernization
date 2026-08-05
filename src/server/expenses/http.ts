@@ -12,6 +12,8 @@ export async function handleCreateExpenseRequest(
     if (
       typeof value.title !== "string" ||
       typeof value.category !== "string" ||
+      typeof value.subCategory !== "string" ||
+      typeof value.remark !== "string" ||
       typeof value.amount !== "string" ||
       typeof value.expenseDate !== "string" ||
       typeof value.paymentMethod !== "string" ||
@@ -27,6 +29,8 @@ export async function handleCreateExpenseRequest(
     const claim = await commands.createDraft(actorId, {
       title: value.title,
       category: value.category,
+      subCategory: value.subCategory,
+      remark: value.remark,
       amountMinor,
       currency: "INR",
       expenseDate: value.expenseDate,
@@ -101,6 +105,24 @@ export async function handleFinancePaymentQueueRequest(
   try {
     const claims = await commands.listFinancePaymentQueue(actorId);
     return Response.json({ claims });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleUpdateCommentsRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).comments !== "string") {
+      return validationResponse();
+    }
+    const claim = await commands.updateComments(actorId, claimId, (body as Record<string, unknown>).comments as string);
+    return Response.json({ claim });
   } catch (error) {
     return expenseErrorResponse(error);
   }
