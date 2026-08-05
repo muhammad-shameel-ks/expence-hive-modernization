@@ -6,7 +6,6 @@ import {
   ArrowRight,
   ArrowUp,
   CheckCircle2,
-  ChevronRight,
   Clock,
   Edit3,
   Eye,
@@ -14,8 +13,6 @@ import {
   GripVertical,
   Play,
   Plus,
-  ShieldCheck,
-  Sparkles,
   Trash2,
   Workflow,
   X,
@@ -29,8 +26,6 @@ type FlowStep = {
   id: number;
   roleId: string;
 };
-
-type BuilderVariant = "canvas" | "swimlane" | "wizard" | "form";
 
 export function FlowSection({
   flows,
@@ -49,8 +44,6 @@ export function FlowSection({
   const activeRoles = roles.filter((role) => role.active);
   const firstRoleId = activeRoles[0]?.id ?? "";
 
-  const [builderVariant, setBuilderVariant] = useState<BuilderVariant>("canvas");
-  const [wizardStep, setWizardStep] = useState<1 | 2 | 3>(1);
   const [simulatingStep, setSimulatingStep] = useState<number | null>(null);
 
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
@@ -58,7 +51,6 @@ export function FlowSection({
 
   const [flowName, setFlowName] = useState("Standard reimbursement");
   const [targetRoleId, setTargetRoleId] = useState(firstRoleId);
-  const [newStepRoleId, setNewStepRoleId] = useState(firstRoleId);
   const [steps, setSteps] = useState<FlowStep[]>(
     flows[0]?.steps.map((roleId, index) => ({ id: index, roleId })) ?? [],
   );
@@ -242,59 +234,7 @@ export function FlowSection({
         description="Design ordered role pipelines. Every employee holding the assigned role will follow this approval path."
       />
 
-      {/* Builder Variant Switcher Toolbar */}
-      <div className="mt-5 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#e1e7ee] bg-white p-3.5 shadow-2xs">
-        <div className="flex items-center gap-2 text-xs font-bold text-[#1c2f46]">
-          <Sparkles className="size-4 text-[#196d86]" />
-          <span>Visual Builder UX Style:</span>
-        </div>
-        <div className="flex flex-wrap items-center gap-1.5">
-          <button
-            onClick={() => setBuilderVariant("canvas")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-              builderVariant === "canvas"
-                ? "bg-[#196d86] text-white shadow-xs"
-                : "bg-[#f1f5f9] text-[#475569] hover:bg-[#e2e8f0]"
-            }`}
-          >
-            🕸️ Visual Node Canvas
-          </button>
-          <button
-            onClick={() => setBuilderVariant("swimlane")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-              builderVariant === "swimlane"
-                ? "bg-[#196d86] text-white shadow-xs"
-                : "bg-[#f1f5f9] text-[#475569] hover:bg-[#e2e8f0]"
-            }`}
-          >
-            📊 Swimlane Pipeline
-          </button>
-          <button
-            onClick={() => setBuilderVariant("wizard")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-              builderVariant === "wizard"
-                ? "bg-[#196d86] text-white shadow-xs"
-                : "bg-[#f1f5f9] text-[#475569] hover:bg-[#e2e8f0]"
-            }`}
-          >
-            🪄 Guided Wizard
-          </button>
-          <button
-            onClick={() => setBuilderVariant("form")}
-            className={`rounded-lg px-3 py-1.5 text-xs font-semibold transition-all ${
-              builderVariant === "form"
-                ? "bg-[#196d86] text-white shadow-xs"
-                : "bg-[#f1f5f9] text-[#475569] hover:bg-[#e2e8f0]"
-            }`}
-          >
-            📝 Classic Form
-          </button>
-        </div>
-      </div>
-
-      {/* VARIANT 1: VISUAL NODE CANVAS BUILDER WITH DRAG AND DROP */}
-      {builderVariant === "canvas" ? (
-        <div className="mt-5 rounded-2xl border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
+      <div className="mt-5 rounded-2xl border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
           {/* Controls Bar */}
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eef2f6] pb-5">
             <div className="flex flex-wrap items-center gap-4">
@@ -526,300 +466,6 @@ export function FlowSection({
             </div>
           </div>
         </div>
-      ) : null}
-
-      {/* VARIANT 2: SWIMLANE PIPELINE BUILDER WITH DRAG AND DROP */}
-      {builderVariant === "swimlane" ? (
-        <div className="mt-5 rounded-2xl border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
-          <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eef2f6] pb-4">
-            <div>
-              <h3 className="font-bold text-[#1c2f46]">Swimlane Approval Pipeline</h3>
-              <p className="text-xs text-[#7d8a9b]">
-                {flowName} · Assigned to {roleName(targetRoleId)}
-              </p>
-            </div>
-            <Button
-              className="bg-[#196d86] hover:bg-[#175d75]"
-              size="sm"
-              disabled={saving || !targetRoleId || steps.length === 0}
-              onClick={saveFlowDraft}
-            >
-              {saving ? "Saving..." : "Save Flow Draft"}
-              <ArrowRight className="size-3.5" />
-            </Button>
-          </div>
-
-          <div className="mt-5 grid gap-4 md:grid-cols-3">
-            {steps.map((step, index) => {
-              const isDragging = draggedIndex === index;
-              const isDragOver = dragOverIndex === index;
-              return (
-                <div
-                  key={step.id}
-                  draggable={true}
-                  onDragStart={(e) => {
-                    e.dataTransfer.setData("text/plain", String(index));
-                    setDraggedIndex(index);
-                  }}
-                  onDragOver={(e) => {
-                    e.preventDefault();
-                    e.dataTransfer.dropEffect = "move";
-                  }}
-                  onDragEnter={() => setDragOverIndex(index)}
-                  onDragLeave={() => setDragOverIndex(null)}
-                  onDrop={(e) => {
-                    e.preventDefault();
-                    handleDrop(index);
-                  }}
-                  onDragEnd={() => {
-                    setDraggedIndex(null);
-                    setDragOverIndex(null);
-                  }}
-                  className={`rounded-2xl border p-4 shadow-sm transition-all cursor-grab active:cursor-grabbing ${
-                    isDragging
-                      ? "opacity-40 border-dashed border-[#196d86] bg-[#e8f2f6] scale-95"
-                      : isDragOver
-                        ? "border-[#196d86] ring-4 ring-[#b7d8e5] bg-[#e8f2f6] scale-105"
-                        : "border-[#cbd5e1] bg-[#f8fafc] hover:border-[#196d86]"
-                  }`}
-                >
-                  <div className="flex items-center justify-between border-b border-[#e2e8f0] pb-2">
-                    <span className="flex items-center gap-1 rounded-full bg-[#196d86] px-2.5 py-0.5 text-[0.65rem] font-bold text-white">
-                      <GripVertical className="size-3 text-white/80" /> Stage {index + 1}
-                    </span>
-                    <div className="flex items-center gap-1">
-                      <button aria-label="Move left" disabled={index === 0} onClick={() => moveStep(index, -1)} className="rounded-md p-1 text-[#94a3b8] hover:bg-white hover:text-[#334155] disabled:opacity-30">
-                        <ArrowUp className="size-3.5 -rotate-90" />
-                      </button>
-                      <button aria-label="Move right" disabled={index === steps.length - 1} onClick={() => moveStep(index, 1)} className="rounded-md p-1 text-[#94a3b8] hover:bg-white hover:text-[#334155] disabled:opacity-30">
-                        <ArrowDown className="size-3.5 -rotate-90" />
-                      </button>
-                      <button aria-label="Remove stage" onClick={() => setSteps((current) => current.filter((item) => item.id !== step.id))} className="rounded-md p-1 text-[#cbd5e1] hover:bg-[#fdf0f2] hover:text-[#a8384d]">
-                        <X className="size-3.5" />
-                      </button>
-                    </div>
-                  </div>
-
-                  <div className="mt-4">
-                    <label className="text-[0.62rem] font-bold uppercase tracking-wider text-[#64748b]" htmlFor={`swimlane-role-${step.id}`}>Assigned Role</label>
-                    <select
-                      id={`swimlane-role-${step.id}`}
-                      className="mt-1 h-9 w-full rounded-lg border border-[#cbd5e1] bg-white px-3 text-xs font-semibold text-[#1e293b] outline-none focus:ring-2 focus:ring-[#b7d8e5]"
-                      value={step.roleId}
-                      onChange={(e) => {
-                        const newRole = e.target.value;
-                        setSteps((current) => current.map((item) => item.id === step.id ? { ...item, roleId: newRole } : item));
-                      }}
-                    >
-                      {activeRoles.map((role) => (
-                        <option key={role.id} value={role.id}>{role.displayName}</option>
-                      ))}
-                    </select>
-                  </div>
-
-                  <div className="mt-4 rounded-xl border border-[#e2e8f0] bg-white p-3 text-xs text-[#64748b]">
-                    <div className="flex items-center gap-1.5 font-medium">
-                      <ShieldCheck className="size-3.5 text-[#196d86]" />
-                      <span>Stage Policy</span>
-                    </div>
-                    <p className="mt-1 text-[0.68rem]">
-                      Approver receives real-time notification. Absent roles auto-skip after 3 days.
-                    </p>
-                  </div>
-                </div>
-              );
-            })}
-
-            <button
-              onClick={() => addStep()}
-              className="flex min-h-[180px] flex-col items-center justify-center rounded-2xl border-2 border-dashed border-[#cbd5e1] bg-white p-6 text-xs font-semibold text-[#64748b] transition-all hover:border-[#196d86] hover:bg-[#f8fafc] hover:text-[#196d86]"
-            >
-              <Plus className="size-6 mb-2 text-[#94a3b8]" />
-              Add Swimlane Stage
-            </button>
-          </div>
-        </div>
-      ) : null}
-
-      {/* VARIANT 3: GUIDED WIZARD BUILDER */}
-      {builderVariant === "wizard" ? (
-        <div className="mt-5 rounded-2xl border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
-          {/* Stepper Progress Header */}
-          <div className="mb-6 flex flex-wrap items-center justify-between gap-4 border-b border-[#eef2f6] pb-5">
-            <div className="flex items-center gap-3 text-xs font-bold">
-              <span className={`grid size-7 place-items-center rounded-full ${
-                wizardStep === 1 ? "bg-[#196d86] text-white" : "bg-[#e2e8f0] text-[#475569]"
-              }`}>1</span>
-              <span className={wizardStep === 1 ? "text-[#1c2f46]" : "text-[#94a3b8]"}>Scope & Role</span>
-
-              <ChevronRight className="size-4 text-[#cbd5e1]" />
-
-              <span className={`grid size-7 place-items-center rounded-full ${
-                wizardStep === 2 ? "bg-[#196d86] text-white" : "bg-[#e2e8f0] text-[#475569]"
-              }`}>2</span>
-              <span className={wizardStep === 2 ? "text-[#1c2f46]" : "text-[#94a3b8]"}>Approval Stages ({steps.length})</span>
-
-              <ChevronRight className="size-4 text-[#cbd5e1]" />
-
-              <span className={`grid size-7 place-items-center rounded-full ${
-                wizardStep === 3 ? "bg-[#196d86] text-white" : "bg-[#e2e8f0] text-[#475569]"
-              }`}>3</span>
-              <span className={wizardStep === 3 ? "text-[#1c2f46]" : "text-[#94a3b8]"}>Review & Save</span>
-            </div>
-          </div>
-
-          {/* Step 1: Scope */}
-          {wizardStep === 1 ? (
-            <div className="space-y-4 max-w-xl">
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-[#64748b]" htmlFor="wizard-flow-name">Flow Title</label>
-                <input id="wizard-flow-name" className="mt-1.5 h-10 w-full rounded-xl border border-[#cbd5e1] px-3 text-sm font-semibold text-[#1e293b]" value={flowName} onChange={(e) => setFlowName(e.target.value)} />
-              </div>
-              <div>
-                <label className="text-xs font-bold uppercase tracking-wider text-[#64748b]" htmlFor="wizard-target-role">Assign To Requester Role</label>
-                <select id="wizard-target-role" className="mt-1.5 h-10 w-full rounded-xl border border-[#cbd5e1] bg-white px-3 text-xs font-semibold text-[#334155]" value={targetRoleId} onChange={(e) => setTargetRoleId(e.target.value)}>
-                  {activeRoles.map((role) => (
-                    <option key={role.id} value={role.id}>{role.displayName}</option>
-                  ))}
-                </select>
-              </div>
-              <Button className="mt-4 bg-[#196d86]" onClick={() => setWizardStep(2)}>
-                Next: Build Stages <ArrowRight className="size-3.5" />
-              </Button>
-            </div>
-          ) : null}
-
-          {/* Step 2: Stages */}
-          {wizardStep === 2 ? (
-            <div>
-              <div className="mb-4 flex items-center justify-between">
-                <span className="text-xs font-bold text-[#334155]">Sequence of Approvers:</span>
-                <Button variant="outline" size="sm" onClick={() => addStep()}>
-                  <Plus /> Add Role Stage
-                </Button>
-              </div>
-              <div className="space-y-2">
-                {steps.map((step, idx) => (
-                  <div key={step.id} className="flex items-center gap-3 rounded-xl border border-[#e2e8f0] bg-[#f8fafc] p-3 text-xs">
-                    <span className="grid size-7 place-items-center rounded-full bg-[#196d86] text-xs font-bold text-white">{idx + 1}</span>
-                    <select
-                      aria-label={`Role for step ${idx + 1}`}
-                      className="h-8 flex-1 rounded-lg border border-[#cbd5e1] bg-white px-3 font-semibold text-[#1e293b]"
-                      value={step.roleId}
-                      onChange={(e) => {
-                        const newRole = e.target.value;
-                        setSteps((current) => current.map((item) => item.id === step.id ? { ...item, roleId: newRole } : item));
-                      }}
-                    >
-                      {activeRoles.map((role) => (
-                        <option key={role.id} value={role.id}>{role.displayName}</option>
-                      ))}
-                    </select>
-                    <button aria-label="Remove step" onClick={() => setSteps((current) => current.filter((item) => item.id !== step.id))} className="text-[#cbd5e1] hover:text-[#a8384d]">
-                      <X className="size-4" />
-                    </button>
-                  </div>
-                ))}
-              </div>
-              <div className="mt-6 flex items-center gap-3">
-                <Button variant="outline" onClick={() => setWizardStep(1)}>Back</Button>
-                <Button className="bg-[#196d86]" onClick={() => setWizardStep(3)}>Next: Review & Save <ArrowRight className="size-3.5" /></Button>
-              </div>
-            </div>
-          ) : null}
-
-          {/* Step 3: Review & Simulate */}
-          {wizardStep === 3 ? (
-            <div>
-              <div className="rounded-xl border border-[#b7d8e5] bg-[#e8f2f6] p-4 text-xs">
-                <strong className="block text-sm font-bold text-[#175d75]">{flowName}</strong>
-                <p className="mt-1 text-[#475569]">
-                  Assigned to <span className="font-bold">{roleName(targetRoleId)}</span> · {steps.length} approval stages
-                </p>
-                <div className="mt-3 flex flex-wrap items-center gap-2">
-                  {steps.map((step, idx) => (
-                    <span key={step.id} className="rounded-md bg-white px-2.5 py-1 font-semibold text-[#1e293b] shadow-2xs">
-                      {idx + 1}. {roleName(step.roleId)}
-                    </span>
-                  ))}
-                </div>
-              </div>
-
-              <div className="mt-6 flex items-center gap-3">
-                <Button variant="outline" onClick={() => setWizardStep(2)}>Back to Edit</Button>
-                <Button className="bg-[#196d86]" disabled={saving} onClick={saveFlowDraft}>
-                  {saving ? "Saving..." : "Save Flow Draft"}
-                  <ArrowRight className="size-3.5" />
-                </Button>
-              </div>
-            </div>
-          ) : null}
-        </div>
-      ) : null}
-
-      {/* VARIANT 4: CLASSIC FORM BUILDER */}
-      {builderVariant === "form" ? (
-        <div className="mt-5 grid gap-5 lg:grid-cols-[0.85fr_1.15fr]">
-          <div className="rounded-[18px] border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
-            <label className="text-xs font-bold uppercase tracking-[0.08em] text-[#8a96a8]" htmlFor="classic-flow-name">Flow name</label>
-            <input id="classic-flow-name" className="mt-2 h-10 w-full rounded-lg border border-[#d6dfe8] px-3 text-sm font-semibold text-[#33445c] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5]" value={flowName} onChange={(event) => setFlowName(event.target.value)} />
-            <label className="mt-5 block text-xs font-bold uppercase tracking-[0.08em] text-[#8a96a8]" htmlFor="classic-flow-role">Assign this flow to role</label>
-            <select id="classic-flow-role" className="mt-2 h-10 w-full rounded-lg border border-[#d6dfe8] bg-white px-3 text-sm text-[#526278] outline-none focus:ring-2 focus:ring-[#b7d8e5]" value={targetRoleId} onChange={(event) => setTargetRoleId(event.target.value)}>
-              {activeRoles.map((role) => (
-                <option key={role.id} value={role.id}>{role.displayName}</option>
-              ))}
-            </select>
-            <div className="mt-6 rounded-xl border border-[#dce8ed] bg-[#f2f7fa] p-4">
-              <div className="flex gap-3">
-                <ShieldCheck className="mt-0.5 size-4 shrink-0 text-[#196d86]" />
-                <p className="text-xs leading-5 text-[#526278]">
-                  Every request from an employee holding the assigned role follows this flow. Publish it to make it take effect on new requests.
-                </p>
-              </div>
-            </div>
-          </div>
-          <div className="rounded-[18px] border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
-            <div className="flex items-start justify-between gap-4">
-              <div>
-                <h3 className="font-semibold text-[#1c2f46]">{flowName || "Untitled flow"}</h3>
-                <p className="mt-1 text-xs text-[#8a96a8]">{roleName(targetRoleId)} · {steps.length} approval steps</p>
-              </div>
-              <span className="rounded-full border border-[#d6dfe8] px-2.5 py-1 text-[0.62rem] font-bold uppercase tracking-[0.08em] text-[#8a96a8]">Draft</span>
-            </div>
-            <div className="mt-6 space-y-2">
-              {steps.map((step, index) => (
-                <FlowStepRow
-                  key={step.id}
-                  label={roleName(step.roleId)}
-                  index={index}
-                  total={steps.length}
-                  onMove={moveStep}
-                  onRemove={() => setSteps((current) => current.filter((item) => item.id !== step.id))}
-                />
-              ))}
-            </div>
-            <div className="mt-4 flex flex-wrap gap-2 border-t border-[#eef2f6] pt-4">
-              <label className="sr-only" htmlFor="classic-role-to-add">Role to add</label>
-              <select id="classic-role-to-add" className="h-9 min-w-[170px] flex-1 rounded-lg border border-[#d6dfe8] bg-white px-3 text-xs font-semibold text-[#526278] outline-none focus:ring-2 focus:ring-[#b7d8e5]" value={newStepRoleId} onChange={(event) => setNewStepRoleId(event.target.value)}>
-                {activeRoles.map((role) => (
-                  <option key={role.id} value={role.id}>{role.displayName}</option>
-                ))}
-              </select>
-              <Button variant="outline" onClick={() => addStep()}>
-                <Plus /> Add role
-              </Button>
-            </div>
-            <Button
-              className="mt-5 w-full bg-[#196d86] hover:bg-[#175d75]"
-              disabled={saving || !targetRoleId || steps.length === 0}
-              onClick={saveFlowDraft}
-            >
-              {saving ? "Saving..." : "Save flow draft"}
-              <ArrowRight />
-            </Button>
-          </div>
-        </div>
-      ) : null}
 
       {/* Existing Flows List */}
       {flowsState.length > 0 ? (
