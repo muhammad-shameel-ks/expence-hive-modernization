@@ -87,6 +87,30 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(422);
   });
 
+  it("rejects a draft submitted with whitespace-only payout details", async () => {
+    const { commands } = build();
+    const response = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          paymentMethod: "Personal card",
+          accountNumber: "   ",
+          ifscCode: "   ",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(422);
+  });
+
   it("submits a draft through a protected command boundary", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(

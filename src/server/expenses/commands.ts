@@ -287,4 +287,7 @@ function validateDraft(input: CreateExpenseDraftInput): void {
   if (input.paymentMethod !== "Personal card" && input.paymentMethod !== "Company card") {
     throw new ExpenseError("validation", "Choose how you paid.");
   }
+  if (input.payoutDetails && (!input.payoutDetails.accountNumber?.trim() || !input.payoutDetails.ifscCode?.trim())) {
+    throw new ExpenseError("validation", "Enter a valid account number and IFSC code.");
+  }
 }

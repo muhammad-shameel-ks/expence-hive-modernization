@@ -330,6 +330,9 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                         onBlur={(e) => {
                           if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
                         }}
+                        onKeyDown={(e) => {
+                          if (e.key === "Enter") e.currentTarget.blur();
+                        }}
                         className="h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                       />
                     </td>
