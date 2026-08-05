@@ -1,10 +1,28 @@
-import type {
-  CreateExpenseDraftInput,
-  ExpenseClaim,
-  ExpenseEmployee,
-  ExpenseStage,
-  ExpenseStore,
+import {
+  FINANCE_OR_HR_ROLES,
+  type CreateExpenseDraftInput,
+  type ExpenseClaim,
+  type ExpenseEmployee,
+  type ExpenseStage,
+  type ExpenseStore,
 } from "./ports";
+
+function isFinanceOrHr(employee: ExpenseEmployee): boolean {
+  return employee.roleCodes.some((role) => FINANCE_OR_HR_ROLES.includes(role));
+}
+
+function canSeePayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
+  if (claim.requesterId === viewer.id) return true;
+  return isFinanceOrHr(viewer);
+}
+
+function maskPayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): ExpenseClaim {
+  if (canSeePayoutDetails(claim, viewer)) return claim;
+  const masked = { ...claim };
+  delete masked.payoutDetails;
+  delete masked.comments;
+  return masked;
+}
 
 export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict";
 
@@ -30,6 +48,8 @@ export type ExpenseCommands = {
   approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  listFinancePaymentQueue(actorId: string): Promise<ExpenseClaim[]>;
+  updateComments(actorId: string, claimId: string, comments: string): Promise<ExpenseClaim>;
 };
 
 export function createExpenseCommands({
@@ -89,6 +109,8 @@ export function createExpenseCommands({
         requesterId: actorId,
         title: input.title.trim(),
         category: input.category.trim(),
+        subCategory: (input.subCategory ?? "").trim(),
+        remark: (input.remark ?? "").trim(),
         amountMinor: input.amountMinor,
         currency: "INR",
         expenseDate: input.expenseDate,
@@ -97,6 +119,7 @@ export function createExpenseCommands({
         attachment: input.attachment
           ? { ...input.attachment, id: idFactory("attachment"), status: "available" }
           : undefined,
+        payoutDetails: { ...input.payoutDetails },
         steps: [],
         history: [{ id: idFactory("history"), kind: "draft", actorId, createdAt }],
         version: 1,
@@ -107,12 +130,15 @@ export function createExpenseCommands({
     },
 
     async getClaim(actorId, claimId) {
-      return requireClaim(actorId, claimId);
+      const employee = await requireEmployee(actorId);
+      const claim = await requireClaim(actorId, claimId);
+      return maskPayoutDetails(claim, employee);
     },
 
     async listClaims(actorId) {
       const employee = await requireEmployee(actorId);
-      return store.listClaimsForEmployee(employee);
+      const claims = await store.listClaimsForEmployee(employee);
+      return claims.map((claim) => maskPayoutDetails(claim, employee));
     },
 
     async getWorkspace(actorId) {
@@ -121,7 +147,7 @@ export function createExpenseCommands({
         store.listEmployees(employee.organizationId),
         store.listClaimsForEmployee(employee),
       ]);
-      return { employee, employees, claims };
+      return { employee, employees, claims: claims.map((claim) => maskPayoutDetails(claim, employee)) };
     },
 
     async submitClaim(actorId, claimId) {
@@ -219,6 +245,32 @@ export function createExpenseCommands({
       await store.updateClaim(claim);
       return claim;
     },
+
+    async listFinancePaymentQueue(actorId) {
+      const employee = await requireEmployee(actorId);
+      if (!isFinanceOrHr(employee)) {
+        throw new ExpenseError("unauthorized", "Only Finance or HR can view the payment queue.");
+      }
+      const claims = await store.listClaimsForOrganization(employee.organizationId);
+      return claims.filter(
+        (claim) => claim.currentStage === "finance" || claim.status === "in-finance" || claim.status === "paid",
+      );
+    },
+
+    async updateComments(actorId, claimId, comments) {
+      const employee = await requireEmployee(actorId);
+      if (!isFinanceOrHr(employee)) {
+        throw new ExpenseError("unauthorized", "Only Finance or HR can add comments.");
+      }
+      const claim = await store.getClaim(claimId);
+      if (!claim || claim.organizationId !== employee.organizationId) {
+        throw new ExpenseError("not-found", "Expense claim does not exist.");
+      }
+      claim.comments = comments.trim();
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
+    },
   };
 }
 
@@ -234,5 +286,8 @@ function validateDraft(input: CreateExpenseDraftInput): void {
   }
   if (input.paymentMethod !== "Personal card" && input.paymentMethod !== "Company card") {
     throw new ExpenseError("validation", "Choose how you paid.");
+  }
+  if (input.payoutDetails && (!input.payoutDetails.accountNumber?.trim() || !input.payoutDetails.ifscCode?.trim())) {
+    throw new ExpenseError("validation", "Enter a valid account number and IFSC code.");
   }
 }

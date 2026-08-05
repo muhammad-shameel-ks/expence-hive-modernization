@@ -1,4 +1,4 @@
-import type { ExpenseRoleCode } from "@/server/expenses/ports";
+import { FINANCE_OR_HR_ROLES, type ExpenseRoleCode } from "@/server/expenses/ports";
 import styles from "@/app/expenses/expenses.module.css";
 
 const APPROVER_ROLES: ExpenseRoleCode[] = ["manager", "it-reviewer", "finance-reviewer", "ceo"];
@@ -10,9 +10,10 @@ export function AppHeader({
 }: {
   employeeName: string;
   roleCodes?: ExpenseRoleCode[];
-  activePath?: "/expenses" | "/expenses/all";
+  activePath?: "/expenses" | "/expenses/all" | "/finance/payments";
 }) {
   const isApprover = roleCodes.some((role) => APPROVER_ROLES.includes(role));
+  const canViewPaymentQueue = roleCodes.some((role) => FINANCE_OR_HR_ROLES.includes(role));
 
   return (
     <header className={styles.topBar}>
@@ -43,6 +44,14 @@ export function AppHeader({
           <span className={styles.navLink} title="Coming in a later milestone">
             Approvals
           </span>
+        ) : null}
+        {canViewPaymentQueue ? (
+          <a
+            className={`${styles.navLink} ${activePath === "/finance/payments" ? styles.navLinkActive : ""}`}
+            href="/finance/payments"
+          >
+            Payment queue
+          </a>
         ) : null}
       </nav>
 

@@ -55,6 +55,16 @@ It separates confirmed business direction from recommendations and unresolved de
 - Microsoft Graph may supply people and directory attributes, but ExpenseHive is authoritative for approval relationships.
 - An active request keeps the workflow version that was assigned when the request started.
 - The current implementation does not route approvals by category.
+- A reimbursement claim captures Payout Details (account number and IFSC code) per claim at submission, rather than storing them once on the employee profile.
+- Payout Details are visible only to the claim's owner, Finance, and HR.
+- Approvers acting on a claim (manager, IT, CEO) do not see Payout Details; approval does not require payout information.
+- Status, payment status, and approval timestamps are workflow state, not payout data, and remain visible to the claim owner and approvers in the chain.
+- Finance payment processing (verifying Payout Details and marking a claim paid) is a distinct view from HR's administrative Requests browsing page, with its own access rule rather than reusing the HR admin console.
+- HR is added as an explicit value in the expense-side role system so claim and payment authorization has one place to check, instead of only existing in the separate administrative role system.
+- The legacy Reimbursement Requests table's remaining columns (Sub Category, Remark, Comments, Payment Status, Approved On) are carried into the new Finance Payment View so Finance and HR keep the columns they already rely on.
+- Sub Category and Remark are captured by the employee on the expense creation flow, alongside Category, the same way Payout Details are.
+- Comments is authored by Finance or HR after submission, not by the employee, and is edited directly from the Finance Payment View.
+- Payment Status and Approved On are not new stored fields; Payment Status is derived from claim status (`paid` versus everything else in the Finance queue), and Approved On is derived from the last `approved` history event, matching the existing "workflow state stays visible, payout data stays restricted" split.
 
 ## Recommendations
 
@@ -178,6 +188,14 @@ The post-approval check of receipts, payment details, and other payment prerequi
 
 The execution or recording of money being paid after approval and Finance verification.
 
+### Payout Details
+
+The account number and IFSC code an employee provides on a reimbursement claim so Finance can pay it. Visible only to the claim's owner, Finance, and HR.
+
+### Finance Payment View
+
+The Finance-facing screen for verifying Payout Details and marking claims paid, distinct from HR's administrative Requests browsing page.
+
 ## Current Implementation Findings
 
 - `Category` currently has only code, name, and active state in `aspnet-core/src/ExpenseHive.Application.Contracts/Categories/CategoryDto .cs`.
@@ -186,6 +204,8 @@ The execution or recording of money being paid after approval and Finance verifi
 - Approval routing is implemented with fixed ABP role names and an `ApprovalStatus` enum.
 - The legacy model stores role-specific comments and a single status on `Reimbursement` rather than separate request-specific approval steps.
 - The existing Graph integration sends email and does not import employee hierarchy data.
+- The Next.js rebuild has two disconnected role systems today: `AdminRole` (`src/server/admin/ports.ts`, includes `hr-administrator`) for the admin console, and `ExpenseRoleCode` (`src/server/expenses/ports.ts`, `employee | manager | it-reviewer | ceo | finance-reviewer`) for claim/payment authorization. HR has no access to expense or payment code today because it only exists in the former.
+- `reimbursement_claims` and `claim_payments` (`db/migrations/0005_reimbursement_claims.sql`) have no account number or IFSC code columns; Payout Details do not exist anywhere in the new schema yet and must be added.
 
 ## Open Questions
 
@@ -197,3 +217,4 @@ The execution or recording of money being paid after approval and Finance verifi
 - How should CEO safe-list entries be displayed and revoked by the CEO?
 - What reason codes are available for a CEO hierarchy override?
 - Should higher-stage takeover reason codes be shared with CEO override reason codes?
+- The admin side already has a separate `hr-administrator` AdminRole (used for flow-builder/admin console authorization). Should that stay independent from the new expense-side `hr` role, or should the two be kept in sync per employee?

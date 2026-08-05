@@ -11,7 +11,7 @@ export function expenseCommands(): ExpenseCommands {
   if (process.env.NODE_ENV === "production") {
     throw new Error("The development expense adapter must not run in production.");
   }
-  if (!globalStore[globalKey] || typeof globalStore[globalKey]?.approveStage !== "function") {
+  if (!globalStore[globalKey] || typeof globalStore[globalKey]?.updateComments !== "function") {
     const pool = new Pool({ connectionString: databaseUrl });
     globalStore[globalKey] = createExpenseCommands({ store: new PostgresExpenseStore(pool) });
   }
