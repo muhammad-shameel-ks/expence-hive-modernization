@@ -16,6 +16,11 @@ const EMPLOYEES = [
   { id: "emp-finance", name: "Finance Officer", email: "finance@hive.local", department: "Finance" },
   { id: "emp-it", name: "IT Head", email: "it@hive.local", department: "IT" },
   { id: "emp-shameel", name: "Muhammad Shameel", email: "muhammadshameelks@hive.local", department: "Engineering" },
+  { id: "emp-abilash", name: "Abilash", email: "abilash@hive.local", department: "IT" },
+  { id: "emp-sanil", name: "Sanil Davis", email: "sanil@hive.local", department: "IT" },
+  { id: "emp-arun", name: "Arun Kumar", email: "arun@hive.local", department: "IT" },
+  { id: "emp-pramod", name: "Pramod", email: "pramod@hive.local", department: "IT" },
+  { id: "emp-rishikesh", name: "Rishikesh", email: "rishikesh@hive.local", department: "IT" },
 ];
 
 const DEPARTMENTS = ["Engineering", "Operations", "Finance", "IT", "Executive"];
@@ -30,6 +35,8 @@ const DEPARTMENTS = ["Engineering", "Operations", "Finance", "IT", "Executive"];
 const ROLES = [
   { code: "employee", displayName: "Employee" },
   { code: "manager", displayName: "Manager" },
+  { code: "team-lead", displayName: "Team Lead" },
+  { code: "finance-head", displayName: "Finance Head" },
   { code: "finance-reviewer", displayName: "Finance reviewer" },
   { code: "it-reviewer", displayName: "IT reviewer" },
   { code: "hr-administrator", displayName: "HR administrator" },
@@ -45,6 +52,11 @@ const EMPLOYEE_ROLES = [
   { employeeId: "emp-finance", roleCode: "finance-reviewer" },
   { employeeId: "emp-it", roleCode: "it-reviewer" },
   { employeeId: "emp-superadmin", roleCode: "superadmin" },
+  { employeeId: "emp-abilash", roleCode: "team-lead" },
+  { employeeId: "emp-sanil", roleCode: "manager" },
+  { employeeId: "emp-arun", roleCode: "manager" },
+  { employeeId: "emp-pramod", roleCode: "finance-head" },
+  { employeeId: "emp-rishikesh", roleCode: "finance-reviewer" },
 ];
 
 // Published (not draft) so submitClaim can resolve it for the "employee"
@@ -199,7 +211,7 @@ async function main() {
       await client.query(
         `INSERT INTO roles (id, organization_id, code, display_name)
          VALUES ($1, $2, $3, $4)
-         ON CONFLICT (id) DO UPDATE SET display_name = EXCLUDED.display_name`,
+         ON CONFLICT (organization_id, code) DO UPDATE SET display_name = EXCLUDED.display_name`,
         [`role-${role.code}`, ORGANIZATION.id, role.code, role.displayName],
       );
     }
@@ -210,15 +222,25 @@ async function main() {
     );
 
     for (const assignment of EMPLOYEE_ROLES) {
-      const roleId = `role-${assignment.roleCode}`;
-      await client.query(
-        `INSERT INTO employee_roles (employee_id, role_id) VALUES ($1, $2)
-         ON CONFLICT (employee_id, role_id) DO NOTHING`,
-        [assignment.employeeId, roleId],
+      const roleResult = await client.query(
+        "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
+        [ORGANIZATION.id, assignment.roleCode],
       );
+      if (roleResult.rows.length > 0) {
+        const roleId = roleResult.rows[0].id;
+        await client.query(
+          `INSERT INTO employee_roles (employee_id, role_id) VALUES ($1, $2)
+           ON CONFLICT (employee_id, role_id) DO NOTHING`,
+          [assignment.employeeId, roleId],
+        );
+      }
     }
 
-    const flowTargetRoleId = `role-${FLOW.targetRoleCode}`;
+    const targetRoleRes = await client.query(
+      "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
+      [ORGANIZATION.id, FLOW.targetRoleCode],
+    );
+    const flowTargetRoleId = targetRoleRes.rows[0]?.id ?? `role-${FLOW.targetRoleCode}`;
     const existingFlow = await client.query(
       "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
       [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
@@ -228,26 +250,29 @@ async function main() {
       const insertedFlow = await client.query(
         `INSERT INTO flows (id, organization_id, name, role_id, status)
          VALUES ($1, $2, $3, $4, 'published')
-         ON CONFLICT (role_id) WHERE status = 'published'
-         DO NOTHING
          RETURNING id`,
         [`flow-${crypto.randomUUID()}`, ORGANIZATION.id, FLOW.name, flowTargetRoleId],
       );
       flowId = insertedFlow.rows[0]?.id;
       if (flowId) {
         for (let index = 0; index < FLOW.steps.length; index += 1) {
+          const stepRoleRes = await client.query(
+            "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
+            [ORGANIZATION.id, FLOW.steps[index]],
+          );
+          const stepRoleId = stepRoleRes.rows[0]?.id ?? `role-${FLOW.steps[index]}`;
           await client.query(
             "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
-            [flowId, index, `role-${FLOW.steps[index]}`],
+            [flowId, index, stepRoleId],
           );
         }
-      } else {
-        const concurrentFlow = await client.query(
-          "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
-          [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
-        );
-        flowId = concurrentFlow.rows[0]?.id;
       }
+    } else {
+      const concurrentFlow = await client.query(
+        "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
+        [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
+      );
+      flowId = concurrentFlow.rows[0]?.id;
     }
     if (!flowId) {
       throw new Error("Could not create or find the seeded flow.");

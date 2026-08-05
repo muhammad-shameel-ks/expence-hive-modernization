@@ -159,6 +159,48 @@ describe("expense commands", () => {
     expect(submitted.history.map((event) => event.kind)).toEqual(["draft", "submitted"]);
   });
 
+  it("routes approval to the manager of the requester's department for department-scoped roles", async () => {
+    const engManager: ExpenseEmployee = {
+      id: "emp-eng-mgr",
+      organizationId: "org-1",
+      name: "Eng Manager",
+      departmentId: "dept-eng",
+      role: { id: "role-mgr-eng", code: "manager", displayName: "Engineering Manager", departmentId: "dept-eng" },
+    };
+    const salesManager: ExpenseEmployee = {
+      id: "emp-sales-mgr",
+      organizationId: "org-1",
+      name: "Sales Manager",
+      departmentId: "dept-sales",
+      role: { id: "role-mgr-sales", code: "manager", displayName: "Sales Manager", departmentId: "dept-sales" },
+    };
+    const engEmployee: ExpenseEmployee = {
+      id: "emp-eng-user",
+      organizationId: "org-1",
+      name: "Shameel",
+      departmentId: "dept-eng",
+      role: { id: "role-emp", code: "employee", displayName: "Employee" },
+    };
+
+    const commands = buildCommands({
+      employees: [engEmployee, engManager, salesManager],
+      flows: [{ id: "flow-1", roleId: "role-emp", steps: ["role-mgr-eng"] }],
+    });
+
+    const draft = await commands.createDraft(engEmployee.id, {
+      title: "Dev Server Hosting",
+      category: "Infrastructure",
+      amountMinor: 500000,
+      currency: "INR",
+      expenseDate: "2026-08-05",
+      paymentMethod: "Personal card",
+    });
+
+    const submitted = await commands.submitClaim(engEmployee.id, draft.id);
+
+    expect(submitted.currentActorId).toBe(engManager.id);
+  });
+
   it("rejects submission when the requester has no role", async () => {
     const roleless: ExpenseEmployee = { id: "emp-roleless", organizationId: "org-1", name: "No Role", role: null };
     const commands = buildCommands({ employees: [roleless, { id: "emp-ada", organizationId: "org-1", name: "Ada Lovelace", role: ROLE_MANAGER }] });

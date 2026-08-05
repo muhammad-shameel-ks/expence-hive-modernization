@@ -15,6 +15,7 @@ export type AdminEmployee = {
   name: string;
   email: string;
   department: string;
+  departmentId?: string | null;
   role: AdminRoleRef | null;
 };
 
@@ -65,6 +66,7 @@ export interface AdminStore {
   listEmployees(organizationId: string): Promise<AdminEmployee[]>;
   getEmployee(id: string): Promise<AdminEmployee | null>;
   setEmployeeRole(employeeId: string, roleId: string): Promise<void>;
+  setEmployeeDepartment(employeeId: string, departmentId: string): Promise<void>;
   listDepartments(organizationId: string): Promise<AdminDepartment[]>;
   createDepartment(organizationId: string, input: DepartmentInput): Promise<AdminDepartment>;
   deactivateDepartment(departmentId: string): Promise<void>;
@@ -74,6 +76,7 @@ export interface AdminStore {
   deactivateRole(roleId: string): Promise<void>;
   createFlow(organizationId: string, input: FlowInput): Promise<FlowDraft>;
   publishFlow(flowId: string): Promise<FlowDraft>;
+  deleteFlow(flowId: string): Promise<void>;
   listFlows(organizationId: string): Promise<FlowDraft[]>;
   appendAudit(organizationId: string, event: AuditEvent): Promise<void>;
 }

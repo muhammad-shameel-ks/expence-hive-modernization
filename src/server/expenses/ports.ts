@@ -2,6 +2,7 @@ export type ExpenseRole = {
   id: string;
   code: string;
   displayName: string;
+  departmentId?: string | null;
 };
 
 // Finance and HR share access to Payout Details, Finance Payment View, and Comments.
@@ -11,6 +12,7 @@ export type ExpenseEmployee = {
   id: string;
   organizationId: string;
   name: string;
+  departmentId?: string | null;
   role: ExpenseRole | null;
   managerId?: string;
 };

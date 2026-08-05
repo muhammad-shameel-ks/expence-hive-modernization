@@ -49,6 +49,7 @@ export type AdminCommands = {
   listFlows(actorId: string): Promise<FlowDraft[]>;
   getAdminActor(actorId: string): Promise<AdminEmployee | null>;
   assignRole(actorId: string, input: { employeeId: string; roleId: string }): Promise<void>;
+  assignDepartment(actorId: string, input: { employeeId: string; departmentId: string }): Promise<void>;
   listDepartments(actorId: string): Promise<AdminDepartment[]>;
   createDepartment(actorId: string, input: DepartmentInput): Promise<AdminDepartment>;
   deactivateDepartment(actorId: string, departmentId: string): Promise<void>;
@@ -57,6 +58,7 @@ export type AdminCommands = {
   deactivateRole(actorId: string, roleId: string): Promise<void>;
   createFlow(actorId: string, input: FlowInput): Promise<FlowDraft>;
   publishFlow(actorId: string, flowId: string): Promise<FlowDraft>;
+  deleteFlow(actorId: string, flowId: string): Promise<void>;
 };
 
 export function createAdminCommands({
@@ -137,6 +139,28 @@ export function createAdminCommands({
       }
       await store.setEmployeeRole(employeeId, role.id);
       await audit(actor, "assign-role", `${target.name} assigned to the ${role.displayName} role.`);
+    },
+
+    async assignDepartment(actorId, { employeeId, departmentId }) {
+      const actor = await requireAdmin(actorId);
+      if (employeeId.length > MAX_EMPLOYEE_ID_LENGTH) {
+        throw new AdminError("validation", "Employee id is too long.");
+      }
+      const target = await store.getEmployee(employeeId);
+      if (!target || target.organizationId !== actor.organizationId) {
+        throw new AdminError("not-found", "Employee does not exist.");
+      }
+      const department = (await store.listDepartments(actor.organizationId)).find(
+        (dept) => dept.id === departmentId && dept.active,
+      );
+      if (!department) {
+        throw new AdminError("not-found", "Department does not exist or is inactive.");
+      }
+      if (target.departmentId === department.id || target.department === department.name) {
+        return;
+      }
+      await store.setEmployeeDepartment(employeeId, department.id);
+      await audit(actor, "assign-department", `${target.name} moved to the ${department.name} department.`);
     },
 
     async listDepartments(actorId) {
@@ -285,6 +309,17 @@ export function createAdminCommands({
       const published = await store.publishFlow(flowId);
       await audit(actor, "publish-flow", `Published the "${flow.name}" flow.`);
       return published;
+    },
+
+    async deleteFlow(actorId, flowId) {
+      const actor = await requireAdmin(actorId);
+      const flows = await store.listFlows(actor.organizationId);
+      const flow = flows.find((candidate) => candidate.id === flowId);
+      if (!flow) {
+        throw new AdminError("not-found", "Flow does not exist.");
+      }
+      await store.deleteFlow(flowId);
+      await audit(actor, "delete-flow", `Deleted the "${flow.name}" flow.`);
     },
   };
 }

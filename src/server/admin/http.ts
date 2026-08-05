@@ -72,6 +72,25 @@ export async function handleAssignRoleRequest(
   );
 }
 
+export async function handleAssignDepartmentRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { employeeId, departmentId } = body as { employeeId?: unknown; departmentId?: unknown };
+      if (typeof employeeId !== "string" || typeof departmentId !== "string") return null;
+      return { employeeId, departmentId };
+    },
+    async (input) => {
+      await commands.assignDepartment(actorId, input);
+      return Response.json({ ok: true });
+    },
+  );
+}
+
 export async function handleCreateFlowRequest(
   request: Request,
   commands: AdminCommands,
@@ -117,6 +136,25 @@ export async function handlePublishFlowRequest(
     async (input) => {
       const flow = await commands.publishFlow(actorId, input.flowId);
       return Response.json({ ok: true, flow });
+    },
+  );
+}
+
+export async function handleDeleteFlowRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { flowId } = body as { flowId?: unknown };
+      if (typeof flowId !== "string") return null;
+      return { flowId };
+    },
+    async (input) => {
+      await commands.deleteFlow(actorId, input.flowId);
+      return Response.json({ ok: true });
     },
   );
 }

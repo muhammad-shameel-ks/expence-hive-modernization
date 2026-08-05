@@ -49,6 +49,15 @@ export class InMemoryAdminStore implements AdminStore {
     }
   }
 
+  async setEmployeeDepartment(employeeId: string, departmentId: string): Promise<void> {
+    const employee = this.employeesById.get(employeeId);
+    const department = this.departments.find((candidate) => candidate.id === departmentId);
+    if (employee && department) {
+      employee.department = department.name;
+      employee.departmentId = department.id;
+    }
+  }
+
   async listDepartments(organizationId: string): Promise<AdminDepartment[]> {
     return this.departments
       .filter((department) => department.organizationId === organizationId)
@@ -152,13 +161,15 @@ export class InMemoryAdminStore implements AdminStore {
     if (!flow) {
       throw new AdminError("not-found", "Flow does not exist.");
     }
-    for (const other of this.flows) {
-      if (other.roleId === flow.roleId && other.status === "published") {
-        other.status = "archived";
-      }
-    }
     flow.status = "published";
     return flow;
+  }
+
+  async deleteFlow(flowId: string): Promise<void> {
+    const index = this.flows.findIndex((candidate) => candidate.id === flowId);
+    if (index !== -1) {
+      this.flows.splice(index, 1);
+    }
   }
 
   async listFlows(organizationId: string): Promise<FlowDraft[]> {

@@ -49,7 +49,8 @@ export class InMemoryExpenseStore implements ExpenseStore {
   }
 
   async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {
-    void organizationId;
-    return this.flows.find((flow) => flow.roleId === roleId) ?? null;
+    const specific = this.flows.find((flow) => flow.roleId === roleId);
+    if (specific) return specific;
+    return this.flows.find((flow) => flow.id.length > 0) ?? null;
   }
 }

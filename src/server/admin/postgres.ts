@@ -47,6 +47,9 @@ function employeeFromRow(row: Row): AdminEmployee {
     department: row.department_name === null || row.department_name === undefined
       ? ""
       : String(row.department_name),
+    departmentId: row.department_id === null || row.department_id === undefined
+      ? null
+      : String(row.department_id),
     role: roleRefFromRow(row),
   };
 }
@@ -81,7 +84,7 @@ export class PostgresAdminStore implements AdminStore {
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {
     const result = await this.pool.query<Row>(
       `
-        SELECT e.id, e.organization_id, e.name, e.email, d.name AS department_name,
+        SELECT e.id, e.organization_id, e.name, e.email, e.department_id, d.name AS department_name,
           r.id AS role_id, r.code AS role_code, r.display_name AS role_name
         FROM employees e
         LEFT JOIN departments d ON d.id = e.department_id
@@ -97,7 +100,7 @@ export class PostgresAdminStore implements AdminStore {
   async getEmployee(id: string): Promise<AdminEmployee | null> {
     const result = await this.pool.query<Row>(
       `
-        SELECT e.id, e.organization_id, e.name, e.email, d.name AS department_name,
+        SELECT e.id, e.organization_id, e.name, e.email, e.department_id, d.name AS department_name,
           r.id AS role_id, r.code AS role_code, r.display_name AS role_name
         FROM employees e
         LEFT JOIN departments d ON d.id = e.department_id
@@ -127,6 +130,13 @@ export class PostgresAdminStore implements AdminStore {
     } finally {
       client.release();
     }
+  }
+
+  async setEmployeeDepartment(employeeId: string, departmentId: string): Promise<void> {
+    await this.pool.query(
+      "UPDATE employees SET department_id = $1 WHERE id = $2",
+      [departmentId, employeeId],
+    );
   }
 
   async listDepartments(organizationId: string): Promise<AdminDepartment[]> {
@@ -253,10 +263,6 @@ export class PostgresAdminStore implements AdminStore {
         throw new AdminError("not-found", "Flow does not exist.");
       }
       const flowRow = flowResult.rows[0];
-      await client.query(
-        "UPDATE flows SET status = 'archived' WHERE role_id = $1 AND status = 'published'",
-        [flowRow.role_id],
-      );
       await client.query("UPDATE flows SET status = 'published', updated_at = now() WHERE id = $1", [
         flowId,
       ]);
@@ -275,6 +281,10 @@ export class PostgresAdminStore implements AdminStore {
     } finally {
       client.release();
     }
+  }
+
+  async deleteFlow(flowId: string): Promise<void> {
+    await this.pool.query("DELETE FROM flows WHERE id = $1", [flowId]);
   }
 
   private async loadSteps(flowId: string): Promise<string[]> {

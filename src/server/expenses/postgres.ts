@@ -165,31 +165,42 @@ export class PostgresExpenseStore implements ExpenseStore {
 
   async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {
     const flowResult = await this.pool.query<Row>(
-      `SELECT id, role_id FROM flows WHERE organization_id = $1 AND role_id = $2 AND status = 'published'`,
+      `SELECT id, role_id FROM flows WHERE organization_id = $1 AND role_id = $2 AND status = 'published' LIMIT 1`,
       [organizationId, roleId],
     );
-    if (flowResult.rows.length === 0) return null;
-    const flowId = String(flowResult.rows[0].id);
-    const stepsResult = await this.pool.query<Row>(
+    if (flowResult.rows.length > 0) {
+      const flowId = String(flowResult.rows[0].id);
+      const stepsResult = await this.pool.query<Row>(
+        "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+        [flowId],
+      );
+      return {
+        id: flowId,
+        roleId: String(flowResult.rows[0].role_id),
+        steps: stepsResult.rows.map((row) => String(row.role_id)),
+      };
+    }
+    const fallbackResult = await this.pool.query<Row>(
+      `SELECT id, role_id FROM flows WHERE organization_id = $1 AND status = 'published' ORDER BY created_at DESC LIMIT 1`,
+      [organizationId],
+    );
+    if (fallbackResult.rows.length === 0) return null;
+    const fallbackFlowId = String(fallbackResult.rows[0].id);
+    const fallbackSteps = await this.pool.query<Row>(
       "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
-      [flowId],
+      [fallbackFlowId],
     );
     return {
-      id: flowId,
-      roleId: String(flowResult.rows[0].role_id),
-      steps: stepsResult.rows.map((row) => String(row.role_id)),
+      id: fallbackFlowId,
+      roleId: String(fallbackResult.rows[0].role_id),
+      steps: fallbackSteps.rows.map((row) => String(row.role_id)),
     };
   }
 }
 
-// employee_roles remains many-to-many in the schema (ADR-0002 forward
-// compatibility note), but this module treats an employee as having one
-// role: the join picks a single, deterministic row per employee instead of
-// letting a legacy multi-role assignment fan out into duplicate employee
-// rows or an arbitrarily-ordered pick.
 const employeeQuery = `
-  SELECT e.id, e.organization_id, e.name,
-         r.id AS role_id, r.code AS role_code, r.display_name AS role_name,
+  SELECT e.id, e.organization_id, e.name, e.department_id,
+         r.id AS role_id, r.code AS role_code, r.display_name AS role_name, r.department_id AS role_department_id,
          ha.manager_id
   FROM employees e
   LEFT JOIN LATERAL (
@@ -205,8 +216,14 @@ function employeeFromRow(row: Row): ExpenseEmployee {
     id: String(row.id),
     organizationId: String(row.organization_id),
     name: String(row.name),
+    departmentId: row.department_id ? String(row.department_id) : null,
     role: row.role_id
-      ? { id: String(row.role_id), code: String(row.role_code), displayName: String(row.role_name) }
+      ? {
+          id: String(row.role_id),
+          code: String(row.role_code),
+          displayName: String(row.role_name),
+          departmentId: row.role_department_id ? String(row.role_department_id) : null,
+        }
       : null,
     managerId: row.manager_id ? String(row.manager_id) : undefined,
   };

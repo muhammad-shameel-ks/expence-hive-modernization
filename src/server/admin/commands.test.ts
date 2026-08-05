@@ -215,6 +215,20 @@ describe("assignRole", () => {
   });
 });
 
+describe("assignDepartment", () => {
+  it("lets an admin assign a department to an employee", async () => {
+    const { admin } = buildAdmin();
+    const dept = await admin.createDepartment("emp-grace", { name: "Operations" });
+
+    await admin.assignDepartment("emp-grace", { employeeId: "emp-katherine", departmentId: dept.id });
+
+    const people = await admin.listEmployees("emp-grace");
+    expect(people.find((person) => person.id === "emp-katherine")).toMatchObject({
+      department: "Operations",
+    });
+  });
+});
+
 describe("departments", () => {
   it("lets an admin create a department", async () => {
     const { admin } = buildAdmin();
@@ -514,17 +528,18 @@ describe("publishFlow", () => {
     expect(published.status).toBe("published");
   });
 
-  it("archives the previously published flow for the same role", async () => {
+  it("allows multiple flows to remain active and published concurrently", async () => {
     const { admin } = buildAdmin();
-    const role = await admin.createRole("emp-grace", { code: "executive", displayName: "Executive", departmentId: null });
-    const firstFlow = await admin.createFlow("emp-grace", { name: "V1", roleId: role.id, steps: [role.id] });
+    const role1 = await admin.createRole("emp-grace", { code: "intern-eng", displayName: "Engineering Intern", departmentId: null });
+    const role2 = await admin.createRole("emp-grace", { code: "intern-mkt", displayName: "Marketing Intern", departmentId: null });
+    const firstFlow = await admin.createFlow("emp-grace", { name: "Engineering Flow", roleId: role1.id, steps: [role1.id] });
     await admin.publishFlow("emp-grace", firstFlow.id);
-    const secondFlow = await admin.createFlow("emp-grace", { name: "V2", roleId: role.id, steps: [role.id] });
+    const secondFlow = await admin.createFlow("emp-grace", { name: "Marketing Flow", roleId: role2.id, steps: [role2.id] });
 
     await admin.publishFlow("emp-grace", secondFlow.id);
 
     const flows = await admin.listFlows("emp-grace");
-    expect(flows.find((flow) => flow.id === firstFlow.id)).toMatchObject({ status: "archived" });
+    expect(flows.find((flow) => flow.id === firstFlow.id)).toMatchObject({ status: "published" });
     expect(flows.find((flow) => flow.id === secondFlow.id)).toMatchObject({ status: "published" });
   });
 
@@ -589,5 +604,26 @@ describe("listEmployees and listFlows", () => {
     const { admin } = buildAdmin();
 
     await expect(admin.listFlows("emp-grace")).resolves.toEqual([]);
+  });
+});
+
+describe("deleteFlow", () => {
+  it("deletes a flow draft", async () => {
+    const { admin } = buildAdmin();
+    const role = await admin.createRole("emp-grace", { code: "executive", displayName: "Executive", departmentId: null });
+    const flow = await admin.createFlow("emp-grace", { name: "Standard reimbursement", roleId: role.id, steps: [role.id] });
+
+    await admin.deleteFlow("emp-grace", flow.id);
+
+    const flows = await admin.listFlows("emp-grace");
+    expect(flows.find((candidate) => candidate.id === flow.id)).toBeUndefined();
+  });
+
+  it("rejects deleting an unknown flow", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(admin.deleteFlow("emp-grace", "flow-missing")).rejects.toMatchObject({
+      code: "not-found",
+    });
   });
 });

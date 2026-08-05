@@ -238,7 +238,16 @@ export function createExpenseCommands({
       const employees = await store.listEmployees(requester.organizationId);
       const submittedAt = now().toISOString();
       claim.steps = flow.steps.map((roleId) => {
-        const eligible = employees.find((employee) => employee.role?.id === roleId && employee.id !== requester.id);
+        const eligible = employees.find((candidate) => {
+          if (candidate.id === requester.id) return false;
+          if (candidate.role?.id !== roleId) return false;
+          if (candidate.role.departmentId !== null && candidate.role.departmentId !== undefined) {
+            if (requester.departmentId && candidate.departmentId && candidate.departmentId !== requester.departmentId) {
+              return false;
+            }
+          }
+          return true;
+        });
         return {
           id: idFactory("step"),
           roleId,
