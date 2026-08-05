@@ -11,6 +11,8 @@ export default async function FinancePaymentsPage() {
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) redirect("/login");
 
+  const workspace = await expenseCommands().getWorkspace(employee.id);
+
   let claims;
   try {
     claims = await expenseCommands().listFinancePaymentQueue(employee.id);
@@ -18,7 +20,7 @@ export default async function FinancePaymentsPage() {
     if (isExpenseError(error) && error.code === "unauthorized") {
       return (
         <main className={styles.page}>
-          <AppHeader employeeName={employee.name} />
+          <AppHeader employeeName={employee.name} roleCodes={workspace.employee.roleCodes} />
           <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-10">
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Payment queue</h1>
             <p className="mt-4 text-sm text-muted-foreground">
@@ -33,7 +35,11 @@ export default async function FinancePaymentsPage() {
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={employee.name} canViewPaymentQueue />
+      <AppHeader
+        employeeName={employee.name}
+        roleCodes={workspace.employee.roleCodes}
+        activePath="/finance/payments"
+      />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Finance / payment queue

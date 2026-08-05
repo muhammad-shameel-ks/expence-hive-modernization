@@ -17,11 +17,14 @@ export default async function ExpensesPage() {
   }
   const workspace = await expenseCommands().getWorkspace(employee.id);
   const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
-  const canViewPaymentQueue = workspace.employee.roleCodes.some((role) => role === "finance-reviewer" || role === "hr");
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={employee.name} canViewPaymentQueue={canViewPaymentQueue} />
+      <AppHeader
+        employeeName={employee.name}
+        roleCodes={workspace.employee.roleCodes}
+        activePath="/expenses"
+      />
 
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <div className="flex flex-wrap items-start justify-between gap-4">

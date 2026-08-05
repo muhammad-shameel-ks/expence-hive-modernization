@@ -11,11 +11,10 @@ export default async function NewExpensePage() {
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) redirect("/login");
   const workspace = await expenseCommands().getWorkspace(employee.id);
-  const canViewPaymentQueue = workspace.employee.roleCodes.some((role) => role === "finance-reviewer" || role === "hr");
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={employee.name} canViewPaymentQueue={canViewPaymentQueue} />
+      <AppHeader employeeName={employee.name} roleCodes={workspace.employee.roleCodes} />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Expense operations / new claim
