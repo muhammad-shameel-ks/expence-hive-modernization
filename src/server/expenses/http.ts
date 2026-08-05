@@ -14,7 +14,9 @@ export async function handleCreateExpenseRequest(
       typeof value.category !== "string" ||
       typeof value.amount !== "string" ||
       typeof value.expenseDate !== "string" ||
-      typeof value.paymentMethod !== "string"
+      typeof value.paymentMethod !== "string" ||
+      typeof value.accountNumber !== "string" ||
+      typeof value.ifscCode !== "string"
     ) {
       return validationResponse();
     }
@@ -30,6 +32,7 @@ export async function handleCreateExpenseRequest(
       expenseDate: value.expenseDate,
       paymentMethod: value.paymentMethod,
       attachment: attachment ?? undefined,
+      payoutDetails: { accountNumber: value.accountNumber, ifscCode: value.ifscCode },
     });
     return Response.json({ claim }, { status: 201 });
   } catch (error) {
@@ -85,6 +88,19 @@ export async function handlePayExpenseRequest(
 ): Promise<Response> {
   try {
     return Response.json({ claim: await commands.markPaid(actorId, claimId) });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleFinancePaymentQueueRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const claims = await commands.listFinancePaymentQueue(actorId);
+    return Response.json({ claims });
   } catch (error) {
     return expenseErrorResponse(error);
   }

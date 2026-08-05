@@ -28,6 +28,11 @@ export class InMemoryExpenseStore implements ExpenseStore {
     return claims.map((claim) => structuredClone(claim));
   }
 
+  async listClaimsForOrganization(organizationId: string): Promise<ExpenseClaim[]> {
+    const claims = [...this.claims.values()].filter((claim) => claim.organizationId === organizationId);
+    return claims.map((claim) => structuredClone(claim));
+  }
+
   async createClaim(claim: ExpenseClaim): Promise<void> {
     this.claims.set(claim.id, structuredClone(claim));
   }

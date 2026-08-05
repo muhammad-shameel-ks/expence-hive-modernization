@@ -32,7 +32,22 @@ export class PostgresExpenseStore implements ExpenseStore {
        ORDER BY COALESCE(rc.submitted_at, rc.created_at) DESC`,
       [employee.organizationId, employee.id],
     );
-    return Promise.all(result.rows.map(async (row) => {
+    return this.hydrateClaims(result.rows);
+  }
+
+  async listClaimsForOrganization(organizationId: string): Promise<ExpenseClaim[]> {
+    const result = await this.pool.query<Row>(
+      `SELECT rc.*
+       FROM reimbursement_claims rc
+       WHERE rc.organization_id = $1
+       ORDER BY COALESCE(rc.submitted_at, rc.created_at) DESC`,
+      [organizationId],
+    );
+    return this.hydrateClaims(result.rows);
+  }
+
+  private async hydrateClaims(rows: Row[]): Promise<ExpenseClaim[]> {
+    return Promise.all(rows.map(async (row) => {
       const claim = claimFromRow(row);
       const [attachmentResult, stepResult, historyResult] = await Promise.all([
         this.pool.query<Row>("SELECT * FROM claim_attachments WHERE claim_id = $1 ORDER BY created_at LIMIT 1", [claim.id]),
@@ -165,9 +180,13 @@ function employeeFromRow(row: Row): ExpenseEmployee {
 async function insertClaim(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, claim: ExpenseClaim): Promise<void> {
   await client.query(
     `INSERT INTO reimbursement_claims
-      (id, organization_id, requester_id, reference, title, category, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)`,
-    [claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null],
+      (id, organization_id, requester_id, reference, title, category, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
+    [
+      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
+      claim.payoutDetails?.accountNumber ?? null,
+      claim.payoutDetails?.ifscCode ?? null,
+    ],
   );
 }
 
@@ -201,6 +220,9 @@ function claimFromRow(row: Row): ExpenseClaim {
     version: Number(row.version),
     createdAt: new Date(String(row.created_at)).toISOString(),
     submittedAt: row.submitted_at ? new Date(String(row.submitted_at)).toISOString() : undefined,
+    payoutDetails: row.account_number && row.ifsc_code
+      ? { accountNumber: String(row.account_number), ifscCode: String(row.ifsc_code) }
+      : undefined,
   };
 }
 

@@ -1,6 +1,12 @@
 import styles from "@/app/expenses/expenses.module.css";
 
-export function AppHeader({ employeeName }: { employeeName: string }) {
+export function AppHeader({
+  employeeName,
+  canViewPaymentQueue = false,
+}: {
+  employeeName: string;
+  canViewPaymentQueue?: boolean;
+}) {
   return (
     <header className={styles.topBar}>
       <div className={styles.brand}>
@@ -20,9 +26,15 @@ export function AppHeader({ employeeName }: { employeeName: string }) {
         <span className={styles.navLink} title="Coming in a later milestone">
           Inbox
         </span>
-        <span className={styles.navLink} title="Coming in a later milestone">
-          Reports
-        </span>
+        {canViewPaymentQueue ? (
+          <a className={styles.navLink} href="/finance/payments">
+            Payment queue
+          </a>
+        ) : (
+          <span className={styles.navLink} title="Coming in a later milestone">
+            Reports
+          </span>
+        )}
       </nav>
 
       <div className={styles.account}>

@@ -3,7 +3,8 @@ export type ExpenseRoleCode =
   | "manager"
   | "it-reviewer"
   | "ceo"
-  | "finance-reviewer";
+  | "finance-reviewer"
+  | "hr";
 
 export type ExpenseEmployee = {
   id: string;
@@ -22,6 +23,11 @@ export type ExpenseAttachment = {
 };
 
 export type ExpenseAttachmentInput = Omit<ExpenseAttachment, "id" | "status">;
+
+export type ExpensePayoutDetails = {
+  accountNumber: string;
+  ifscCode: string;
+};
 
 export type ExpenseStage = "manager" | "it" | "ceo" | "finance";
 
@@ -56,6 +62,7 @@ export type ExpenseClaim = {
   currentStage?: ExpenseStage;
   currentActorId?: string;
   attachment?: ExpenseAttachment;
+  payoutDetails?: ExpensePayoutDetails;
   steps: ExpenseStep[];
   history: ExpenseHistoryEvent[];
   version: number;
@@ -71,12 +78,14 @@ export type CreateExpenseDraftInput = {
   expenseDate: string;
   paymentMethod: string;
   attachment?: ExpenseAttachmentInput;
+  payoutDetails: ExpensePayoutDetails;
 };
 
 export interface ExpenseStore {
   getEmployee(id: string): Promise<ExpenseEmployee | null>;
   listEmployees(organizationId: string): Promise<ExpenseEmployee[]>;
   listClaimsForEmployee(employee: ExpenseEmployee): Promise<ExpenseClaim[]>;
+  listClaimsForOrganization(organizationId: string): Promise<ExpenseClaim[]>;
   createClaim(claim: ExpenseClaim): Promise<void>;
   getClaim(id: string): Promise<ExpenseClaim | null>;
   updateClaim(claim: ExpenseClaim): Promise<void>;

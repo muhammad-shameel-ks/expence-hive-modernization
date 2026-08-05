@@ -25,12 +25,14 @@ const ROLES = [
   { code: "it-reviewer", displayName: "IT reviewer" },
   { code: "ceo", displayName: "CEO" },
   { code: "hr-administrator", displayName: "HR administrator" },
+  { code: "hr", displayName: "HR" },
   { code: "system-administrator", displayName: "System administrator" },
   { code: "ceo-delegate", displayName: "CEO delegate" },
 ];
 
 const EMPLOYEE_ROLES = [
   { employeeId: "emp-grace", roleCode: "hr-administrator" },
+  { employeeId: "emp-grace", roleCode: "hr" },
   { employeeId: "emp-shameel", roleCode: "system-administrator" },
   { employeeId: "emp-ada", roleCode: "manager" },
   { employeeId: "emp-finance", roleCode: "finance-reviewer" },
@@ -101,6 +103,8 @@ const CLAIMS = [
     currentActorId: "emp-finance",
     createdAt: "2026-07-26T08:55:00Z",
     submittedAt: "2026-07-26T08:55:00Z",
+    accountNumber: "32534240620",
+    ifscCode: "SBIN0012861",
     steps: [
       ["step-demo-finance-manager", 0, "manager", "emp-ada", "approved"],
       ["step-demo-finance-it", 1, "it", "emp-it", "approved"],
@@ -128,6 +132,8 @@ const CLAIMS = [
     currentActorId: null,
     createdAt: "2026-07-25T16:20:00Z",
     submittedAt: "2026-07-25T16:20:00Z",
+    accountNumber: "32534240620",
+    ifscCode: "SBIN0012861",
     steps: [
       ["step-demo-paid-manager", 0, "manager", "emp-ada", "approved"],
       ["step-demo-paid-it", 1, "it", "emp-it", "approved"],
@@ -232,15 +238,15 @@ async function main() {
     for (const claim of CLAIMS) {
       await client.query(
         `INSERT INTO reimbursement_claims
-          (id, organization_id, requester_id, reference, title, category, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, 'INR', $8, $9, $10, $11, $12, 1, $13, $14)
+          (id, organization_id, requester_id, reference, title, category, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, 'INR', $8, $9, $10, $11, $12, 1, $13, $14, $15, $16)
          ON CONFLICT (id) DO UPDATE SET
            requester_id = EXCLUDED.requester_id, reference = EXCLUDED.reference, title = EXCLUDED.title,
            category = EXCLUDED.category, amount_minor = EXCLUDED.amount_minor, currency = EXCLUDED.currency,
            expense_date = EXCLUDED.expense_date, payment_method = EXCLUDED.payment_method, status = EXCLUDED.status,
            current_stage = EXCLUDED.current_stage, current_actor_id = EXCLUDED.current_actor_id,
-           submitted_at = EXCLUDED.submitted_at, updated_at = now()`,
-        [claim.id, ORGANIZATION.id, claim.requesterId, claim.ref, claim.title, claim.category, claim.amountMinor, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage, claim.currentActorId, claim.createdAt, claim.submittedAt],
+           submitted_at = EXCLUDED.submitted_at, account_number = EXCLUDED.account_number, ifsc_code = EXCLUDED.ifsc_code, updated_at = now()`,
+        [claim.id, ORGANIZATION.id, claim.requesterId, claim.ref, claim.title, claim.category, claim.amountMinor, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage, claim.currentActorId, claim.createdAt, claim.submittedAt, claim.accountNumber ?? null, claim.ifscCode ?? null],
       );
       await client.query("DELETE FROM claim_approval_steps WHERE claim_id = $1", [claim.id]);
       for (const [id, position, stage, assignedActorId, status] of claim.steps) {

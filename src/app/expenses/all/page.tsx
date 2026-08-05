@@ -15,10 +15,11 @@ export default async function AllExpensesPage() {
   }
   const workspace = await expenseCommands().getWorkspace(employee.id);
   const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
+  const canViewPaymentQueue = workspace.employee.roleCodes.some((role) => role === "finance-reviewer" || role === "hr");
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={employee.name} />
+      <AppHeader employeeName={employee.name} canViewPaymentQueue={canViewPaymentQueue} />
 
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">

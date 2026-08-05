@@ -10,6 +10,8 @@ type FormState = {
   amount: string;
   expenseDate: string;
   paymentMethod: "Personal card" | "Company card";
+  accountNumber: string;
+  ifscCode: string;
 };
 
 const initialForm: FormState = {
@@ -18,6 +20,8 @@ const initialForm: FormState = {
   amount: "",
   expenseDate: new Date().toISOString().slice(0, 10),
   paymentMethod: "Personal card",
+  accountNumber: "",
+  ifscCode: "",
 };
 
 export function ExpenseCreateForm() {
@@ -163,6 +167,10 @@ function DetailsStep({
             <div className={styles.formGrid}>
               <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
               <Field label="Paid with"><select className={styles.select} value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value as FormState["paymentMethod"])}><option>Personal card</option><option>Company card</option></select></Field>
+            </div>
+            <div className={styles.formGrid}>
+              <Field label="Account number" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.accountNumber} placeholder="Bank account number" onChange={(event) => update("accountNumber", event.target.value)} /></Field>
+              <Field label="IFSC code" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.ifscCode} placeholder="e.g. SBIN0012861" onChange={(event) => update("ifscCode", event.target.value.toUpperCase())} /></Field>
             </div>
             {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
             <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Back</button><button className={styles.button} type="submit" disabled={busy}>{busy ? "Saving..." : "Review claim →"}</button></div>

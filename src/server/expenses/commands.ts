@@ -6,6 +6,20 @@ import type {
   ExpenseStore,
 } from "./ports";
 
+const PAYOUT_DETAILS_ROLES = new Set(["finance-reviewer", "hr"]);
+
+function canSeePayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
+  if (claim.requesterId === viewer.id) return true;
+  return viewer.roleCodes.some((role) => PAYOUT_DETAILS_ROLES.has(role));
+}
+
+function maskPayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): ExpenseClaim {
+  if (canSeePayoutDetails(claim, viewer)) return claim;
+  const masked = { ...claim };
+  delete masked.payoutDetails;
+  return masked;
+}
+
 export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict";
 
 export class ExpenseError extends Error {
@@ -30,6 +44,7 @@ export type ExpenseCommands = {
   approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  listFinancePaymentQueue(actorId: string): Promise<ExpenseClaim[]>;
 };
 
 export function createExpenseCommands({
@@ -97,6 +112,7 @@ export function createExpenseCommands({
         attachment: input.attachment
           ? { ...input.attachment, id: idFactory("attachment"), status: "available" }
           : undefined,
+        payoutDetails: { ...input.payoutDetails },
         steps: [],
         history: [{ id: idFactory("history"), kind: "draft", actorId, createdAt }],
         version: 1,
@@ -107,12 +123,15 @@ export function createExpenseCommands({
     },
 
     async getClaim(actorId, claimId) {
-      return requireClaim(actorId, claimId);
+      const employee = await requireEmployee(actorId);
+      const claim = await requireClaim(actorId, claimId);
+      return maskPayoutDetails(claim, employee);
     },
 
     async listClaims(actorId) {
       const employee = await requireEmployee(actorId);
-      return store.listClaimsForEmployee(employee);
+      const claims = await store.listClaimsForEmployee(employee);
+      return claims.map((claim) => maskPayoutDetails(claim, employee));
     },
 
     async getWorkspace(actorId) {
@@ -121,7 +140,7 @@ export function createExpenseCommands({
         store.listEmployees(employee.organizationId),
         store.listClaimsForEmployee(employee),
       ]);
-      return { employee, employees, claims };
+      return { employee, employees, claims: claims.map((claim) => maskPayoutDetails(claim, employee)) };
     },
 
     async submitClaim(actorId, claimId) {
@@ -218,6 +237,17 @@ export function createExpenseCommands({
       claim.version += 1;
       await store.updateClaim(claim);
       return claim;
+    },
+
+    async listFinancePaymentQueue(actorId) {
+      const employee = await requireEmployee(actorId);
+      if (!employee.roleCodes.some((role) => PAYOUT_DETAILS_ROLES.has(role))) {
+        throw new ExpenseError("unauthorized", "Only Finance or HR can view the payment queue.");
+      }
+      const claims = await store.listClaimsForOrganization(employee.organizationId);
+      return claims.filter(
+        (claim) => claim.currentStage === "finance" || claim.status === "in-finance" || claim.status === "paid",
+      );
     },
   };
 }
