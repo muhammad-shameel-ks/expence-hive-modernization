@@ -16,9 +16,19 @@ export default async function AdminPage() {
   if (!actor) {
     redirect("/expenses");
   }
-  const [people, flows] = await Promise.all([
+  const [people, flows, roles, departments] = await Promise.all([
     admin.listEmployees(actor.id),
     admin.listFlows(actor.id),
+    admin.listRoles(actor.id),
+    admin.listDepartments(actor.id),
   ]);
-  return <AdminSetup people={people} flows={flows} operatorName={employee.name} />;
+  return (
+    <AdminSetup
+      people={people}
+      flows={flows}
+      roles={roles}
+      departments={departments}
+      operatorName={employee.name}
+    />
+  );
 }

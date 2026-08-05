@@ -2,21 +2,28 @@
 
 import { useState } from "react";
 import { CheckCircle2, CircleAlert, Network, Users, Workflow, X } from "lucide-react";
-import type { AdminEmployee, FlowDraft } from "@/server/admin/ports";
+import type { AdminDepartment, AdminEmployee, AdminRole, FlowDraft } from "@/server/admin/ports";
 import { FlowSection } from "./flow-section";
+import { OrgSection } from "./org-section";
 import { PeopleSection } from "./people-section";
 
 export function AdminSetup({
   people,
   flows,
+  roles,
+  departments,
   operatorName,
 }: {
   people: AdminEmployee[];
   flows: FlowDraft[];
+  roles: AdminRole[];
+  departments: AdminDepartment[];
   operatorName: string;
 }) {
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
+  const [rolesState, setRolesState] = useState(roles);
+  const [departmentsState, setDepartmentsState] = useState(departments);
 
   return (
     <main
@@ -77,8 +84,16 @@ export function AdminSetup({
           </div>
         ) : null}
 
-        <PeopleSection people={people} onMessage={setMessage} onError={setError} />
-        <FlowSection flows={flows} onMessage={setMessage} onError={setError} />
+        <OrgSection
+          departments={departmentsState}
+          roles={rolesState}
+          onMessage={setMessage}
+          onError={setError}
+          onDepartmentsChange={setDepartmentsState}
+          onRolesChange={setRolesState}
+        />
+        <PeopleSection people={people} roles={rolesState} onMessage={setMessage} onError={setError} />
+        <FlowSection flows={flows} roles={rolesState} onMessage={setMessage} onError={setError} />
       </div>
 
       {message ? (

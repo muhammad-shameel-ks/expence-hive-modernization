@@ -1,20 +1,29 @@
 import { Pool } from "pg";
 import { AdminError } from "./commands";
-import {
-  isAdminRole,
-  type AdminEmployee,
-  type AdminRole,
-  type AdminStore,
-  type AuditEvent,
-  type FlowDraft,
-  type FlowInput,
+import type {
+  AdminDepartment,
+  AdminEmployee,
+  AdminRole,
+  AdminStore,
+  AuditEvent,
+  DepartmentInput,
+  FlowDraft,
+  FlowInput,
+  FlowStatus,
+  RoleInput,
 } from "./ports";
 
 type Row = Record<string, unknown>;
 
-function roleFromRow(row: Row): AdminRole | null {
-  const displayName = row.role_name;
-  return typeof displayName === "string" && isAdminRole(displayName) ? displayName : null;
+function roleRefFromRow(row: Row): AdminEmployee["role"] {
+  if (row.role_id === null || row.role_id === undefined) {
+    return null;
+  }
+  return {
+    id: String(row.role_id),
+    code: String(row.role_code),
+    displayName: String(row.role_name),
+  };
 }
 
 function employeeFromRow(row: Row): AdminEmployee {
@@ -23,13 +32,35 @@ function employeeFromRow(row: Row): AdminEmployee {
     organizationId: String(row.organization_id),
     name: String(row.name),
     email: String(row.email),
-    department: String(row.department),
-    role: roleFromRow(row),
+    department: row.department_name === null || row.department_name === undefined
+      ? ""
+      : String(row.department_name),
+    role: roleRefFromRow(row),
   };
 }
 
-function flowStatusFromRow(row: Row): "draft" | "published" {
-  return row.status === "published" ? "published" : "draft";
+function roleFromRow(row: Row): AdminRole {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    code: String(row.code),
+    displayName: String(row.display_name),
+    departmentId: row.department_id === null ? null : String(row.department_id),
+    active: Boolean(row.active),
+  };
+}
+
+function departmentFromRow(row: Row): AdminDepartment {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    name: String(row.name),
+    active: Boolean(row.active),
+  };
+}
+
+function flowStatusFromRow(row: Row): FlowStatus {
+  return row.status === "published" ? "published" : row.status === "archived" ? "archived" : "draft";
 }
 
 export class PostgresAdminStore implements AdminStore {
@@ -38,8 +69,10 @@ export class PostgresAdminStore implements AdminStore {
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {
     const result = await this.pool.query<Row>(
       `
-        SELECT DISTINCT e.id, e.organization_id, e.name, e.email, e.department, r.display_name AS role_name
+        SELECT DISTINCT e.id, e.organization_id, e.name, e.email, d.name AS department_name,
+          r.id AS role_id, r.code AS role_code, r.display_name AS role_name
         FROM employees e
+        LEFT JOIN departments d ON d.id = e.department_id
         LEFT JOIN employee_roles er ON er.employee_id = e.id
         LEFT JOIN roles r ON r.id = er.role_id
         WHERE e.organization_id = $1
@@ -53,8 +86,10 @@ export class PostgresAdminStore implements AdminStore {
   async getEmployee(id: string): Promise<AdminEmployee | null> {
     const result = await this.pool.query<Row>(
       `
-        SELECT e.id, e.organization_id, e.name, e.email, e.department, r.display_name AS role_name
+        SELECT e.id, e.organization_id, e.name, e.email, d.name AS department_name,
+          r.id AS role_id, r.code AS role_code, r.display_name AS role_name
         FROM employees e
+        LEFT JOIN departments d ON d.id = e.department_id
         LEFT JOIN employee_roles er ON er.employee_id = e.id
         LEFT JOIN roles r ON r.id = er.role_id
         WHERE e.id = $1
@@ -66,27 +101,14 @@ export class PostgresAdminStore implements AdminStore {
 
   // This slice models one administration role per employee (ADR 0002), so
   // assignment replaces any previously assigned role instead of adding one.
-  async setEmployeeRole(employeeId: string, role: AdminRole): Promise<void> {
+  async setEmployeeRole(employeeId: string, roleId: string): Promise<void> {
     const client = await this.pool.connect();
     try {
       await client.query("BEGIN");
       await client.query("DELETE FROM employee_roles WHERE employee_id = $1", [employeeId]);
-      const roleResult = await client.query<Row>(
-        `SELECT r.id
-         FROM roles r
-         JOIN employees e ON e.organization_id = r.organization_id
-         WHERE r.display_name = $1 AND e.id = $2`,
-        [role, employeeId],
-      );
-      if (roleResult.rows.length === 0) {
-        throw new AdminError(
-          "validation",
-          `Role "${role}" is not seeded in this organization.`,
-        );
-      }
       await client.query(
         "INSERT INTO employee_roles (employee_id, role_id) VALUES ($1, $2)",
-        [employeeId, roleResult.rows[0].id],
+        [employeeId, roleId],
       );
       await client.query("COMMIT");
     } catch (error) {
@@ -95,6 +117,80 @@ export class PostgresAdminStore implements AdminStore {
     } finally {
       client.release();
     }
+  }
+
+  async listDepartments(organizationId: string): Promise<AdminDepartment[]> {
+    const result = await this.pool.query<Row>(
+      "SELECT id, organization_id, name, active FROM departments WHERE organization_id = $1 ORDER BY name",
+      [organizationId],
+    );
+    return result.rows.map(departmentFromRow);
+  }
+
+  async createDepartment(
+    organizationId: string,
+    input: DepartmentInput,
+  ): Promise<AdminDepartment> {
+    const id = `dept-${crypto.randomUUID()}`;
+    try {
+      await this.pool.query(
+        "INSERT INTO departments (id, organization_id, name) VALUES ($1, $2, $3)",
+        [id, organizationId, input.name],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error, "idx_departments_org_name")) {
+        throw new AdminError("validation", `A department named "${input.name}" already exists.`);
+      }
+      throw error;
+    }
+    return { id, organizationId, name: input.name, active: true };
+  }
+
+  async deactivateDepartment(departmentId: string): Promise<void> {
+    await this.pool.query("UPDATE departments SET active = false WHERE id = $1", [departmentId]);
+  }
+
+  async listRoles(organizationId: string): Promise<AdminRole[]> {
+    const result = await this.pool.query<Row>(
+      "SELECT id, organization_id, code, display_name, department_id, active FROM roles WHERE organization_id = $1 ORDER BY display_name",
+      [organizationId],
+    );
+    return result.rows.map(roleFromRow);
+  }
+
+  async getRole(roleId: string): Promise<AdminRole | null> {
+    const result = await this.pool.query<Row>(
+      "SELECT id, organization_id, code, display_name, department_id, active FROM roles WHERE id = $1",
+      [roleId],
+    );
+    return result.rows.length > 0 ? roleFromRow(result.rows[0]) : null;
+  }
+
+  async createRole(organizationId: string, input: RoleInput): Promise<AdminRole> {
+    const id = `role-${crypto.randomUUID()}`;
+    try {
+      await this.pool.query(
+        "INSERT INTO roles (id, organization_id, code, display_name, department_id) VALUES ($1, $2, $3, $4, $5)",
+        [id, organizationId, input.code, input.displayName, input.departmentId],
+      );
+    } catch (error) {
+      if (isUniqueViolation(error, "idx_roles_org_code")) {
+        throw new AdminError("validation", `A role with code "${input.code}" already exists.`);
+      }
+      throw error;
+    }
+    return {
+      id,
+      organizationId,
+      code: input.code,
+      displayName: input.displayName,
+      departmentId: input.departmentId,
+      active: true,
+    };
+  }
+
+  async deactivateRole(roleId: string): Promise<void> {
+    await this.pool.query("UPDATE roles SET active = false WHERE id = $1", [roleId]);
   }
 
   async createFlow(organizationId: string, input: FlowInput): Promise<FlowDraft> {
@@ -103,40 +199,30 @@ export class PostgresAdminStore implements AdminStore {
       await client.query("BEGIN");
       const flowId = `flow-${crypto.randomUUID()}`;
       await client.query(
-        `INSERT INTO flows (id, organization_id, name, scope, status)
+        `INSERT INTO flows (id, organization_id, name, role_id, status)
          VALUES ($1, $2, $3, $4, 'draft')`,
-        [flowId, organizationId, input.name, input.scope],
+        [flowId, organizationId, input.name, input.roleId],
       );
       for (let index = 0; index < input.steps.length; index += 1) {
-        const roleResult = await client.query<Row>(
-          "SELECT id FROM roles WHERE display_name = $1 AND organization_id = $2",
-          [input.steps[index], organizationId],
-        );
-        if (roleResult.rows.length === 0) {
-          throw new AdminError(
-            "validation",
-            `Role "${input.steps[index]}" is not seeded in this organization.`,
-          );
-        }
         await client.query(
           "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
-          [flowId, index, roleResult.rows[0].id],
+          [flowId, index, input.steps[index]],
         );
       }
       await client.query("COMMIT");
       return {
         id: flowId,
         name: input.name,
-        scope: input.scope,
+        roleId: input.roleId,
         status: "draft",
         steps: [...input.steps],
       };
     } catch (error) {
       await client.query("ROLLBACK");
-      if (isUniqueViolation(error)) {
+      if (isUniqueViolation(error, "idx_flows_org_name_role_draft")) {
         throw new AdminError(
           "validation",
-          `A draft flow named "${input.name}" for ${input.scope} already exists.`,
+          `A draft flow named "${input.name}" for this role already exists.`,
         );
       }
       throw error;
@@ -145,9 +231,53 @@ export class PostgresAdminStore implements AdminStore {
     }
   }
 
+  async publishFlow(flowId: string): Promise<FlowDraft> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const flowResult = await client.query<Row>(
+        "SELECT id, organization_id, name, role_id, status FROM flows WHERE id = $1",
+        [flowId],
+      );
+      if (flowResult.rows.length === 0) {
+        throw new AdminError("not-found", "Flow does not exist.");
+      }
+      const flowRow = flowResult.rows[0];
+      await client.query(
+        "UPDATE flows SET status = 'archived' WHERE role_id = $1 AND status = 'published'",
+        [flowRow.role_id],
+      );
+      await client.query("UPDATE flows SET status = 'published', updated_at = now() WHERE id = $1", [
+        flowId,
+      ]);
+      await client.query("COMMIT");
+      const steps = await this.loadSteps(flowId);
+      return {
+        id: flowId,
+        name: String(flowRow.name),
+        roleId: String(flowRow.role_id),
+        status: "published",
+        steps,
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  private async loadSteps(flowId: string): Promise<string[]> {
+    const result = await this.pool.query<Row>(
+      "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+      [flowId],
+    );
+    return result.rows.map((row) => String(row.role_id));
+  }
+
   async listFlows(organizationId: string): Promise<FlowDraft[]> {
     const flows = await this.pool.query<Row>(
-      `SELECT id, organization_id, name, scope, status, created_at, updated_at
+      `SELECT id, organization_id, name, role_id, status, created_at, updated_at
        FROM flows
        WHERE organization_id = $1
        ORDER BY created_at DESC`,
@@ -155,9 +285,8 @@ export class PostgresAdminStore implements AdminStore {
     );
     const steps = await this.pool.query<Row>(
       `
-        SELECT fs.flow_id, r.display_name
+        SELECT fs.flow_id, fs.role_id
         FROM flow_steps fs
-        JOIN roles r ON r.id = fs.role_id
         WHERE fs.flow_id IN (
           SELECT id FROM flows WHERE organization_id = $1
         )
@@ -165,21 +294,17 @@ export class PostgresAdminStore implements AdminStore {
       `,
       [organizationId],
     );
-    const stepsByFlow = new Map<string, AdminRole[]>();
+    const stepsByFlow = new Map<string, string[]>();
     for (const step of steps.rows) {
       const flowId = String(step.flow_id);
-      const displayName = String(step.display_name);
-      if (!isAdminRole(displayName)) {
-        continue;
-      }
       const list = stepsByFlow.get(flowId) ?? [];
-      list.push(displayName);
+      list.push(String(step.role_id));
       stepsByFlow.set(flowId, list);
     }
     return flows.rows.map((row) => ({
       id: String(row.id),
       name: String(row.name),
-      scope: String(row.scope),
+      roleId: String(row.role_id),
       status: flowStatusFromRow(row),
       steps: stepsByFlow.get(String(row.id)) ?? [],
     }));
@@ -194,13 +319,11 @@ export class PostgresAdminStore implements AdminStore {
   }
 }
 
-function isUniqueViolation(error: unknown): boolean {
+function isUniqueViolation(error: unknown, constraint: string): boolean {
   return (
     typeof error === "object" &&
     error !== null &&
     (error as { code?: unknown }).code === "23505" &&
-    (!("constraint" in error) ||
-      (error as { constraint?: unknown }).constraint ===
-        "idx_flows_org_name_scope_draft")
+    (error as { constraint?: unknown }).constraint === constraint
   );
 }

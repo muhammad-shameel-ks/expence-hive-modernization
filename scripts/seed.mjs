@@ -18,6 +18,14 @@ const EMPLOYEES = [
   { id: "emp-shameel", name: "Muhammad Shameel", email: "muhammadshameelks@hive.local", department: "Engineering" },
 ];
 
+const DEPARTMENTS = ["Engineering", "Operations", "Finance", "IT", "Executive"];
+
+// Admin-console and claim/payment-authorization roles share one table
+// (see docs/domain-model/approval-workflow.md). Roles without a department
+// are organization-wide by design (Superadmin, HR administrator); the
+// expense-side roles (manager/it-reviewer/ceo/finance-reviewer/hr/employee)
+// stay department-agnostic here because chain resolution is not yet wired
+// to department-scoped roles or Flows (tracked as follow-up work).
 const ROLES = [
   { code: "employee", displayName: "Employee" },
   { code: "manager", displayName: "Manager" },
@@ -26,14 +34,14 @@ const ROLES = [
   { code: "ceo", displayName: "CEO" },
   { code: "hr-administrator", displayName: "HR administrator" },
   { code: "hr", displayName: "HR" },
-  { code: "system-administrator", displayName: "System administrator" },
+  { code: "superadmin", displayName: "Superadmin" },
   { code: "ceo-delegate", displayName: "CEO delegate" },
 ];
 
 const EMPLOYEE_ROLES = [
   { employeeId: "emp-grace", roleCode: "hr-administrator" },
   { employeeId: "emp-grace", roleCode: "hr" },
-  { employeeId: "emp-shameel", roleCode: "system-administrator" },
+  { employeeId: "emp-shameel", roleCode: "superadmin" },
   { employeeId: "emp-ada", roleCode: "manager" },
   { employeeId: "emp-finance", roleCode: "finance-reviewer" },
   { employeeId: "emp-it", roleCode: "it-reviewer" },
@@ -42,8 +50,8 @@ const EMPLOYEE_ROLES = [
 
 const FLOW = {
   name: "Standard reimbursement",
-  scope: "All departments",
-  steps: ["manager", "it-reviewer", "ceo", "finance-reviewer"],
+  targetRoleCode: "manager",
+  steps: ["it-reviewer", "ceo", "finance-reviewer"],
 };
 
 const CLAIMS = [
@@ -172,12 +180,22 @@ async function main() {
       [ORGANIZATION.id, ORGANIZATION.name],
     );
 
-    for (const employee of EMPLOYEES) {
+    for (const departmentName of DEPARTMENTS) {
       await client.query(
-        `INSERT INTO employees (id, organization_id, name, email, department)
+        `INSERT INTO departments (id, organization_id, name)
+         VALUES ($1, $2, $3)
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name`,
+        [`dept-${departmentName.toLowerCase()}`, ORGANIZATION.id, departmentName],
+      );
+    }
+
+    for (const employee of EMPLOYEES) {
+      const departmentId = `dept-${employee.department.toLowerCase()}`;
+      await client.query(
+        `INSERT INTO employees (id, organization_id, name, email, department_id)
          VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, department = EXCLUDED.department`,
-        [employee.id, ORGANIZATION.id, employee.name, employee.email, employee.department],
+         ON CONFLICT (id) DO UPDATE SET name = EXCLUDED.name, email = EXCLUDED.email, department_id = EXCLUDED.department_id`,
+        [employee.id, ORGANIZATION.id, employee.name, employee.email, departmentId],
       );
     }
 
@@ -204,19 +222,20 @@ async function main() {
       );
     }
 
+    const flowTargetRoleId = `role-${FLOW.targetRoleCode}`;
     const existingFlow = await client.query(
-      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND scope = $3",
-      [FLOW.name, ORGANIZATION.id, FLOW.scope],
+      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
+      [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
     );
     let flowId = existingFlow.rows[0]?.id;
     if (!flowId) {
       const insertedFlow = await client.query(
-        `INSERT INTO flows (id, organization_id, name, scope, status)
+        `INSERT INTO flows (id, organization_id, name, role_id, status)
          VALUES ($1, $2, $3, $4, 'draft')
-         ON CONFLICT (organization_id, name, scope) WHERE status = 'draft'
+         ON CONFLICT (organization_id, name, role_id) WHERE status = 'draft'
          DO NOTHING
          RETURNING id`,
-        [`flow-${crypto.randomUUID()}`, ORGANIZATION.id, FLOW.name, FLOW.scope],
+        [`flow-${crypto.randomUUID()}`, ORGANIZATION.id, FLOW.name, flowTargetRoleId],
       );
       flowId = insertedFlow.rows[0]?.id;
       if (flowId) {
@@ -228,8 +247,8 @@ async function main() {
         }
       } else {
         const concurrentFlow = await client.query(
-          "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND scope = $3",
-          [FLOW.name, ORGANIZATION.id, FLOW.scope],
+          "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
+          [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
         );
         flowId = concurrentFlow.rows[0]?.id;
       }

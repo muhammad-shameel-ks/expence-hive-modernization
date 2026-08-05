@@ -1,7 +1,15 @@
 import { describe, expect, it } from "vitest";
 import { AdminError, type AdminCommands } from "./commands";
-import { handleAssignRoleRequest, handleCreateFlowRequest } from "./http";
-import type { FlowDraft } from "./ports";
+import {
+  handleAssignRoleRequest,
+  handleCreateDepartmentRequest,
+  handleCreateFlowRequest,
+  handleCreateRoleRequest,
+  handleDeactivateDepartmentRequest,
+  handleDeactivateRoleRequest,
+  handlePublishFlowRequest,
+} from "./http";
+import type { AdminDepartment, AdminRole, FlowDraft } from "./ports";
 
 function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
   return {
@@ -9,12 +17,37 @@ function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
     listFlows: async () => [],
     getAdminActor: async () => null,
     assignRole: async () => {},
-    createFlowDraft: async (): Promise<FlowDraft> => ({
+    listDepartments: async () => [],
+    createDepartment: async (): Promise<AdminDepartment> => ({
+      id: "dept-1",
+      organizationId: "org-1",
+      name: "Engineering",
+      active: true,
+    }),
+    deactivateDepartment: async () => {},
+    listRoles: async () => [],
+    createRole: async (): Promise<AdminRole> => ({
+      id: "role-1",
+      organizationId: "org-1",
+      code: "team-lead",
+      displayName: "Team Lead",
+      departmentId: null,
+      active: true,
+    }),
+    deactivateRole: async () => {},
+    createFlow: async (): Promise<FlowDraft> => ({
       id: "flow-1",
       name: "Standard reimbursement",
-      scope: "All departments",
+      roleId: "role-1",
       status: "draft",
-      steps: ["Manager"],
+      steps: ["role-2"],
+    }),
+    publishFlow: async (): Promise<FlowDraft> => ({
+      id: "flow-1",
+      name: "Standard reimbursement",
+      roleId: "role-1",
+      status: "published",
+      steps: ["role-2"],
     }),
     ...overrides,
   };
@@ -29,7 +62,7 @@ describe("handleAssignRoleRequest", () => {
     const response = await handleAssignRoleRequest(
       new Request("http://localhost/api/admin/roles", {
         method: "POST",
-        body: JSON.stringify({ employeeId: "emp-ada", role: "Manager" }),
+        body: JSON.stringify({ employeeId: "emp-ada", roleId: "role-1" }),
       }),
       buildCommands(),
       "emp-grace",
@@ -50,7 +83,7 @@ describe("handleAssignRoleRequest", () => {
       const response = await handleAssignRoleRequest(
         new Request("http://localhost/api/admin/roles", {
           method: "POST",
-          body: JSON.stringify({ employeeId: "emp-ada", role: "Manager" }),
+          body: JSON.stringify({ employeeId: "emp-ada", roleId: "role-1" }),
         }),
         commands,
         "emp-grace",
@@ -59,7 +92,7 @@ describe("handleAssignRoleRequest", () => {
     }
   });
 
-  it("rejects a body without string employeeId or role", async () => {
+  it("rejects a body without string employeeId or roleId", async () => {
     const response = await handleAssignRoleRequest(
       new Request("http://localhost/api/admin/roles", {
         method: "POST",
@@ -94,7 +127,7 @@ describe("handleAssignRoleRequest", () => {
     const response = await handleAssignRoleRequest(
       new Request("http://localhost/api/admin/roles", {
         method: "POST",
-        body: JSON.stringify({ employeeId: "emp-ada", role: "Manager" }),
+        body: JSON.stringify({ employeeId: "emp-ada", roleId: "role-1" }),
       }),
       commands,
       "emp-grace",
@@ -111,8 +144,8 @@ describe("handleCreateFlowRequest", () => {
         method: "POST",
         body: JSON.stringify({
           name: "Standard reimbursement",
-          scope: "All departments",
-          steps: ["Manager"],
+          roleId: "role-1",
+          steps: ["role-2"],
         }),
       }),
       buildCommands(),
@@ -128,7 +161,7 @@ describe("handleCreateFlowRequest", () => {
     const response = await handleCreateFlowRequest(
       new Request("http://localhost/api/admin/flows", {
         method: "POST",
-        body: JSON.stringify({ name: "x", scope: "All departments", steps: [1] }),
+        body: JSON.stringify({ name: "x", roleId: "role-1", steps: [1] }),
       }),
       buildCommands(),
       "emp-grace",
@@ -150,18 +183,17 @@ describe("handleCreateFlowRequest", () => {
     expect(response.status).toBe(422);
   });
 
-  it("maps a store-level validation error (unseeded role) to 422", async () => {
+  it("maps a store-level validation error (unknown role) to 422", async () => {
     const commands = buildCommands({
-      createFlowDraft: async () =>
-        Promise.reject(new AdminError("validation", 'Role "Manager" is not seeded.')),
+      createFlow: async () => Promise.reject(new AdminError("validation", 'Unknown role "role-1".')),
     });
     const response = await handleCreateFlowRequest(
       new Request("http://localhost/api/admin/flows", {
         method: "POST",
         body: JSON.stringify({
           name: "Standard reimbursement",
-          scope: "All departments",
-          steps: ["Manager"],
+          roleId: "role-1",
+          steps: ["role-2"],
         }),
       }),
       commands,
@@ -169,5 +201,121 @@ describe("handleCreateFlowRequest", () => {
     );
 
     expect(response.status).toBe(422);
+  });
+});
+
+describe("handlePublishFlowRequest", () => {
+  it("returns 200 with the published flow", async () => {
+    const response = await handlePublishFlowRequest(
+      new Request("http://localhost/api/admin/flows/publish", {
+        method: "POST",
+        body: JSON.stringify({ flowId: "flow-1" }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { flow: FlowDraft };
+    expect(body.flow.status).toBe("published");
+  });
+
+  it("rejects a body without a string flowId", async () => {
+    const response = await handlePublishFlowRequest(
+      new Request("http://localhost/api/admin/flows/publish", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(422);
+  });
+});
+
+describe("handleCreateDepartmentRequest", () => {
+  it("returns 201 when the department is created", async () => {
+    const response = await handleCreateDepartmentRequest(
+      new Request("http://localhost/api/admin/departments", {
+        method: "POST",
+        body: JSON.stringify({ name: "Engineering" }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(201);
+  });
+
+  it("rejects a body without a string name", async () => {
+    const response = await handleCreateDepartmentRequest(
+      new Request("http://localhost/api/admin/departments", {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(422);
+  });
+});
+
+describe("handleDeactivateDepartmentRequest", () => {
+  it("returns 200 when the department is deactivated", async () => {
+    const response = await handleDeactivateDepartmentRequest(
+      new Request("http://localhost/api/admin/departments/deactivate", {
+        method: "POST",
+        body: JSON.stringify({ departmentId: "dept-1" }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(200);
+  });
+});
+
+describe("handleCreateRoleRequest", () => {
+  it("returns 201 when the role is created", async () => {
+    const response = await handleCreateRoleRequest(
+      new Request("http://localhost/api/admin/org-roles", {
+        method: "POST",
+        body: JSON.stringify({ code: "team-lead", displayName: "Team Lead", departmentId: null }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(201);
+  });
+
+  it("rejects a body without string code or displayName", async () => {
+    const response = await handleCreateRoleRequest(
+      new Request("http://localhost/api/admin/org-roles", {
+        method: "POST",
+        body: JSON.stringify({ code: "team-lead" }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(422);
+  });
+});
+
+describe("handleDeactivateRoleRequest", () => {
+  it("returns 200 when the role is deactivated", async () => {
+    const response = await handleDeactivateRoleRequest(
+      new Request("http://localhost/api/admin/org-roles/deactivate", {
+        method: "POST",
+        body: JSON.stringify({ roleId: "role-1" }),
+      }),
+      buildCommands(),
+      "emp-grace",
+    );
+
+    expect(response.status).toBe(200);
   });
 });
