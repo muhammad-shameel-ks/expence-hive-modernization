@@ -97,4 +97,72 @@ describe("filterAndSortExpenses", () => {
   it("returns an empty list when nothing matches", () => {
     expect(filterAndSortExpenses(expenses, { query: "zzz-no-such-expense" })).toEqual([]);
   });
+
+  it("filters by exact status list", () => {
+    const list = [
+      expense({ id: "a", status: "draft" }),
+      expense({ id: "b", status: "paid" }),
+      expense({ id: "c", status: "rejected" }),
+    ];
+    expect(filterAndSortExpenses(list, { statuses: ["draft", "rejected"] }).map((e) => e.id)).toEqual([
+      "c",
+      "a",
+    ]);
+  });
+
+  it("filters by category list", () => {
+    const list = [
+      expense({ id: "a", category: "Travel" }),
+      expense({ id: "b", category: "Meals" }),
+      expense({ id: "c", category: "Software" }),
+    ];
+    expect(filterAndSortExpenses(list, { categories: ["Travel", "Software"] }).map((e) => e.id)).toEqual([
+      "a",
+      "c",
+    ]);
+  });
+
+  it("filters by amount range, inclusive on both bounds", () => {
+    const list = [
+      expense({ id: "low", amount: 50 }),
+      expense({ id: "mid", amount: 100 }),
+      expense({ id: "high", amount: 150 }),
+    ];
+    expect(filterAndSortExpenses(list, { amountMin: 100, amountMax: 100 }).map((e) => e.id)).toEqual([
+      "mid",
+    ]);
+    expect(filterAndSortExpenses(list, { amountMin: 100 }).map((e) => e.id).sort()).toEqual(["high", "mid"]);
+    expect(filterAndSortExpenses(list, { amountMax: 100 }).map((e) => e.id).sort()).toEqual(["low", "mid"]);
+  });
+
+  it("filters by submission date range, inclusive on both bounds", () => {
+    const list = [
+      expense({ id: "before", submittedAt: "2026-07-01T09:00:00Z" }),
+      expense({ id: "on-bound", submittedAt: "2026-08-04T23:00:00Z" }),
+      expense({ id: "after", submittedAt: "2026-09-01T09:00:00Z" }),
+    ];
+    expect(
+      filterAndSortExpenses(list, { dateFrom: "2026-08-01", dateTo: "2026-08-31" }).map((e) => e.id),
+    ).toEqual(["on-bound"]);
+  });
+
+  it("sorts by title, category, and status", () => {
+    const list = [
+      expense({ id: "b", title: "Banana", category: "Meals", status: "approved" }),
+      expense({ id: "a", title: "Apple", category: "Travel", status: "draft" }),
+    ];
+    expect(filterAndSortExpenses(list, { sortKey: "title", sortDir: 1 }).map((e) => e.id)).toEqual([
+      "a",
+      "b",
+    ]);
+    expect(filterAndSortExpenses(list, { sortKey: "category", sortDir: 1 }).map((e) => e.id)).toEqual([
+      "b",
+      "a",
+    ]);
+    // status rank follows the journey order in STATUS_META: draft comes before approved.
+    expect(filterAndSortExpenses(list, { sortKey: "status", sortDir: 1 }).map((e) => e.id)).toEqual([
+      "a",
+      "b",
+    ]);
+  });
 });

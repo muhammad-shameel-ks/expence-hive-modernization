@@ -37,7 +37,13 @@ export function ExpenseOverview({
   );
 
   const { pending, needsCorrection } = useMemo(() => groupAttentionItems(expenses), [expenses]);
-  const attentionItems = [...needsCorrection, ...pending];
+  const attentionItems = useMemo(
+    () =>
+      [...needsCorrection, ...pending].sort((a, b) =>
+        a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0,
+      ),
+    [needsCorrection, pending],
+  );
 
   const [viewAllOpen, setViewAllOpen] = useState(false);
 
