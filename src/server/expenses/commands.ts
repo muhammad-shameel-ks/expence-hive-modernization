@@ -1,16 +1,19 @@
-import type {
-  CreateExpenseDraftInput,
-  ExpenseClaim,
-  ExpenseEmployee,
-  ExpenseStage,
-  ExpenseStore,
+import {
+  FINANCE_OR_HR_ROLES,
+  type CreateExpenseDraftInput,
+  type ExpenseClaim,
+  type ExpenseEmployee,
+  type ExpenseStage,
+  type ExpenseStore,
 } from "./ports";
 
-const PAYOUT_DETAILS_ROLES = new Set(["finance-reviewer", "hr"]);
+function isFinanceOrHr(employee: ExpenseEmployee): boolean {
+  return employee.roleCodes.some((role) => FINANCE_OR_HR_ROLES.includes(role));
+}
 
 function canSeePayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
   if (claim.requesterId === viewer.id) return true;
-  return viewer.roleCodes.some((role) => PAYOUT_DETAILS_ROLES.has(role));
+  return isFinanceOrHr(viewer);
 }
 
 function maskPayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): ExpenseClaim {
@@ -245,7 +248,7 @@ export function createExpenseCommands({
 
     async listFinancePaymentQueue(actorId) {
       const employee = await requireEmployee(actorId);
-      if (!employee.roleCodes.some((role) => PAYOUT_DETAILS_ROLES.has(role))) {
+      if (!isFinanceOrHr(employee)) {
         throw new ExpenseError("unauthorized", "Only Finance or HR can view the payment queue.");
       }
       const claims = await store.listClaimsForOrganization(employee.organizationId);
@@ -256,7 +259,7 @@ export function createExpenseCommands({
 
     async updateComments(actorId, claimId, comments) {
       const employee = await requireEmployee(actorId);
-      if (!employee.roleCodes.some((role) => PAYOUT_DETAILS_ROLES.has(role))) {
+      if (!isFinanceOrHr(employee)) {
         throw new ExpenseError("unauthorized", "Only Finance or HR can add comments.");
       }
       const claim = await store.getClaim(claimId);

@@ -6,6 +6,9 @@ export type ExpenseRoleCode =
   | "finance-reviewer"
   | "hr";
 
+// Finance and HR share access to Payout Details, Finance Payment View, and Comments.
+export const FINANCE_OR_HR_ROLES: ExpenseRoleCode[] = ["finance-reviewer", "hr"];
+
 export type ExpenseEmployee = {
   id: string;
   organizationId: string;

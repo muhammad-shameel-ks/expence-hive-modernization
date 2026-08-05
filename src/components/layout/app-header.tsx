@@ -1,8 +1,7 @@
-import type { ExpenseRoleCode } from "@/server/expenses/ports";
+import { FINANCE_OR_HR_ROLES, type ExpenseRoleCode } from "@/server/expenses/ports";
 import styles from "@/app/expenses/expenses.module.css";
 
 const APPROVER_ROLES: ExpenseRoleCode[] = ["manager", "it-reviewer", "finance-reviewer", "ceo"];
-const PAYMENT_QUEUE_ROLES: ExpenseRoleCode[] = ["finance-reviewer", "hr"];
 
 export function AppHeader({
   employeeName,
@@ -14,7 +13,7 @@ export function AppHeader({
   activePath?: "/expenses" | "/expenses/all" | "/finance/payments";
 }) {
   const isApprover = roleCodes.some((role) => APPROVER_ROLES.includes(role));
-  const canViewPaymentQueue = roleCodes.some((role) => PAYMENT_QUEUE_ROLES.includes(role));
+  const canViewPaymentQueue = roleCodes.some((role) => FINANCE_OR_HR_ROLES.includes(role));
 
   return (
     <header className={styles.topBar}>
