@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { formatMoney, submittedLabel } from "./journey-meta";
+import { getJourneyFlowItems } from "./expense-drawer";
 
 describe("formatMoney", () => {
   it("always shows two decimals for a consistent financial surface", () => {
@@ -24,3 +25,97 @@ describe("submittedLabel", () => {
     expect(submittedLabel("")).toBe("");
   });
 });
+
+describe("getJourneyFlowItems", () => {
+  it("renders full workflow with pending steps greyed out for in-progress claims", () => {
+    const mockExpense = {
+      id: "ex-1",
+      ref: "EXP-1",
+      title: "Test",
+      category: "Software",
+      amount: 100,
+      currency: "INR",
+      date: "Aug 4",
+      submittedAt: "2026-08-03T10:00:00Z",
+      status: "in-finance" as const,
+      nextStage: "Finance verification",
+      nextActor: "Finance Officer",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 3", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 3", actor: "Manager", kind: "approved" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(mockExpense);
+    expect(steps.length).toBe(4);
+    expect(steps[0].pending).toBe(false);
+    expect(steps[1].pending).toBe(false);
+    expect(steps[2]).toMatchObject({
+      id: "pending-verification",
+      label: "Finance verification",
+      pending: true,
+    });
+    expect(steps[3]).toMatchObject({
+      id: "pending-payment",
+      label: "Paid",
+      pending: true,
+    });
+  });
+
+  it("returns only history steps without pending steps for terminal paid expense", () => {
+    const paidExpense = {
+      id: "ex-paid",
+      ref: "EXP-PAID",
+      title: "Paid claim",
+      category: "Travel",
+      amount: 500,
+      currency: "INR",
+      date: "Aug 1",
+      submittedAt: "2026-08-01T10:00:00Z",
+      status: "paid" as const,
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 1", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 1", actor: "Manager", kind: "approved" as const },
+        { id: "h3", date: "Aug 2", actor: "Finance", kind: "verified" as const },
+        { id: "h4", date: "Aug 2", actor: "Finance", kind: "paid" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(paidExpense);
+    expect(steps.length).toBe(4);
+    expect(steps.every((s) => !s.pending)).toBe(true);
+  });
+
+  it("includes pending approval step for multi-stage approval flows with earlier approvals", () => {
+    const multiApprovalExpense = {
+      id: "ex-flight",
+      ref: "EXP-FLIGHT",
+      title: "Flight ticket",
+      category: "Travel",
+      amount: 1200,
+      currency: "INR",
+      date: "Aug 4",
+      submittedAt: "2026-08-04T10:00:00Z",
+      status: "in-approval" as const,
+      nextStage: "Team Lead approval",
+      nextActor: "Grace Hopper",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 4", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 4", actor: "IT Head", kind: "approved" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(multiApprovalExpense);
+    const pendingApproval = steps.find((s) => s.id === "pending-approval");
+    expect(pendingApproval).toBeDefined();
+    expect(pendingApproval).toMatchObject({
+      label: "Team Lead approval",
+      actor: "Grace Hopper",
+      pending: true,
+    });
+  });
+});
+
