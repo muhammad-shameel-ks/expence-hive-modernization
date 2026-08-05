@@ -156,6 +156,17 @@ export class InMemoryAdminStore implements AdminStore {
     return flow;
   }
 
+  async updateFlow(flowId: string, input: FlowInput): Promise<FlowDraft> {
+    const flow = this.flows.find((candidate) => candidate.id === flowId);
+    if (!flow) {
+      throw new AdminError("not-found", "Flow does not exist.");
+    }
+    flow.name = input.name;
+    flow.roleId = input.roleId;
+    flow.steps = [...input.steps];
+    return flow;
+  }
+
   async publishFlow(flowId: string): Promise<FlowDraft> {
     const flow = this.flows.find((candidate) => candidate.id === flowId);
     if (!flow) {

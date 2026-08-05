@@ -517,6 +517,28 @@ describe("createFlow", () => {
   });
 });
 
+describe("updateFlow", () => {
+  it("updates an existing flow definition and records an audit event", async () => {
+    const { admin, store } = buildAdmin();
+    const role1 = await admin.createRole("emp-grace", { code: "executive", displayName: "Executive", departmentId: null });
+    const role2 = await admin.createRole("emp-grace", { code: "finance", displayName: "Finance", departmentId: null });
+    const flow = await admin.createFlow("emp-grace", { name: "Initial Flow", roleId: role1.id, steps: [role1.id] });
+
+    const updated = await admin.updateFlow("emp-grace", flow.id, {
+      name: "Updated Flow Name",
+      roleId: role1.id,
+      steps: [role1.id, role2.id],
+    });
+
+    expect(updated).toMatchObject({
+      id: flow.id,
+      name: "Updated Flow Name",
+      steps: [role1.id, role2.id],
+    });
+    expect(store.audit.map((e) => e.action)).toContain("update-flow");
+  });
+});
+
 describe("publishFlow", () => {
   it("publishes a draft flow", async () => {
     const { admin } = buildAdmin();

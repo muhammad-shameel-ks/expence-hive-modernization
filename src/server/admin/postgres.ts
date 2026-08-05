@@ -251,6 +251,45 @@ export class PostgresAdminStore implements AdminStore {
     }
   }
 
+  async updateFlow(flowId: string, input: FlowInput): Promise<FlowDraft> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      const flowResult = await client.query<Row>(
+        "SELECT id, organization_id, name, role_id, status FROM flows WHERE id = $1",
+        [flowId],
+      );
+      if (flowResult.rows.length === 0) {
+        throw new AdminError("not-found", "Flow does not exist.");
+      }
+      const existingStatus = String(flowResult.rows[0].status) as FlowStatus;
+      await client.query(
+        "UPDATE flows SET name = $1, role_id = $2, updated_at = now() WHERE id = $3",
+        [input.name, input.roleId, flowId],
+      );
+      await client.query("DELETE FROM flow_steps WHERE flow_id = $1", [flowId]);
+      for (let index = 0; index < input.steps.length; index += 1) {
+        await client.query(
+          "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
+          [flowId, index, input.steps[index]],
+        );
+      }
+      await client.query("COMMIT");
+      return {
+        id: flowId,
+        name: input.name,
+        roleId: input.roleId,
+        status: existingStatus,
+        steps: [...input.steps],
+      };
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
   async publishFlow(flowId: string): Promise<FlowDraft> {
     const client = await this.pool.connect();
     try {

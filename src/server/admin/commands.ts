@@ -57,6 +57,7 @@ export type AdminCommands = {
   createRole(actorId: string, input: RoleInput): Promise<AdminRole>;
   deactivateRole(actorId: string, roleId: string): Promise<void>;
   createFlow(actorId: string, input: FlowInput): Promise<FlowDraft>;
+  updateFlow(actorId: string, flowId: string, input: FlowInput): Promise<FlowDraft>;
   publishFlow(actorId: string, flowId: string): Promise<FlowDraft>;
   deleteFlow(actorId: string, flowId: string): Promise<void>;
 };
@@ -288,6 +289,33 @@ export function createAdminCommands({
       });
       await audit(actor, "create-flow-draft", `Created the "${name}" flow draft.`);
       return flow;
+    },
+
+    async updateFlow(actorId, flowId, input) {
+      const actor = await requireAdmin(actorId);
+      const name = input.name.trim();
+      if (!name) {
+        throw new AdminError("validation", "Flow needs a name.");
+      }
+      if (name.length > MAX_NAME_LENGTH) {
+        throw new AdminError("validation", "Flow name is too long (max 120 characters).");
+      }
+      if (!input.roleId) {
+        throw new AdminError("validation", "Flow needs an assigned role.");
+      }
+      if (input.steps.length === 0) {
+        throw new AdminError("validation", "Flow needs at least one step.");
+      }
+      if (input.steps.length > MAX_FLOW_STEPS) {
+        throw new AdminError("validation", "Flow cannot have more than 15 steps.");
+      }
+      const updated = await store.updateFlow(flowId, {
+        name,
+        roleId: input.roleId,
+        steps: [...input.steps],
+      });
+      await audit(actor, "update-flow", `Updated the "${name}" flow.`);
+      return updated;
     },
 
     // Deliberately does not require a role named "Finance Executive" as the

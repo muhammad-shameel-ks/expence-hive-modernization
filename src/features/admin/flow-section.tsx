@@ -49,8 +49,10 @@ export function FlowSection({
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
 
-  const [flowName, setFlowName] = useState("Standard reimbursement");
-  const [targetRoleId, setTargetRoleId] = useState(firstRoleId);
+  const [editingFlowId, setEditingFlowId] = useState<string | null>(flows[0]?.id ?? null);
+  const [editingFlowStatus, setEditingFlowStatus] = useState<FlowStatus | null>(flows[0]?.status ?? null);
+  const [flowName, setFlowName] = useState(flows[0]?.name ?? "Standard reimbursement");
+  const [targetRoleId, setTargetRoleId] = useState(flows[0]?.roleId ?? firstRoleId);
   const [steps, setSteps] = useState<FlowStep[]>(
     flows[0]?.steps.map((roleId, index) => ({ id: index, roleId })) ?? [],
   );
@@ -92,6 +94,9 @@ export function FlowSection({
       if (viewingFlowId === flow.id) {
         setViewingFlowId(null);
       }
+      if (editingFlowId === flow.id) {
+        resetEditor();
+      }
       onMessage(`${flow.name} deleted.`);
     } catch {
       onError("The flow could not be deleted. Please try again.");
@@ -101,37 +106,83 @@ export function FlowSection({
   };
 
   const loadFlowIntoEditor = (flow: FlowDraft) => {
+    setEditingFlowId(flow.id);
+    setEditingFlowStatus(flow.status);
     setFlowName(flow.name);
     setTargetRoleId(flow.roleId);
     setSteps(flow.steps.map((roleId, index) => ({ id: index, roleId })));
     nextStepId.current = flow.steps.length;
-    onMessage(`Loaded flow "${flow.name}" into the editor.`);
+    onMessage(`Loaded flow "${flow.name}" into editor.`);
+    if (typeof window !== "undefined") {
+      const element = document.getElementById("flow");
+      element?.scrollIntoView({ behavior: "smooth" });
+    }
   };
 
-  const saveFlowDraft = async () => {
+  const resetEditor = () => {
+    setEditingFlowId(null);
+    setEditingFlowStatus(null);
+    setFlowName("New reimbursement flow");
+    setTargetRoleId(firstRoleId);
+    setSteps([]);
+    nextStepId.current = 0;
+    onMessage("Editor reset for creating a new flow.");
+  };
+
+  const saveFlow = async (publishImmediately = false) => {
     setSaving(true);
     onError("");
     try {
-      const response = await fetch("/api/admin/flows", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          name: flowName,
-          roleId: targetRoleId,
-          steps: steps.map((step) => step.roleId),
-        }),
-      });
-      if (!response.ok) {
-        const body = (await response.json()) as { error?: string };
-        throw new Error(body.error ?? "unknown");
+      let saved: FlowDraft;
+      if (editingFlowId) {
+        const response = await fetch("/api/admin/flows/update", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            flowId: editingFlowId,
+            name: flowName,
+            roleId: targetRoleId,
+            steps: steps.map((step) => step.roleId),
+          }),
+        });
+        if (!response.ok) {
+          const body = (await response.json()) as { error?: string };
+          throw new Error(body.error ?? "unknown");
+        }
+        const body = (await response.json()) as { flow: FlowDraft };
+        saved = body.flow;
+        setFlowsState((current) => current.map((item) => (item.id === saved.id ? saved : item)));
+        setEditingFlowStatus(saved.status);
+      } else {
+        const response = await fetch("/api/admin/flows", {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          body: JSON.stringify({
+            name: flowName,
+            roleId: targetRoleId,
+            steps: steps.map((step) => step.roleId),
+          }),
+        });
+        if (!response.ok) {
+          const body = (await response.json()) as { error?: string };
+          throw new Error(body.error ?? "unknown");
+        }
+        const body = (await response.json()) as { flow: FlowDraft };
+        saved = body.flow;
+        setFlowsState((current) => [saved, ...current]);
+        setEditingFlowId(saved.id);
+        setEditingFlowStatus(saved.status);
       }
-      const body = (await response.json()) as { flow: FlowDraft };
-      setFlowsState((current) => [body.flow, ...current]);
-      onMessage(`${flowName || "Flow"} saved as a draft for the ${roleName(targetRoleId)} role.`);
+
+      if (publishImmediately && saved.status === "draft") {
+        await publishFlow(saved);
+      } else {
+        onMessage(`Flow "${flowName}" saved successfully.`);
+      }
     } catch (caught) {
       onError(
         caught instanceof Error && caught.message === "unauthorized"
-          ? "Only Superadmin and HR administrators can create flows."
+          ? "Only Superadmin and HR administrators can configure flows."
           : "The flow could not be saved. Please try again.",
       );
     } finally {
@@ -235,6 +286,32 @@ export function FlowSection({
       />
 
       <div className="mt-5 rounded-2xl border border-[#e0e7ee] bg-white p-5 shadow-[0_18px_38px_rgba(31,50,71,0.05)] sm:p-6">
+          {/* Editor Header Banner */}
+          {editingFlowId ? (
+            <div className="mb-4 flex flex-wrap items-center justify-between gap-3 rounded-xl border border-[#b7d8e5] bg-[#f0f7fa] px-4 py-2.5">
+              <div className="flex items-center gap-2 text-xs font-bold text-[#1c2f46]">
+                <Edit3 className="size-4 text-[#196d86]" />
+                <span>Editing Existing Flow:</span>
+                <span className="text-[#196d86] font-extrabold">{flowName}</span>
+                {editingFlowStatus ? (
+                  <span className={`rounded-full px-2 py-0.5 text-[0.65rem] font-bold uppercase tracking-wider ${
+                    editingFlowStatus === "published"
+                      ? "bg-[#e6f4ea] text-[#137333]"
+                      : "bg-[#feefc3] text-[#b06000]"
+                  }`}>
+                    {editingFlowStatus}
+                  </span>
+                ) : null}
+              </div>
+              <button
+                onClick={resetEditor}
+                className="flex items-center gap-1 rounded-lg border border-[#cbd5e1] bg-white px-2.5 py-1 text-xs font-bold text-[#475569] shadow-2xs hover:bg-[#f1f5f9] hover:text-[#1c2f46]"
+              >
+                + Create New Flow
+              </button>
+            </div>
+          ) : null}
+
           {/* Controls Bar */}
           <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eef2f6] pb-5">
             <div className="flex flex-wrap items-center gap-4">
@@ -266,8 +343,8 @@ export function FlowSection({
               </div>
             </div>
 
-            <div className="flex items-center gap-2">
-              <span className="hidden items-center gap-1.5 rounded-lg border border-[#d6dfe8] bg-[#f8fafc] px-3 py-1.5 text-[0.68rem] font-semibold text-[#64748b] sm:flex">
+            <div className="flex flex-wrap items-center gap-2">
+              <span className="hidden items-center gap-1.5 rounded-lg border border-[#d6dfe8] bg-[#f8fafc] px-3 py-1.5 text-[0.68rem] font-semibold text-[#64748b] lg:flex">
                 <GripVertical className="size-3.5 text-[#196d86]" /> Drag & drop nodes to re-order
               </span>
               <Button variant="outline" size="sm" onClick={runSimulation}>
@@ -275,12 +352,20 @@ export function FlowSection({
                 Simulate Path
               </Button>
               <Button
+                variant="outline"
+                size="sm"
+                disabled={saving || !targetRoleId || steps.length === 0}
+                onClick={() => saveFlow(false)}
+              >
+                {saving ? "Saving..." : editingFlowId ? "Save Changes" : "Save Draft"}
+              </Button>
+              <Button
                 className="bg-[#196d86] hover:bg-[#175d75]"
                 size="sm"
                 disabled={saving || !targetRoleId || steps.length === 0}
-                onClick={saveFlowDraft}
+                onClick={() => saveFlow(true)}
               >
-                {saving ? "Saving..." : "Save Flow Draft"}
+                {editingFlowStatus === "published" ? "Save & Update Flow" : "Save & Publish Flow"}
                 <ArrowRight className="size-3.5" />
               </Button>
             </div>

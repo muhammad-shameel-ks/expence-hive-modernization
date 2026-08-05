@@ -75,6 +75,7 @@ export interface AdminStore {
   createRole(organizationId: string, input: RoleInput): Promise<AdminRole>;
   deactivateRole(roleId: string): Promise<void>;
   createFlow(organizationId: string, input: FlowInput): Promise<FlowDraft>;
+  updateFlow(flowId: string, input: FlowInput): Promise<FlowDraft>;
   publishFlow(flowId: string): Promise<FlowDraft>;
   deleteFlow(flowId: string): Promise<void>;
   listFlows(organizationId: string): Promise<FlowDraft[]>;

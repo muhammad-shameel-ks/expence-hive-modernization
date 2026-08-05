@@ -140,6 +140,38 @@ export async function handlePublishFlowRequest(
   );
 }
 
+export async function handleUpdateFlowRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { flowId, name, roleId, steps } = body as {
+        flowId?: unknown;
+        name?: unknown;
+        roleId?: unknown;
+        steps?: unknown;
+      };
+      if (typeof flowId !== "string" || typeof name !== "string" || typeof roleId !== "string" || !Array.isArray(steps)) {
+        return null;
+      }
+      const stringSteps = steps.filter((step): step is string => typeof step === "string");
+      if (stringSteps.length !== steps.length) return null;
+      return { flowId, name, roleId, steps: stringSteps };
+    },
+    async (input) => {
+      const flow = await commands.updateFlow(actorId, input.flowId, {
+        name: input.name,
+        roleId: input.roleId,
+        steps: input.steps,
+      });
+      return Response.json({ ok: true, flow });
+    },
+  );
+}
+
 export async function handleDeleteFlowRequest(
   request: Request,
   commands: AdminCommands,
