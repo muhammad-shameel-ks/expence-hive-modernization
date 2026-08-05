@@ -146,7 +146,7 @@ export function ExpenseTable({
               variant="outline"
               size="sm"
               className="gap-1.5"
-              aria-pressed={moreFiltersOpen}
+              aria-expanded={moreFiltersOpen}
               onClick={() => setMoreFiltersOpen((v) => !v)}
             >
               <SlidersHorizontal className="h-3.5 w-3.5" />
@@ -200,6 +200,7 @@ export function ExpenseTable({
                   value={amountMin}
                   onChange={(e) => setAmountMin(e.target.value)}
                   placeholder="Min"
+                  aria-label="Minimum amount"
                   className="h-9 w-24 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
                 <span className="text-muted-foreground">–</span>
@@ -210,6 +211,7 @@ export function ExpenseTable({
                   value={amountMax}
                   onChange={(e) => setAmountMax(e.target.value)}
                   placeholder="Max"
+                  aria-label="Maximum amount"
                   className="h-9 w-24 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
               </div>
@@ -224,6 +226,7 @@ export function ExpenseTable({
                   type="date"
                   value={dateFrom}
                   onChange={(e) => setDateFrom(e.target.value)}
+                  aria-label="Submitted from date"
                   className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
                 <span className="text-muted-foreground">–</span>
@@ -231,6 +234,7 @@ export function ExpenseTable({
                   type="date"
                   value={dateTo}
                   onChange={(e) => setDateTo(e.target.value)}
+                  aria-label="Submitted to date"
                   className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
               </div>
