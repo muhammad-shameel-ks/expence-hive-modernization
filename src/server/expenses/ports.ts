@@ -1,19 +1,17 @@
-export type ExpenseRoleCode =
-  | "employee"
-  | "manager"
-  | "it-reviewer"
-  | "ceo"
-  | "finance-reviewer"
-  | "hr";
+export type ExpenseRole = {
+  id: string;
+  code: string;
+  displayName: string;
+};
 
 // Finance and HR share access to Payout Details, Finance Payment View, and Comments.
-export const FINANCE_OR_HR_ROLES: ExpenseRoleCode[] = ["finance-reviewer", "hr"];
+export const FINANCE_OR_HR_ROLE_CODES = ["finance-reviewer", "hr"];
 
 export type ExpenseEmployee = {
   id: string;
   organizationId: string;
   name: string;
-  roleCodes: ExpenseRoleCode[];
+  role: ExpenseRole | null;
   managerId?: string;
 };
 
@@ -32,20 +30,29 @@ export type ExpensePayoutDetails = {
   ifscCode: string;
 };
 
-export type ExpenseStage = "manager" | "it" | "ceo" | "finance";
+export type ExpenseStepStatus = "pending" | "approved" | "skipped" | "verified" | "paid";
 
 export type ExpenseStep = {
   id: string;
-  stage: ExpenseStage;
-  assignedActorId: string;
-  status: "pending" | "approved" | "verified" | "paid";
+  roleId: string;
+  assignedActorId?: string;
+  status: ExpenseStepStatus;
   decidedAt?: string;
 };
 
 export type ExpenseHistoryEvent = {
   id: string;
-  kind: "draft" | "submitted" | "approved" | "correction" | "rejected" | "verified" | "paid";
-  actorId: string;
+  kind:
+    | "draft"
+    | "submitted"
+    | "approved"
+    | "correction"
+    | "rejected"
+    | "verified"
+    | "paid"
+    | "skipped"
+    | "takeover";
+  actorId?: string;
   detail?: string;
   createdAt: string;
 };
@@ -64,8 +71,9 @@ export type ExpenseClaim = {
   expenseDate: string;
   paymentMethod: "Personal card" | "Company card";
   status: "draft" | "in-approval" | "needs-correction" | "rejected" | "in-finance" | "paid";
-  currentStage?: ExpenseStage;
+  currentStage?: string;
   currentActorId?: string;
+  currentStageSince?: string;
   attachment?: ExpenseAttachment;
   payoutDetails?: ExpensePayoutDetails;
   comments?: string;
@@ -79,14 +87,20 @@ export type ExpenseClaim = {
 export type CreateExpenseDraftInput = {
   title: string;
   category: string;
-  subCategory: string;
-  remark: string;
+  subCategory?: string;
+  remark?: string;
   amountMinor: number;
   currency: string;
   expenseDate: string;
   paymentMethod: string;
   attachment?: ExpenseAttachmentInput;
-  payoutDetails: ExpensePayoutDetails;
+  payoutDetails?: ExpensePayoutDetails;
+};
+
+export type ExpenseFlow = {
+  id: string;
+  roleId: string;
+  steps: string[];
 };
 
 export interface ExpenseStore {
@@ -97,4 +111,5 @@ export interface ExpenseStore {
   createClaim(claim: ExpenseClaim): Promise<void>;
   getClaim(id: string): Promise<ExpenseClaim | null>;
   updateClaim(claim: ExpenseClaim): Promise<void>;
+  getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null>;
 }

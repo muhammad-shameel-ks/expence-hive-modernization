@@ -266,10 +266,12 @@ export function createAdminCommands({
       return flow;
     },
 
-    // Does not yet enforce "last step is Finance Executive" (issue #29):
-    // that role only becomes meaningful once the expenses-module rework
-    // (submitClaim chain resolution, CEO retirement) lands, tracked as
-    // follow-up work alongside it rather than encoded speculatively here.
+    // Deliberately does not require a role named "Finance Executive" as the
+    // last step (issue #29): the expenses module treats whichever role is
+    // last in a Flow's steps as its terminal, non-skippable stage, so any
+    // Flow already gets a real payment-completion stage without Superadmin
+    // needing to name it "Finance Executive". Reserved, non-deletable named
+    // roles remain unimplemented; still tracked as follow-up.
     async publishFlow(actorId, flowId) {
       const actor = await requireAdmin(actorId);
       const flows = await store.listFlows(actor.organizationId);

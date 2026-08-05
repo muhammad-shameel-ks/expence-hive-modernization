@@ -1,14 +1,16 @@
-import type { ExpenseClaim, ExpenseEmployee, ExpenseStore } from "./ports";
+import type { ExpenseClaim, ExpenseEmployee, ExpenseFlow, ExpenseStore } from "./ports";
 
 export class InMemoryExpenseStore implements ExpenseStore {
   private readonly employees: ExpenseEmployee[];
+  private readonly flows: ExpenseFlow[];
   private readonly claims = new Map<string, ExpenseClaim>();
 
-  constructor(input: { employees: ExpenseEmployee[] }) {
+  constructor(input: { employees: ExpenseEmployee[]; flows?: ExpenseFlow[] }) {
     this.employees = input.employees.map((employee) => ({
       ...employee,
-      roleCodes: [...employee.roleCodes],
+      role: employee.role ? { ...employee.role } : null,
     }));
+    this.flows = (input.flows ?? []).map((flow) => ({ ...flow, steps: [...flow.steps] }));
   }
 
   async getEmployee(id: string): Promise<ExpenseEmployee | null> {
@@ -44,5 +46,10 @@ export class InMemoryExpenseStore implements ExpenseStore {
 
   async updateClaim(claim: ExpenseClaim): Promise<void> {
     this.claims.set(claim.id, structuredClone(claim));
+  }
+
+  async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {
+    void organizationId;
+    return this.flows.find((flow) => flow.roleId === roleId) ?? null;
   }
 }

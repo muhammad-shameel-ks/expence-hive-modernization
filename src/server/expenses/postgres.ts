@@ -2,8 +2,8 @@ import type { Pool } from "pg";
 import type {
   ExpenseClaim,
   ExpenseEmployee,
+  ExpenseFlow,
   ExpenseHistoryEvent,
-  ExpenseStage,
   ExpenseStep,
   ExpenseStore,
 } from "./ports";
@@ -116,18 +116,27 @@ export class PostgresExpenseStore implements ExpenseStore {
       await client.query("BEGIN");
       const result = await client.query(
         `UPDATE reimbursement_claims
-         SET status = $2, current_stage = $3, current_actor_id = $4, version = $5, submitted_at = $6, comments = $7, updated_at = now()
-         WHERE id = $1 AND version < $5`,
-        [claim.id, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.submittedAt ?? null, claim.comments ?? null],
+         SET status = $2, current_stage = $3, current_actor_id = $4, current_stage_since = $5, version = $6, submitted_at = $7, comments = $8, updated_at = now()
+         WHERE id = $1 AND version < $6`,
+        [
+          claim.id,
+          claim.status,
+          claim.currentStage ?? null,
+          claim.currentActorId ?? null,
+          claim.currentStageSince ?? null,
+          claim.version,
+          claim.submittedAt ?? null,
+          claim.comments ?? null,
+        ],
       );
       if (result.rowCount !== 1) throw new Error("Claim was changed by another request.");
       for (let position = 0; position < claim.steps.length; position += 1) {
         const step = claim.steps[position];
         await client.query(
-          `INSERT INTO claim_approval_steps (id, claim_id, position, stage, assigned_actor_id, status, decided_at)
+          `INSERT INTO claim_approval_steps (id, claim_id, position, role_id, assigned_actor_id, status, decided_at)
            VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at`,
-          [step.id, claim.id, position, step.stage, step.assignedActorId, step.status, step.decidedAt ?? null],
+           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at, assigned_actor_id = EXCLUDED.assigned_actor_id`,
+          [step.id, claim.id, position, step.roleId, step.assignedActorId ?? null, step.status, step.decidedAt ?? null],
         );
       }
       await insertHistory(client, claim);
@@ -153,18 +162,42 @@ export class PostgresExpenseStore implements ExpenseStore {
       client.release();
     }
   }
+
+  async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {
+    const flowResult = await this.pool.query<Row>(
+      `SELECT id, role_id FROM flows WHERE organization_id = $1 AND role_id = $2 AND status = 'published'`,
+      [organizationId, roleId],
+    );
+    if (flowResult.rows.length === 0) return null;
+    const flowId = String(flowResult.rows[0].id);
+    const stepsResult = await this.pool.query<Row>(
+      "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+      [flowId],
+    );
+    return {
+      id: flowId,
+      roleId: String(flowResult.rows[0].role_id),
+      steps: stepsResult.rows.map((row) => String(row.role_id)),
+    };
+  }
 }
 
+// employee_roles remains many-to-many in the schema (ADR-0002 forward
+// compatibility note), but this module treats an employee as having one
+// role: the join picks a single, deterministic row per employee instead of
+// letting a legacy multi-role assignment fan out into duplicate employee
+// rows or an arbitrarily-ordered pick.
 const employeeQuery = `
   SELECT e.id, e.organization_id, e.name,
-         COALESCE(array_agg(r.code) FILTER (WHERE r.code IS NOT NULL), '{}') AS role_codes,
+         r.id AS role_id, r.code AS role_code, r.display_name AS role_name,
          ha.manager_id
   FROM employees e
-  LEFT JOIN employee_roles er ON er.employee_id = e.id
+  LEFT JOIN LATERAL (
+    SELECT role_id FROM employee_roles WHERE employee_id = e.id ORDER BY role_id LIMIT 1
+  ) er ON true
   LEFT JOIN roles r ON r.id = er.role_id
   LEFT JOIN hierarchy_assignments ha ON ha.employee_id = e.id
   WHERE e.id = $1
-  GROUP BY e.id, ha.manager_id
 `;
 
 function employeeFromRow(row: Row): ExpenseEmployee {
@@ -172,7 +205,9 @@ function employeeFromRow(row: Row): ExpenseEmployee {
     id: String(row.id),
     organizationId: String(row.organization_id),
     name: String(row.name),
-    roleCodes: Array.isArray(row.role_codes) ? row.role_codes.map(String) as ExpenseEmployee["roleCodes"] : [],
+    role: row.role_id
+      ? { id: String(row.role_id), code: String(row.role_code), displayName: String(row.role_name) }
+      : null,
     managerId: row.manager_id ? String(row.manager_id) : undefined,
   };
 }
@@ -180,10 +215,10 @@ function employeeFromRow(row: Row): ExpenseEmployee {
 async function insertClaim(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, claim: ExpenseClaim): Promise<void> {
   await client.query(
     `INSERT INTO reimbursement_claims
-      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, account_number, ifsc_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
     [
-      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
+      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.currentStageSince ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
       claim.payoutDetails?.accountNumber ?? null,
       claim.payoutDetails?.ifscCode ?? null,
     ],
@@ -195,7 +230,7 @@ async function insertHistory(client: { query: (sql: string, values?: unknown[]) 
     await client.query(
       `INSERT INTO claim_history_events (id, claim_id, kind, actor_id, detail, created_at)
        VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
-      [event.id, claim.id, event.kind, event.actorId, event.detail ?? null, event.createdAt],
+      [event.id, claim.id, event.kind, event.actorId ?? null, event.detail ?? null, event.createdAt],
     );
   }
 }
@@ -215,8 +250,9 @@ function claimFromRow(row: Row): ExpenseClaim {
     expenseDate: String(row.expense_date).slice(0, 10),
     paymentMethod: String(row.payment_method) as ExpenseClaim["paymentMethod"],
     status: String(row.status) as ExpenseClaim["status"],
-    currentStage: row.current_stage ? String(row.current_stage) as ExpenseStage : undefined,
+    currentStage: row.current_stage ? String(row.current_stage) : undefined,
     currentActorId: row.current_actor_id ? String(row.current_actor_id) : undefined,
+    currentStageSince: row.current_stage_since ? new Date(String(row.current_stage_since)).toISOString() : undefined,
     steps: [],
     history: [],
     version: Number(row.version),
@@ -232,8 +268,8 @@ function claimFromRow(row: Row): ExpenseClaim {
 function stepFromRow(row: Row): ExpenseStep {
   return {
     id: String(row.id),
-    stage: String(row.stage) as ExpenseStage,
-    assignedActorId: String(row.assigned_actor_id),
+    roleId: String(row.role_id),
+    assignedActorId: row.assigned_actor_id ? String(row.assigned_actor_id) : undefined,
     status: String(row.status) as ExpenseStep["status"],
     decidedAt: row.decided_at ? new Date(String(row.decided_at)).toISOString() : undefined,
   };
@@ -243,7 +279,7 @@ function historyFromRow(row: Row): ExpenseHistoryEvent {
   return {
     id: String(row.id),
     kind: String(row.kind) as ExpenseHistoryEvent["kind"],
-    actorId: String(row.actor_id),
+    actorId: row.actor_id ? String(row.actor_id) : undefined,
     detail: row.detail ? String(row.detail) : undefined,
     createdAt: new Date(String(row.created_at)).toISOString(),
   };
