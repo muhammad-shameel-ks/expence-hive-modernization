@@ -18,7 +18,11 @@ export default async function AllExpensesPage() {
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={employee.name} />
+      <AppHeader
+        employeeName={employee.name}
+        roleCodes={workspace.employee.roleCodes}
+        activePath="/expenses/all"
+      />
 
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
