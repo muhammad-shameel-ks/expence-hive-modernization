@@ -22,7 +22,8 @@ export type TimelineTone =
   | "info"
   | "success"
   | "warning"
-  | "danger";
+  | "danger"
+  | "pending";
 
 /**
  * position="right" — timeline line on the left edge, content on the right (MUI default).
@@ -42,6 +43,7 @@ interface TimelineItemContextValue {
   first: boolean;
   last: boolean;
   even: boolean;
+  pending: boolean;
 }
 
 const TimelineItemContext = createContext<TimelineItemContextValue | null>(null);
@@ -81,6 +83,7 @@ export interface TimelineItemProps {
   first?: boolean;
   last?: boolean;
   even?: boolean;
+  pending?: boolean;
   className?: string;
   children?: ReactNode;
 }
@@ -91,10 +94,11 @@ export function TimelineItem({
   first = false,
   last = false,
   even = true,
+  pending = false,
   className,
   children,
 }: TimelineItemProps) {
-  const value: TimelineItemContextValue = { position, orientation, first, last, even };
+  const value: TimelineItemContextValue = { position, orientation, first, last, even, pending };
   return (
     <li
       className={cn(
@@ -105,6 +109,7 @@ export function TimelineItem({
         orientation === "vertical" && position === "left" && "grid grid-cols-[minmax(0,1fr)_3rem]",
         orientation === "horizontal" &&
           "grid min-w-36 flex-1 grid-rows-[auto_auto_auto] justify-items-center",
+        pending && "opacity-60 grayscale-[30%]",
         className,
       )}
     >
@@ -151,7 +156,7 @@ export function TimelineSeparator({
   className?: string;
   children?: ReactNode;
 }) {
-  const { orientation, position, first, last } = useTimelineItem();
+  const { orientation, position, first, last, pending } = useTimelineItem();
   const vertical = orientation === "vertical";
 
   const colStart = !vertical
@@ -174,15 +179,39 @@ export function TimelineSeparator({
     >
       {vertical ? (
         <>
-          <span aria-hidden className={cn("h-1 w-0.5 shrink-0", first ? "bg-transparent" : "bg-border")} />
+          <span
+            aria-hidden
+            className={cn(
+              "h-1 w-0.5 shrink-0",
+              first ? "bg-transparent" : pending ? "bg-border/40 border-l border-dashed border-border/60" : "bg-border",
+            )}
+          />
           <span className="relative z-10 inline-flex shrink-0">{children}</span>
-          <span aria-hidden className={cn("min-h-0 w-0.5 flex-1", last ? "bg-transparent" : "bg-border")} />
+          <span
+            aria-hidden
+            className={cn(
+              "min-h-0 w-0.5 flex-1",
+              last ? "bg-transparent" : pending ? "bg-border/40 border-l border-dashed border-border/60" : "bg-border",
+            )}
+          />
         </>
       ) : (
         <>
-          <span aria-hidden className={cn("h-0.5 flex-1", first ? "bg-transparent" : "bg-border")} />
+          <span
+            aria-hidden
+            className={cn(
+              "h-0.5 flex-1",
+              first ? "bg-transparent" : pending ? "bg-border/40 border-t border-dashed border-border/60" : "bg-border",
+            )}
+          />
           {children}
-          <span aria-hidden className={cn("h-0.5 flex-1", last ? "bg-transparent" : "bg-border")} />
+          <span
+            aria-hidden
+            className={cn(
+              "h-0.5 flex-1",
+              last ? "bg-transparent" : pending ? "bg-border/40 border-t border-dashed border-border/60" : "bg-border",
+            )}
+          />
         </>
       )}
     </div>
@@ -203,6 +232,7 @@ const DOT_TONES_FILLED: Record<TimelineTone, string> = {
   success: "bg-emerald-500 text-white",
   warning: "bg-amber-500 text-white",
   danger: "bg-red-500 text-white",
+  pending: "border border-dashed border-muted-foreground/30 bg-muted/30 text-muted-foreground/40",
 };
 
 const DOT_TONES_OUTLINED: Record<TimelineTone, string> = {
@@ -213,6 +243,7 @@ const DOT_TONES_OUTLINED: Record<TimelineTone, string> = {
   success: "border border-emerald-500 bg-card text-emerald-600",
   warning: "border border-amber-500 bg-card text-amber-600",
   danger: "border border-red-500 bg-card text-red-600",
+  pending: "border border-dashed border-muted-foreground/30 bg-card text-muted-foreground/40",
 };
 
 export interface TimelineDotProps {
@@ -221,6 +252,8 @@ export interface TimelineDotProps {
   size?: keyof typeof DOT_SIZES;
   /** Marks the current stage of a live journey with a pulse ring. */
   current?: boolean;
+  /** Marks a pending stage in the flow visible as greyed out. */
+  pending?: boolean;
   /** Icon or other content rendered inside the dot. */
   icon?: ReactNode;
   children?: ReactNode;
@@ -232,23 +265,29 @@ export function TimelineDot({
   variant = "filled",
   size = "md",
   current = false,
+  pending = false,
   icon,
   children,
   className,
 }: TimelineDotProps) {
+  const ctx = useContext(TimelineItemContext);
+  const isPending = pending || (ctx?.pending ?? false);
   const content = icon ?? children;
+  const effectiveTone = isPending ? "pending" : tone;
+
   return (
     <span
       aria-hidden
       className={cn(
         "relative inline-flex shrink-0 items-center justify-center rounded-full",
         DOT_SIZES[size],
-        variant === "filled" ? DOT_TONES_FILLED[tone] : DOT_TONES_OUTLINED[tone],
-        current && "ring-4 ring-primary/10",
+        variant === "filled" ? DOT_TONES_FILLED[effectiveTone] : DOT_TONES_OUTLINED[effectiveTone],
+        current && !isPending && "ring-4 ring-primary/10",
+        isPending && "border-dashed opacity-80",
         className,
       )}
     >
-      {current ? (
+      {current && !isPending ? (
         <span
           aria-hidden
           className="absolute inset-0 animate-ping rounded-full bg-current opacity-30 motion-reduce:animate-none"
@@ -271,7 +310,7 @@ export function TimelineContent({
   className?: string;
   children?: ReactNode;
 }) {
-  const { orientation, position, even } = useTimelineItem();
+  const { orientation, position, even, pending } = useTimelineItem();
   const vertical = orientation === "vertical";
   const side =
     vertical && position === "alternate"
@@ -284,7 +323,18 @@ export function TimelineContent({
           ? "row-start-1 col-start-1 text-right"
           : "row-start-1 text-center";
 
-  return <div className={cn(vertical ? "px-3 py-1" : "px-1 pt-1", side, className)}>{children}</div>;
+  return (
+    <div
+      className={cn(
+        vertical ? "px-3 py-1" : "px-1 pt-1",
+        side,
+        pending && "text-muted-foreground/75",
+        className,
+      )}
+    >
+      {children}
+    </div>
+  );
 }
 
 /** Secondary content block on the opposite side (alternate position). */
@@ -308,3 +358,4 @@ export function TimelineOppositeContent({
 
   return <div className={cn(vertical ? "px-3 py-1" : "px-1 pb-1", side, className)}>{children}</div>;
 }
+

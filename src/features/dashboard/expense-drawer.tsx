@@ -1,7 +1,7 @@
 "use client";
 // Right-side expense detail drawer: amount, facts, next action, journey, attachments.
 
-import { AlertTriangle, ArrowUpRight, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Paperclip, X, type LucideIcon } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import {
@@ -10,13 +10,139 @@ import {
   TimelineDot,
   TimelineItem,
   TimelineSeparator,
+  type TimelineTone,
 } from "@/components/motion/timeline";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import { cn } from "@/lib/utils";
-import { STATUS_META, type Expense } from "./mock-data";
+import { ME, STATUS_META, type Expense } from "./mock-data";
 import { isTerminal, nextActionFor } from "./next-action";
 import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
+
+export interface JourneyFlowStep {
+  id: string;
+  label: string;
+  date: string;
+  actor: string;
+  detail?: string;
+  tone: TimelineTone;
+  icon: LucideIcon;
+  isCurrent: boolean;
+  pending: boolean;
+}
+
+export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
+  const terminal = isTerminal(expense.status);
+  const historyKinds = new Set(expense.history.map((h) => h.kind));
+
+  const historySteps: JourneyFlowStep[] = expense.history.map((event, i) => {
+    const meta = KIND_META[event.kind];
+    const isCurrent = !terminal && i === expense.history.length - 1;
+    return {
+      id: event.id,
+      label: meta.label,
+      date: event.date,
+      actor: event.actor,
+      detail: event.detail,
+      tone: meta.tone,
+      icon: meta.icon,
+      isCurrent,
+      pending: false,
+    };
+  });
+
+  if (terminal) {
+    return historySteps;
+  }
+
+  const pendingSteps: JourneyFlowStep[] = [];
+
+  if (expense.status === "draft") {
+    pendingSteps.push({
+      id: "pending-submission",
+      label: "Submission",
+      date: "Pending",
+      actor: ME,
+      detail: "Pending submission",
+      tone: "info",
+      icon: KIND_META.submitted.icon,
+      isCurrent: false,
+      pending: true,
+    });
+  } else if (expense.status === "needs-correction") {
+    pendingSteps.push({
+      id: "pending-resubmission",
+      label: "Resubmission",
+      date: "Pending",
+      actor: ME,
+      detail: "Pending correction & resubmission",
+      tone: "info",
+      icon: KIND_META.submitted.icon,
+      isCurrent: false,
+      pending: true,
+    });
+  }
+
+  if (
+    !historyKinds.has("approved") &&
+    !historyKinds.has("takeover") &&
+    expense.status !== "rejected"
+  ) {
+    pendingSteps.push({
+      id: "pending-approval",
+      label:
+        expense.nextStage && (expense.status === "in-approval" || expense.status === "submitted")
+          ? expense.nextStage
+          : "Manager approval",
+      date: "Pending",
+      actor:
+        expense.nextActor && (expense.status === "in-approval" || expense.status === "submitted")
+          ? expense.nextActor
+          : "Approver",
+      detail: "Pending approval decision",
+      tone: "success",
+      icon: KIND_META.approved.icon,
+      isCurrent: false,
+      pending: true,
+    });
+  }
+
+  if (!historyKinds.has("verified") && expense.status !== "rejected") {
+    pendingSteps.push({
+      id: "pending-verification",
+      label:
+        expense.nextStage && expense.status === "in-finance"
+          ? expense.nextStage
+          : "Finance verification",
+      date: "Pending",
+      actor:
+        expense.nextActor && expense.status === "in-finance"
+          ? expense.nextActor
+          : "Finance Officer",
+      detail: "Pending Finance verification",
+      tone: "primary",
+      icon: KIND_META.verified.icon,
+      isCurrent: false,
+      pending: true,
+    });
+  }
+
+  if (!historyKinds.has("paid") && expense.status !== "rejected") {
+    pendingSteps.push({
+      id: "pending-payment",
+      label: "Paid",
+      date: "Pending",
+      actor: "Finance / Treasury",
+      detail: "Pending payment disbursement",
+      tone: "success",
+      icon: KIND_META.paid.icon,
+      isCurrent: false,
+      pending: true,
+    });
+  }
+
+  return [...historySteps, ...pendingSteps];
+}
 
 const PRIMARY_ACTION: Record<Expense["status"], string> = {
   draft: "Continue draft",
@@ -180,25 +306,25 @@ export function ExpenseDrawer({
             <section className="mt-6" aria-label="Expense journey">
               <h3 className="text-sm font-semibold text-foreground">Journey</h3>
               <Timeline position="right" className="mt-4">
-                {expense.history.map((event, i) => {
-                  const meta = KIND_META[event.kind];
-                  const Icon = meta.icon;
-                  const isCurrent = !terminal && i === expense.history.length - 1;
+                {getJourneyFlowItems(expense).map((step) => {
+                  const Icon = step.icon;
                   return (
-                    <TimelineItem key={event.id}>
+                    <TimelineItem key={step.id} pending={step.pending}>
                       <TimelineSeparator>
-                        <TimelineDot tone={meta.tone} current={isCurrent}>
+                        <TimelineDot tone={step.tone} current={step.isCurrent} pending={step.pending}>
                           <Icon />
                         </TimelineDot>
                       </TimelineSeparator>
                       <TimelineContent>
                         <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-                          <p className="text-sm font-medium text-foreground">{meta.label}</p>
-                          <p className="text-xs tabular-nums text-muted-foreground">{event.date}</p>
+                          <p className={cn("text-sm font-medium", step.pending ? "text-muted-foreground" : "text-foreground")}>
+                            {step.label}
+                          </p>
+                          <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
                         </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{event.actor}</p>
-                        {event.detail ? (
-                          <p className="mt-1 text-xs text-muted-foreground">{event.detail}</p>
+                        <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
+                        {step.detail ? (
+                          <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
                         ) : null}
                       </TimelineContent>
                     </TimelineItem>
