@@ -1,10 +1,12 @@
 "use client";
 // Searchable, filterable expense table for the dashboard.
-// Row click opens the right drawer. Sortable by date and amount.
+// Row click opens the right drawer. Sortable by expense, category, status,
+// date, and amount; filterable by status, category, amount range, and date range.
 
 import { useMemo, useState } from "react";
-import { ArrowUpDown, ChevronRight, Search } from "lucide-react";
+import { ArrowUpDown, ChevronRight, Search, SlidersHorizontal, X } from "lucide-react";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { Button } from "@/components/ui/button";
 import {
   Table,
   TableBody,
@@ -25,6 +27,14 @@ import {
 
 const FILTERS: ExpenseFilter[] = ["All", "Needs action", "In progress", "Paid"];
 
+const SORT_COLUMNS: { key: ExpenseSortKey; label: string; className: string }[] = [
+  { key: "title", label: "Expense", className: "pl-5" },
+  { key: "category", label: "Category", className: "hidden md:table-cell" },
+  { key: "date", label: "Date", className: "hidden sm:table-cell" },
+  { key: "amount", label: "Amount", className: "text-right" },
+  { key: "status", label: "Status", className: "hidden lg:table-cell" },
+];
+
 export function ExpenseTable({
   expenses,
   currentUser,
@@ -41,22 +51,62 @@ export function ExpenseTable({
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<ExpenseFilter>("All");
   const [sort, setSort] = useState<{ key: ExpenseSortKey; dir: 1 | -1 }>({ key: "date", dir: -1 });
+  const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const [categories, setCategories] = useState<string[]>([]);
+  const [amountMin, setAmountMin] = useState("");
+  const [amountMax, setAmountMax] = useState("");
+  const [dateFrom, setDateFrom] = useState("");
+  const [dateTo, setDateTo] = useState("");
+
+  const allCategories = useMemo(
+    () => Array.from(new Set(expenses.map((e) => e.category))).sort(),
+    [expenses],
+  );
+
+  const activeAdvancedCount =
+    categories.length +
+    (amountMin !== "" ? 1 : 0) +
+    (amountMax !== "" ? 1 : 0) +
+    (dateFrom !== "" ? 1 : 0) +
+    (dateTo !== "" ? 1 : 0);
 
   const rows = useMemo(
-    () => filterAndSortExpenses(expenses, { query, filter, sortKey: sort.key, sortDir: sort.dir }),
-    [expenses, query, filter, sort],
+    () =>
+      filterAndSortExpenses(expenses, {
+        query,
+        filter,
+        sortKey: sort.key,
+        sortDir: sort.dir,
+        categories: categories.length > 0 ? categories : undefined,
+        amountMin: amountMin !== "" ? Number(amountMin) : undefined,
+        amountMax: amountMax !== "" ? Number(amountMax) : undefined,
+        dateFrom: dateFrom || undefined,
+        dateTo: dateTo || undefined,
+      }),
+    [expenses, query, filter, sort, categories, amountMin, amountMax, dateFrom, dateTo],
   );
 
   const countFor = (f: ExpenseFilter) =>
     f === "All" ? expenses.length : filterAndSortExpenses(expenses, { filter: f }).length;
 
   const toggleSort = (key: ExpenseSortKey) =>
-    setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: -1 }));
+    setSort((s) => (s.key === key ? { key, dir: s.dir === 1 ? -1 : 1 } : { key, dir: key === "amount" || key === "date" ? -1 : 1 }));
+
+  const toggleCategory = (category: string) =>
+    setCategories((cs) => (cs.includes(category) ? cs.filter((c) => c !== category) : [...cs, category]));
+
+  const clearAdvancedFilters = () => {
+    setCategories([]);
+    setAmountMin("");
+    setAmountMax("");
+    setDateFrom("");
+    setDateTo("");
+  };
 
   return (
     <div>
       {(searchable || filterable) && (
-        <div className="flex flex-wrap items-center gap-3 pb-4">
+        <div className="flex flex-wrap items-center gap-3 px-5 pb-4">
           {searchable && (
             <label className="relative block w-full max-w-xs">
               <span className="sr-only">Search expenses</span>
@@ -91,35 +141,129 @@ export function ExpenseTable({
               ))}
             </div>
           )}
+          {filterable && (
+            <Button
+              variant="outline"
+              size="sm"
+              className="gap-1.5"
+              aria-pressed={moreFiltersOpen}
+              onClick={() => setMoreFiltersOpen((v) => !v)}
+            >
+              <SlidersHorizontal className="h-3.5 w-3.5" />
+              Filters
+              {activeAdvancedCount > 0 ? (
+                <span className="ml-0.5 rounded-full bg-primary px-1.5 text-[11px] font-semibold text-primary-foreground">
+                  {activeAdvancedCount}
+                </span>
+              ) : null}
+            </Button>
+          )}
         </div>
       )}
+
+      {filterable && moreFiltersOpen ? (
+        <div className="mx-5 mb-4 flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4">
+          <div>
+            <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+              Category
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {allCategories.map((category) => (
+                <button
+                  key={category}
+                  type="button"
+                  onClick={() => toggleCategory(category)}
+                  aria-pressed={categories.includes(category)}
+                  className={cn(
+                    "rounded-full border px-3 py-1 text-xs font-medium transition-colors",
+                    categories.includes(category)
+                      ? "border-primary bg-primary text-primary-foreground"
+                      : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
+                  )}
+                >
+                  {category}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div className="flex flex-wrap gap-6">
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Amount range
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  value={amountMin}
+                  onChange={(e) => setAmountMin(e.target.value)}
+                  placeholder="Min"
+                  className="h-9 w-24 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                />
+                <span className="text-muted-foreground">–</span>
+                <input
+                  type="number"
+                  inputMode="decimal"
+                  min={0}
+                  value={amountMax}
+                  onChange={(e) => setAmountMax(e.target.value)}
+                  placeholder="Max"
+                  className="h-9 w-24 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                />
+              </div>
+            </div>
+
+            <div>
+              <p className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
+                Submitted between
+              </p>
+              <div className="flex items-center gap-2">
+                <input
+                  type="date"
+                  value={dateFrom}
+                  onChange={(e) => setDateFrom(e.target.value)}
+                  className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                />
+                <span className="text-muted-foreground">–</span>
+                <input
+                  type="date"
+                  value={dateTo}
+                  onChange={(e) => setDateTo(e.target.value)}
+                  className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                />
+              </div>
+            </div>
+
+            {activeAdvancedCount > 0 ? (
+              <Button variant="ghost" size="sm" className="gap-1 self-end text-muted-foreground" onClick={clearAdvancedFilters}>
+                <X className="h-3.5 w-3.5" />
+                Clear filters
+              </Button>
+            ) : null}
+          </div>
+        </div>
+      ) : null}
 
       <Table>
         <TableHeader>
           <TableRow className="hover:bg-transparent">
-            <TableHead className="w-full min-w-56 pl-5">Expense</TableHead>
-            <TableHead className="hidden md:table-cell">Category</TableHead>
-            <TableHead className="hidden sm:table-cell">
-              <button
-                type="button"
-                onClick={() => toggleSort("date")}
-                className="inline-flex items-center gap-1 font-medium uppercase hover:text-foreground"
-              >
-                Date
-                <ArrowUpDown className="h-3 w-3" />
-              </button>
-            </TableHead>
-            <TableHead className="text-right">
-              <button
-                type="button"
-                onClick={() => toggleSort("amount")}
-                className="inline-flex items-center gap-1 font-medium uppercase hover:text-foreground"
-              >
-                Amount
-                <ArrowUpDown className="h-3 w-3" />
-              </button>
-            </TableHead>
-            <TableHead className="hidden lg:table-cell">Status</TableHead>
+            {SORT_COLUMNS.map((col) => (
+              <TableHead key={col.key} className={col.className}>
+                <button
+                  type="button"
+                  onClick={() => toggleSort(col.key)}
+                  className={cn(
+                    "inline-flex items-center gap-1 font-medium uppercase hover:text-foreground",
+                    sort.key === col.key && "text-foreground",
+                  )}
+                >
+                  {col.label}
+                  <ArrowUpDown className={cn("h-3 w-3", sort.key === col.key && "text-foreground")} />
+                </button>
+              </TableHead>
+            ))}
             <TableHead className="hidden lg:table-cell">Next action</TableHead>
             <TableHead className="w-12" />
           </TableRow>
@@ -139,7 +283,7 @@ export function ExpenseTable({
                     onOpen(expense);
                   }
                 }}
-                className="cursor-pointer outline-none focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40 [&_td]:py-3"
+                className="cursor-pointer outline-none odd:bg-muted/30 hover:bg-muted/50 focus-visible:bg-muted/50 focus-visible:ring-2 focus-visible:ring-ring/40 [&_td]:py-3"
               >
                 <TableCell className="pl-5">
                   <p className="font-medium text-foreground">{expense.title}</p>

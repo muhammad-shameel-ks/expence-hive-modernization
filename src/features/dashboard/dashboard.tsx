@@ -1,27 +1,14 @@
 "use client";
-// The dashboard — monthly overview cards plus a compact glance at recent expenses.
-// Row click opens the right drawer; the full searchable list lives at /expenses/all.
-//
-// PROTOTYPE: the section below the stat cards is currently switchable via
-// ?variant= (A/B/C) — see src/features/dashboard/prototype/. Once a variant
-// is chosen, fold it in here and delete the switcher + losing variants.
+// The dashboard — monthly overview cards plus a bento row: a compact recent-
+// claims list and a "needs your attention" card. Row click opens the drawer;
+// the full searchable list lives at /expenses/all.
 
-import { Suspense, useState } from "react";
-import { useSearchParams } from "next/navigation";
-import { PrototypeSwitcher } from "@/components/dev/prototype-switcher";
+import { useState } from "react";
 import { dashboardStats } from "./dashboard-stats";
 import { ExpenseDrawer } from "./expense-drawer";
-import { VariantAList } from "./prototype/variant-a-list";
-import { VariantBBento } from "./prototype/variant-b-bento";
-import { VariantCColumns } from "./prototype/variant-c-columns";
+import { ExpenseOverview } from "./expense-overview";
 import type { Expense } from "./mock-data";
 import { formatMoney } from "./journey-meta";
-
-const VARIANTS = [
-  { key: "A", label: "Flat list" },
-  { key: "B", label: "Bento split" },
-  { key: "C", label: "Status columns" },
-];
 
 export function ExpenseDashboard({ currentUser, expenses }: { currentUser: string; expenses: Expense[] }) {
   const [selected, setSelected] = useState<Expense | null>(null);
@@ -66,35 +53,9 @@ export function ExpenseDashboard({ currentUser, expenses }: { currentUser: strin
         ))}
       </section>
 
-      <Suspense fallback={<VariantAList expenses={expenses} onOpen={openExpense} />}>
-        <BelowStatsVariant expenses={expenses} onOpen={openExpense} />
-      </Suspense>
+      <ExpenseOverview expenses={expenses} onOpen={openExpense} />
 
       <ExpenseDrawer open={open} onOpenChange={setOpen} expense={selected} currentUser={currentUser} />
     </div>
-  );
-}
-
-function BelowStatsVariant({
-  expenses,
-  onOpen,
-}: {
-  expenses: Expense[];
-  onOpen: (expense: Expense) => void;
-}) {
-  const searchParams = useSearchParams();
-  const variant = searchParams.get("variant") ?? "A";
-
-  return (
-    <>
-      {variant === "B" ? (
-        <VariantBBento expenses={expenses} onOpen={onOpen} />
-      ) : variant === "C" ? (
-        <VariantCColumns expenses={expenses} onOpen={onOpen} />
-      ) : (
-        <VariantAList expenses={expenses} onOpen={onOpen} />
-      )}
-      <PrototypeSwitcher variants={VARIANTS} />
-    </>
   );
 }
