@@ -1,6 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
+import { expenseCommands } from "@/server/expenses/dev";
 import { ExpenseCreateForm } from "@/features/expenses/expense-create-form";
 import { AppHeader } from "@/components/layout/app-header";
 import styles from "../expenses.module.css";
@@ -9,10 +10,11 @@ export default async function NewExpensePage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) redirect("/login");
+  const workspace = await expenseCommands().getWorkspace(employee.id);
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={employee.name} />
+      <AppHeader employeeName={employee.name} roleCodes={workspace.employee.roleCodes} />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Expense operations / new claim

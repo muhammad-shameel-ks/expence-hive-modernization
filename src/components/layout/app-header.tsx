@@ -1,6 +1,19 @@
+import type { ExpenseRoleCode } from "@/server/expenses/ports";
 import styles from "@/app/expenses/expenses.module.css";
 
-export function AppHeader({ employeeName }: { employeeName: string }) {
+const APPROVER_ROLES: ExpenseRoleCode[] = ["manager", "it-reviewer", "finance-reviewer", "ceo"];
+
+export function AppHeader({
+  employeeName,
+  roleCodes = [],
+  activePath,
+}: {
+  employeeName: string;
+  roleCodes?: ExpenseRoleCode[];
+  activePath?: "/expenses" | "/expenses/all";
+}) {
+  const isApprover = roleCodes.some((role) => APPROVER_ROLES.includes(role));
+
   return (
     <header className={styles.topBar}>
       <div className={styles.brand}>
@@ -14,15 +27,23 @@ export function AppHeader({ employeeName }: { employeeName: string }) {
       </div>
 
       <nav className={styles.nav} aria-label="Workspace">
-        <a className={`${styles.navLink} ${styles.navLinkActive}`} href="/expenses">
+        <a
+          className={`${styles.navLink} ${activePath === "/expenses" ? styles.navLinkActive : ""}`}
+          href="/expenses"
+        >
+          Dashboard
+        </a>
+        <a
+          className={`${styles.navLink} ${activePath === "/expenses/all" ? styles.navLinkActive : ""}`}
+          href="/expenses/all"
+        >
           Expenses
         </a>
-        <span className={styles.navLink} title="Coming in a later milestone">
-          Inbox
-        </span>
-        <span className={styles.navLink} title="Coming in a later milestone">
-          Reports
-        </span>
+        {isApprover ? (
+          <span className={styles.navLink} title="Coming in a later milestone">
+            Approvals
+          </span>
+        ) : null}
       </nav>
 
       <div className={styles.account}>
