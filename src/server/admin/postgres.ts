@@ -15,6 +15,18 @@ import type {
 
 type Row = Record<string, unknown>;
 
+// employee_roles remains many-to-many in the schema (ADR-0002 forward
+// compatibility note), but this module treats an employee as having one
+// role: the join picks a single, deterministic row per employee instead of
+// letting a legacy multi-role assignment fan out into duplicate employee
+// rows or an arbitrarily-ordered pick.
+const employeeRoleJoin = `
+  LEFT JOIN LATERAL (
+    SELECT role_id FROM employee_roles WHERE employee_id = e.id ORDER BY role_id LIMIT 1
+  ) er ON true
+  LEFT JOIN roles r ON r.id = er.role_id
+`;
+
 function roleRefFromRow(row: Row): AdminEmployee["role"] {
   if (row.role_id === null || row.role_id === undefined) {
     return null;
@@ -69,12 +81,11 @@ export class PostgresAdminStore implements AdminStore {
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {
     const result = await this.pool.query<Row>(
       `
-        SELECT DISTINCT e.id, e.organization_id, e.name, e.email, d.name AS department_name,
+        SELECT e.id, e.organization_id, e.name, e.email, d.name AS department_name,
           r.id AS role_id, r.code AS role_code, r.display_name AS role_name
         FROM employees e
         LEFT JOIN departments d ON d.id = e.department_id
-        LEFT JOIN employee_roles er ON er.employee_id = e.id
-        LEFT JOIN roles r ON r.id = er.role_id
+        ${employeeRoleJoin}
         WHERE e.organization_id = $1
         ORDER BY e.name
       `,
@@ -90,8 +101,7 @@ export class PostgresAdminStore implements AdminStore {
           r.id AS role_id, r.code AS role_code, r.display_name AS role_name
         FROM employees e
         LEFT JOIN departments d ON d.id = e.department_id
-        LEFT JOIN employee_roles er ON er.employee_id = e.id
-        LEFT JOIN roles r ON r.id = er.role_id
+        ${employeeRoleJoin}
         WHERE e.id = $1
       `,
       [id],

@@ -12,7 +12,7 @@ const EMPLOYEES = [
   { id: "emp-grace", name: "Grace Hopper", email: "grace@hive.local", department: "Operations" },
   { id: "emp-katherine", name: "Katherine Johnson", email: "katherine@hive.local", department: "Engineering" },
   { id: "emp-dorothy", name: "Dorothy Vaughan", email: "dorothy@hive.local", department: "Finance" },
-  { id: "emp-ceo", name: "CEO", email: "ceo@hive.local", department: "Executive" },
+  { id: "emp-superadmin", name: "Super Admin", email: "superadmin@hive.local", department: "Executive" },
   { id: "emp-finance", name: "Finance Officer", email: "finance@hive.local", department: "Finance" },
   { id: "emp-it", name: "IT Head", email: "it@hive.local", department: "IT" },
   { id: "emp-shameel", name: "Muhammad Shameel", email: "muhammadshameelks@hive.local", department: "Engineering" },
@@ -44,6 +44,7 @@ const EMPLOYEE_ROLES = [
   { employeeId: "emp-ada", roleCode: "manager" },
   { employeeId: "emp-finance", roleCode: "finance-reviewer" },
   { employeeId: "emp-it", roleCode: "it-reviewer" },
+  { employeeId: "emp-superadmin", roleCode: "superadmin" },
 ];
 
 // Published (not draft) so submitClaim can resolve it for the "employee"

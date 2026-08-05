@@ -220,6 +220,7 @@ function Login() {
                       <option value="emp-it">IT Head / IT reviewer</option>
                       <option value="emp-finance">Finance Officer / Finance</option>
                       <option value="emp-grace">Grace Hopper / HR</option>
+                      <option value="emp-superadmin">Super Admin / Superadmin</option>
                     </select>
                     <button type="button" onClick={handleDevLogin}>Open as this user</button>
                   </div>

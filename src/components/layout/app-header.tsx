@@ -2,6 +2,7 @@ import { FINANCE_OR_HR_ROLE_CODES, type ExpenseRole } from "@/server/expenses/po
 import styles from "@/app/expenses/expenses.module.css";
 
 const EMPLOYEE_ROLE_CODE = "employee";
+const ADMIN_CONSOLE_ROLE_CODES = ["superadmin", "hr-administrator"];
 
 export function AppHeader({
   employeeName,
@@ -14,6 +15,7 @@ export function AppHeader({
 }) {
   const isApprover = role !== null && role.code !== EMPLOYEE_ROLE_CODE && !FINANCE_OR_HR_ROLE_CODES.includes(role.code);
   const canViewPaymentQueue = role !== null && FINANCE_OR_HR_ROLE_CODES.includes(role.code);
+  const canViewAdminConsole = role !== null && ADMIN_CONSOLE_ROLE_CODES.includes(role.code);
 
   return (
     <header className={styles.topBar}>
@@ -51,6 +53,11 @@ export function AppHeader({
             href="/finance/payments"
           >
             Payment queue
+          </a>
+        ) : null}
+        {canViewAdminConsole ? (
+          <a className={styles.navLink} href="/admin">
+            Admin
           </a>
         ) : null}
       </nav>
