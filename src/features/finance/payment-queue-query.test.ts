@@ -15,7 +15,6 @@ function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
     amountMinor: 10000,
     currency: "INR",
     expenseDate: "2026-08-04",
-    paymentMethod: "Personal card",
     status: "in-finance",
     currentStage: "finance",
     payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },

@@ -114,7 +114,6 @@ export function createExpenseCommands({
         amountMinor: input.amountMinor,
         currency: "INR",
         expenseDate: input.expenseDate,
-        paymentMethod: input.paymentMethod as ExpenseClaim["paymentMethod"],
         status: "draft",
         attachment: input.attachment
           ? { ...input.attachment, id: idFactory("attachment"), status: "available" }
@@ -283,9 +282,6 @@ function validateDraft(input: CreateExpenseDraftInput): void {
   if (input.currency !== "INR") throw new ExpenseError("validation", "Expenses must be submitted in INR.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.expenseDate)) {
     throw new ExpenseError("validation", "Choose a valid expense date.");
-  }
-  if (input.paymentMethod !== "Personal card" && input.paymentMethod !== "Company card") {
-    throw new ExpenseError("validation", "Choose how you paid.");
   }
   if (input.payoutDetails && (!input.payoutDetails.accountNumber?.trim() || !input.payoutDetails.ifscCode?.trim())) {
     throw new ExpenseError("validation", "Enter a valid account number and IFSC code.");

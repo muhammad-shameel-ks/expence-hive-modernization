@@ -62,7 +62,6 @@ export type ExpenseClaim = {
   amountMinor: number;
   currency: "INR";
   expenseDate: string;
-  paymentMethod: "Personal card" | "Company card";
   status: "draft" | "in-approval" | "needs-correction" | "rejected" | "in-finance" | "paid";
   currentStage?: ExpenseStage;
   currentActorId?: string;
@@ -84,7 +83,6 @@ export type CreateExpenseDraftInput = {
   amountMinor: number;
   currency: string;
   expenseDate: string;
-  paymentMethod: string;
   attachment?: ExpenseAttachmentInput;
   payoutDetails: ExpensePayoutDetails;
 };

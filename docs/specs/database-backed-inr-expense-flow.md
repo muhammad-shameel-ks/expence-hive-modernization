@@ -59,7 +59,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 3. As an employee, I want to start a reimbursement claim, so that I can request repayment for money I have already spent.
 
-4. As an employee, I want to enter a claim title, category, amount, expense date, and payment method, so that I can provide the essential information needed for review.
+4. As an employee, I want to enter a claim title, category, amount, and expense date, so that I can provide the essential information needed for review.
 
 5. As an employee, I want the amount field to use Indian rupees, so that the form reflects the organization's currency.
 
@@ -83,7 +83,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 15. As a manager, I want to see claims assigned to my manager stage, so that I can review only work requiring my action.
 
-16. As a manager, I want to see the claim amount, requester, category, date, payment method, and history beside the decision controls, so that I can make an informed decision.
+16. As a manager, I want to see the claim amount, requester, category, date, and history beside the decision controls, so that I can make an informed decision.
 
 17. As a manager, I want to approve an assigned claim, so that it advances to the IT stage.
 
@@ -151,7 +151,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 - Model a reimbursement as a claim owned by one employee and one organization.
 - Model the claim's expense details as an expense line even though the first UI permits exactly one line.
-- Store title, category, amount, currency, expense date, payment method, draft or submission timestamps, current status, and an optimistic version on the claim or its line records.
+- Store title, category, amount, currency, expense date, draft or submission timestamps, current status, and an optimistic version on the claim or its line records.
 - Store monetary amounts as integer minor units to avoid floating-point calculation errors.
 - Store `INR` as the only supported currency in this slice.
 - Validate that claim amounts are positive and that dates and required fields are valid before submission.

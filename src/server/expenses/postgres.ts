@@ -180,10 +180,10 @@ function employeeFromRow(row: Row): ExpenseEmployee {
 async function insertClaim(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, claim: ExpenseClaim): Promise<void> {
   await client.query(
     `INSERT INTO reimbursement_claims
-      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, version, created_at, submitted_at, account_number, ifsc_code)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19)`,
     [
-      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
+      claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
       claim.payoutDetails?.accountNumber ?? null,
       claim.payoutDetails?.ifscCode ?? null,
     ],
@@ -213,7 +213,6 @@ function claimFromRow(row: Row): ExpenseClaim {
     amountMinor: Number(row.amount_minor),
     currency: "INR",
     expenseDate: String(row.expense_date).slice(0, 10),
-    paymentMethod: String(row.payment_method) as ExpenseClaim["paymentMethod"],
     status: String(row.status) as ExpenseClaim["status"],
     currentStage: row.current_stage ? String(row.current_stage) as ExpenseStage : undefined,
     currentActorId: row.current_actor_id ? String(row.current_actor_id) : undefined,

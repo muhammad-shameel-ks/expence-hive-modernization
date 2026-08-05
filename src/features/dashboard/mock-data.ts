@@ -47,7 +47,6 @@ export interface Expense {
   nextStage?: string;
   nextActor?: string;
   blockingReason?: string;
-  paymentMethod?: string;
   permission?: string;
   attachments: string[];
   history: HistoryEvent[];
@@ -83,7 +82,6 @@ export const expenses: Expense[] = [
     status: "in-finance",
     nextStage: "Finance verification",
     nextActor: "Finance Officer",
-    paymentMethod: "Company card",
     permission: "PER-2026-0087",
     attachments: ["invoice-figma-2026-08.pdf", "quote-2026.pdf"],
     history: [
@@ -106,7 +104,6 @@ export const expenses: Expense[] = [
     nextStage: "Resubmit claim",
     nextActor: ME,
     blockingReason: "Receipt over ₹150 requires an itemized breakdown.",
-    paymentMethod: "Personal card",
     attachments: ["receipt-acme-dinner.jpg"],
     history: [
       { id: "h1", date: "Jul 29, 13:20", actor: ME, kind: "submitted" },
@@ -126,7 +123,6 @@ export const expenses: Expense[] = [
     status: "in-approval",
     nextStage: "Team Lead approval",
     nextActor: "Grace Hopper",
-    paymentMethod: "Company card",
     attachments: ["boarding-pass.pdf"],
     history: [
       { id: "h1", date: "Jul 29, 18:04", actor: ME, kind: "submitted" },
@@ -146,7 +142,6 @@ export const expenses: Expense[] = [
     status: "approved",
     nextStage: "Finance verification",
     nextActor: "Finance Officer",
-    paymentMethod: "Personal card",
     permission: "PER-2026-0079",
     attachments: ["hotel-invoice.pdf"],
     history: [
@@ -166,7 +161,6 @@ export const expenses: Expense[] = [
     status: "submitted",
     nextStage: "IT Head review",
     nextActor: "IT Head",
-    paymentMethod: "Company card",
     attachments: [],
     history: [
       { id: "h1", date: "Jul 29, 11:38", actor: ME, kind: "submitted", detail: "Sent for IT Head review" },
@@ -182,7 +176,6 @@ export const expenses: Expense[] = [
     date: "Jul 28",
     submittedAt: "2026-07-25T16:20:00Z",
     status: "paid",
-    paymentMethod: "Company card",
     attachments: ["pantry-receipt.jpg"],
     history: [
       { id: "h1", date: "Jul 25, 16:20", actor: ME, kind: "submitted" },
@@ -201,7 +194,6 @@ export const expenses: Expense[] = [
     date: "Jul 27",
     submittedAt: "2026-07-26T19:30:00Z",
     status: "paid",
-    paymentMethod: "Personal card",
     attachments: ["taxi-receipt.png"],
     history: [
       { id: "h1", date: "Jul 26, 19:30", actor: ME, kind: "submitted" },
@@ -221,7 +213,6 @@ export const expenses: Expense[] = [
     submittedAt: "2026-07-22T10:14:00Z",
     status: "rejected",
     blockingReason: "Hardware over ₹50 requires IT pre-approval.",
-    paymentMethod: "Personal card",
     attachments: ["hub-receipt.jpg"],
     history: [
       { id: "h1", date: "Jul 22, 10:14", actor: ME, kind: "submitted" },
@@ -240,7 +231,6 @@ export const expenses: Expense[] = [
     status: "draft",
     nextStage: "Submit for approval",
     nextActor: ME,
-    paymentMethod: "Personal card",
     attachments: [],
     history: [{ id: "h1", date: "Aug 4, 11:05", actor: ME, kind: "draft", detail: "Autosaved — 2 of 3 steps complete" }],
   },
@@ -256,7 +246,6 @@ export const expenses: Expense[] = [
     status: "in-approval",
     nextStage: "Training approval",
     nextActor: "Katherine Johnson",
-    paymentMethod: "Personal card",
     attachments: ["course-brochure.pdf"],
     history: [
       { id: "h1", date: "Jul 24, 09:40", actor: ME, kind: "submitted" },
@@ -273,7 +262,6 @@ export const expenses: Expense[] = [
     date: "Jul 23",
     submittedAt: "2026-07-18T14:00:00Z",
     status: "paid",
-    paymentMethod: "Company card",
     attachments: ["karting-invoice.pdf"],
     history: [
       { id: "h1", date: "Jul 18, 14:00", actor: ME, kind: "submitted" },
@@ -292,7 +280,6 @@ export const expenses: Expense[] = [
     date: "Jul 22",
     submittedAt: "2026-07-20T10:10:00Z",
     status: "paid",
-    paymentMethod: "Company card",
     attachments: ["domain-invoice.pdf"],
     history: [
       { id: "h1", date: "Jul 20, 10:10", actor: ME, kind: "submitted" },
