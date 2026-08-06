@@ -219,12 +219,10 @@ export function FlowSection({
   };
 
   const addStep = (roleIdToAdd: string) => {
-    const targetRole = roleIdToAdd;
-    if (!targetRole) return;
     const id = nextStepId.current;
     nextStepId.current += 1;
-    setSteps((current) => [...current, { id, roleId: targetRole }]);
-    onMessage(`${roleName(targetRole)} added to the flow.`);
+    setSteps((current) => [...current, { id, roleId: roleIdToAdd }]);
+    onMessage(`${roleName(roleIdToAdd)} added to the flow.`);
   };
 
   const insertStepAt = (position: number, roleIdToAdd: string) => {
