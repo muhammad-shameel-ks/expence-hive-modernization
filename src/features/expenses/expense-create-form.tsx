@@ -37,7 +37,7 @@ const initialForm: FormState = {
 export function ExpenseCreateForm() {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const [form, setForm] = useState(initialForm);
-  const [receipt, setReceipt] = useState<{ fileName: string; contentType: string } | null>(null);
+  const [receipt, setReceipt] = useState<File | null>(null);
   const [claimId, setClaimId] = useState<string | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
@@ -49,7 +49,7 @@ export function ExpenseCreateForm() {
 
   function chooseReceipt(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) setReceipt({ fileName: file.name, contentType: file.type || "application/octet-stream" });
+    if (file) setReceipt(file);
   }
 
   async function saveDraft(event?: FormEvent) {
@@ -57,10 +57,19 @@ export function ExpenseCreateForm() {
     setBusy(true);
     setError(null);
     try {
+      const body = new FormData();
+      body.set("title", form.title);
+      body.set("category", form.category);
+      body.set("subCategory", form.subCategory);
+      body.set("remark", form.remark);
+      body.set("amount", form.amount);
+      body.set("expenseDate", form.expenseDate);
+      body.set("accountNumber", form.accountNumber);
+      body.set("ifscCode", form.ifscCode);
+      if (receipt) body.set("receipt", receipt);
       const response = await fetch("/api/expenses", {
         method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({ ...form, attachment: receipt }),
+        body,
       });
       const payload = (await response.json()) as { claim?: { id: string }; message?: string };
       if (!response.ok || !payload.claim) throw new Error(payload.message ?? "We could not save this draft.");
@@ -113,7 +122,7 @@ function ReceiptStep({
   onSkip,
   onContinue,
 }: {
-  receipt: { fileName: string; contentType: string } | null;
+  receipt: File | null;
   chooseReceipt: (event: ChangeEvent<HTMLInputElement>) => void;
   onSkip: () => void;
   onContinue: () => void;
@@ -133,7 +142,7 @@ function ReceiptStep({
             </label>
             <button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onSkip}>Skip for now</button>
           </div>
-          {receipt ? <div className={styles.receiptPreview}>Receipt ready: {receipt.fileName}</div> : null}
+          {receipt ? <div className={styles.receiptPreview}>Receipt ready: {receipt.name}</div> : null}
           {receipt ? <div style={{ marginTop: 28 }}><button className={styles.button} type="button" onClick={onContinue}>Continue with receipt <span aria-hidden>→</span></button></div> : null}
         </section>
         <CaptureRail receipt={receipt} step={1} />
@@ -152,7 +161,7 @@ function DetailsStep({
   error,
 }: {
   form: FormState;
-  receipt: { fileName: string; contentType: string } | null;
+  receipt: File | null;
   update: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   onBack: () => void;
   onReview: () => void;
@@ -213,7 +222,7 @@ function DetailsStep({
   );
 }
 
-function ReviewStep({ form, receipt, onBack, onSubmit, busy, error }: { form: FormState; receipt: { fileName: string; contentType: string } | null; onBack: () => void; onSubmit: () => void; busy: boolean; error: string | null }) {
+function ReviewStep({ form, receipt, onBack, onSubmit, busy, error }: { form: FormState; receipt: File | null; onBack: () => void; onSubmit: () => void; busy: boolean; error: string | null }) {
   return (
     <div className={styles.content}>
       <p className={styles.eyebrow}>STEP 3 OF 3 / REVIEW</p>
@@ -222,7 +231,7 @@ function ReviewStep({ form, receipt, onBack, onSubmit, busy, error }: { form: Fo
         <section className={styles.panel} aria-label="Review expense claim">
           <div className={styles.panelHeader}><div><p className={styles.eyebrow}>FINAL CHECK</p><h2>Review before submission</h2></div><span className={styles.statusChip}>Draft</span></div>
           <SummaryPanel form={form} label="Submission summary" />
-          {receipt ? <p className={styles.receiptPreview}>Attached: {receipt.fileName}</p> : <p className={styles.hint}>No receipt attached. You can continue with the exception path.</p>}
+          {receipt ? <p className={styles.receiptPreview}>Attached: {receipt.name}</p> : <p className={styles.hint}>No receipt attached. You can continue with the exception path.</p>}
           {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
           <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Edit details</button><button className={styles.button} type="button" disabled={busy} onClick={onSubmit}>{busy ? "Submitting..." : "Submit for approval →"}</button></div>
         </section>
@@ -235,7 +244,7 @@ function SubmittedState() {
   return <div className={styles.content}><div className={styles.panel}><p className={styles.eyebrow}>CLAIM SUBMITTED</p><h1 className={styles.title}>Your claim is moving.</h1><p className={styles.intro}>It is now with your Manager, followed by Finance. You can track every decision from the dashboard.</p><a className={styles.button} href="/expenses">Back to dashboard →</a></div></div>;
 }
 
-function CaptureRail({ receipt, step }: { receipt: { fileName: string; contentType: string } | null; step: number }) {
+function CaptureRail({ receipt, step }: { receipt: File | null; step: number }) {
   return <aside className={styles.captureRail}><p className={styles.eyebrow}>FAST CAPTURE</p><h2>Three things, then done.</h2><p>The form follows the natural order of expense work: proof, context, submit.</p><div className={styles.captureSteps}><CaptureStep number="1" title="Add proof" detail="Photo, scan, or PDF" done={Boolean(receipt)} /><CaptureStep number="2" title="Confirm context" detail="Category and payment details" done={step > 1} /><CaptureStep number="3" title="Review & send" detail="See who reviews it next" done={step > 2} /></div></aside>;
 }
 

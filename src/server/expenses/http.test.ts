@@ -1,10 +1,13 @@
+import { createHash } from "node:crypto";
 import { describe, expect, it } from "vitest";
+import { InMemoryBlobStore } from "../blob/fakes";
 import { createExpenseCommands } from "./commands";
 import {
   handleApproveExpenseRequest,
   handleCreateExpenseRequest,
   handleFinancePaymentQueueRequest,
   handleGetExpenseRequest,
+  handleGetReceiptRequest,
   handleRejectExpenseRequest,
   handleSubmitExpenseRequest,
   handleTakeOverExpenseRequest,
@@ -12,6 +15,7 @@ import {
 } from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee } from "./ports";
+import { MAX_RECEIPT_SIZE_BYTES } from "./receipt-validation";
 
 const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive" };
 const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
@@ -26,6 +30,31 @@ function emp(
   extra: Partial<ExpenseEmployee> = {},
 ): ExpenseEmployee {
   return { id, organizationId: "org-1", name, role, active: true, managerId: null, ...extra };
+}
+
+const JPEG_RECEIPT = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
+const PDF_RECEIPT = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a]); // "%PDF-1.4\n"
+
+const BASE_FIELDS: Record<string, string> = {
+  title: "Taxi",
+  category: "Travel",
+  subCategory: "Cab/Taxi",
+  remark: "Airport pickup",
+  amount: "850.00",
+  expenseDate: "2026-08-04",
+  accountNumber: "32534240620",
+  ifscCode: "SBIN0012861",
+};
+
+function multipartBody(fields: Record<string, string>, file?: { name: string; type: string; data: Uint8Array<ArrayBuffer> }): FormData {
+  const form = new FormData();
+  for (const [key, value] of Object.entries(fields)) form.set(key, value);
+  if (file) form.set("receipt", new File([file.data], file.name, { type: file.type }));
+  return form;
+}
+
+function createRequest(fields: Record<string, string>, file?: { name: string; type: string; data: Uint8Array<ArrayBuffer> }): Request {
+  return new Request("http://localhost/api/expenses", { method: "POST", body: multipartBody(fields, file) });
 }
 
 function build() {
@@ -50,35 +79,25 @@ function build() {
       },
     ],
   });
+  const blobStore = new InMemoryBlobStore();
   const commands = createExpenseCommands({
     store,
+    blobStore,
     idFactory: (() => {
-      let index = 0;
-      return (prefix: string) => `${prefix}-${++index}`;
+      const counters = new Map<string, number>();
+      return (prefix: string) => {
+        const next = (counters.get(prefix) ?? 0) + 1;
+        counters.set(prefix, next);
+        return `${prefix}-${next}`;
+      };
     })(),
     now: () => new Date("2026-08-04T10:00:00.000Z"),
   });
-  return { commands };
+  return { commands, blobStore };
 }
 
 async function createAndSubmit(commands: ReturnType<typeof build>["commands"], actorId = "emp-shameel") {
-  const createResponse = await handleCreateExpenseRequest(
-    new Request("http://localhost/api/expenses", {
-      method: "POST",
-      body: JSON.stringify({
-        title: "Taxi",
-        category: "Travel",
-        subCategory: "Cab/Taxi",
-        remark: "Airport pickup",
-        amount: "850.00",
-        expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
-      }),
-    }),
-    commands,
-    actorId,
-  );
+  const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, actorId);
   const { claim } = await createResponse.json();
   await handleSubmitExpenseRequest(
     new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
@@ -93,20 +112,19 @@ describe("expense HTTP boundary", () => {
   it("creates a draft from rupee input and returns the persisted claim shape", async () => {
     const { commands } = build();
     const response = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
+      createRequest(
+        {
           title: "Client dinner",
           category: "Meals",
           subCategory: "Client Meeting",
           remark: "Dinner with Acme Corp",
           amount: "2400.00",
           expenseDate: "2026-08-04",
-          attachment: { fileName: "receipt.jpg", contentType: "image/jpeg" },
           accountNumber: "32534240620",
           ifscCode: "SBIN0012861",
-        }),
-      }),
+        },
+        { name: "receipt.jpg", type: "image/jpeg", data: JPEG_RECEIPT },
+      ),
       commands,
       "emp-shameel",
     );
@@ -128,14 +146,13 @@ describe("expense HTTP boundary", () => {
   it("rejects a draft submitted without payout details", async () => {
     const { commands } = build();
     const response = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Client dinner",
-          category: "Meals",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-        }),
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
       }),
       commands,
       "emp-shameel",
@@ -147,18 +164,15 @@ describe("expense HTTP boundary", () => {
   it("rejects a draft submitted with whitespace-only payout details", async () => {
     const { commands } = build();
     const response = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "   ",
-          ifscCode: "   ",
-        }),
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "   ",
+        ifscCode: "   ",
       }),
       commands,
       "emp-shameel",
@@ -170,18 +184,15 @@ describe("expense HTTP boundary", () => {
   it("submits a draft through a protected command boundary", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Taxi",
-          category: "Travel",
-          subCategory: "Cab/Taxi",
-          remark: "Airport pickup",
-          amount: "850.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Taxi",
+        category: "Travel",
+        subCategory: "Cab/Taxi",
+        remark: "Airport pickup",
+        amount: "850.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -204,19 +215,15 @@ describe("expense HTTP boundary", () => {
   it("accepts an explicit skipped receipt from the receipt-first form", async () => {
     const { commands } = build();
     const response = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "No receipt taxi",
-          category: "Travel",
-          subCategory: "Cab/Taxi",
-          remark: "No receipt available",
-          amount: "500.00",
-          expenseDate: "2026-08-04",
-          attachment: null,
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "No receipt taxi",
+        category: "Travel",
+        subCategory: "Cab/Taxi",
+        remark: "No receipt available",
+        amount: "500.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -225,6 +232,156 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(201);
     const payload = await response.json();
     expect(payload.claim.attachment).toBeUndefined();
+  });
+
+  it("persists a valid JPEG file part as an available attachment with a server-derived key", async () => {
+    const { commands, blobStore } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "boarding-pass.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await response.json();
+    expect(payload.claim.attachment).toMatchObject({
+      fileName: "boarding-pass.jpg",
+      contentType: "image/jpeg",
+      storageKey: "org-1/claim-1/attachment-1.jpg",
+      status: "available",
+      sizeBytes: JPEG_RECEIPT.byteLength,
+    });
+    expect(payload.claim.attachment.contentSha256).toBe(createHash("sha256").update(JPEG_RECEIPT).digest("hex"));
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.jpg")).resolves.toEqual({
+      data: JPEG_RECEIPT,
+      contentType: "image/jpeg",
+    });
+  });
+
+  it("rejects a file part whose declared type does not match its bytes", async () => {
+    const { commands } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "notes.txt", type: "text/plain", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("rejects an oversized receipt file part with a message-bearing validation response", async () => {
+    const { commands } = build();
+    const bigReceipt = new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1);
+    bigReceipt.set(PDF_RECEIPT);
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "huge.pdf", type: "application/pdf", data: bigReceipt }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "validation",
+      message: "The receipt is larger than 10 MB.",
+    });
+  });
+
+  it("rejects a create request missing a required text field", async () => {
+    const { commands } = build();
+    const fields = Object.fromEntries(
+      Object.entries(BASE_FIELDS).filter(([key]) => key !== "accountNumber"),
+    );
+    const response = await handleCreateExpenseRequest(createRequest(fields), commands, "emp-shameel");
+
+    expect(response.status).toBe(422);
+  });
+
+  it("serves the receipt bytes to the requester with the right headers", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "boarding-pass.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+
+    const response = await handleGetReceiptRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/receipt`),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("image/jpeg");
+    expect(response.headers.get("content-length")).toBe(String(JPEG_RECEIPT.byteLength));
+    expect(response.headers.get("content-disposition")).toBe('inline; filename="boarding-pass.jpg"');
+    await expect(response.arrayBuffer()).resolves.toEqual(JPEG_RECEIPT.buffer);
+  });
+
+  it("denies the receipt to an employee of another organization", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
+        {
+          id: "emp-outsider",
+          organizationId: "org-2",
+          name: "Outsider",
+          role: ROLE_EXECUTIVE,
+          active: true,
+          managerId: null,
+        },
+      ],
+      flows: [],
+    });
+    const commands = createExpenseCommands({
+      store,
+      blobStore: new InMemoryBlobStore(),
+      idFactory: (() => {
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+
+    const response = await handleGetReceiptRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/receipt`),
+      commands,
+      "emp-outsider",
+      claim.id,
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("returns 404 when the receipt blob is missing from the store", async () => {
+    const { commands, blobStore } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await blobStore.deleteBlob(claim.attachment.storageKey);
+
+    const response = await handleGetReceiptRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/receipt`),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    expect(response.status).toBe(404);
   });
 
   it("serves the finance payment queue to Finance and rejects an employee", async () => {
@@ -249,18 +406,15 @@ describe("expense HTTP boundary", () => {
   it("lets Finance add a comment to a claim and rejects an employee", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -294,19 +448,15 @@ describe("expense HTTP boundary", () => {
   it("lets a later-stage role take over a claim with a reason code", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Urgent client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          paymentMethod: "Personal card",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Urgent client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -338,19 +488,15 @@ describe("expense HTTP boundary", () => {
   it("rejects a take-over request without a reason code", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Urgent client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          paymentMethod: "Personal card",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Urgent client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -379,18 +525,15 @@ describe("expense HTTP boundary", () => {
   it("lets an assigned approver reject a claim outright with a reason", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -420,18 +563,15 @@ describe("expense HTTP boundary", () => {
   it("rejects a rejection request without a reason", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -460,18 +600,15 @@ describe("expense HTTP boundary", () => {
   it("returns the claim and organization employees for someone authorized to view it", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Conference taxi",
-          category: "Travel",
-          subCategory: "Cab/Taxi",
-          remark: "Airport pickup",
-          amount: "850.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Conference taxi",
+        category: "Travel",
+        subCategory: "Cab/Taxi",
+        remark: "Airport pickup",
+        amount: "850.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -504,18 +641,15 @@ describe("expense HTTP boundary", () => {
   it("denies viewing a claim to someone who never touched it and is not Finance", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      new Request("http://localhost/api/expenses", {
-        method: "POST",
-        body: JSON.stringify({
-          title: "Client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
-        }),
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -578,9 +712,14 @@ describe("expense HTTP boundary", () => {
     });
     const commands = createExpenseCommands({
       store,
+      blobStore: new InMemoryBlobStore(),
       idFactory: (() => {
-        let index = 0;
-        return (prefix: string) => `${prefix}-${++index}`;
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
       })(),
       now: () => new Date("2026-08-04T10:00:00.000Z"),
     });
@@ -618,9 +757,14 @@ describe("expense HTTP boundary", () => {
     });
     const commands = createExpenseCommands({
       store,
+      blobStore: new InMemoryBlobStore(),
       idFactory: (() => {
-        let index = 0;
-        return (prefix: string) => `${prefix}-${++index}`;
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
       })(),
       now: () => new Date("2026-08-04T10:00:00.000Z"),
     });

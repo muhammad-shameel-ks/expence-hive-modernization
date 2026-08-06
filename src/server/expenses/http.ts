@@ -1,4 +1,5 @@
 import { isExpenseError, type ExpenseCommands } from "./commands";
+import type { ReceiptUploadInput } from "./ports";
 
 export async function handleCreateExpenseRequest(
   request: Request,
@@ -6,37 +7,70 @@ export async function handleCreateExpenseRequest(
   actorId: string,
 ): Promise<Response> {
   try {
-    const body = await readBody(request);
-    if (!body || typeof body !== "object") return validationResponse();
-    const value = body as Record<string, unknown>;
+    const form = await request.formData();
+    const title = form.get("title");
+    const category = form.get("category");
+    const subCategory = form.get("subCategory");
+    const remark = form.get("remark");
+    const amount = form.get("amount");
+    const expenseDate = form.get("expenseDate");
+    const accountNumber = form.get("accountNumber");
+    const ifscCode = form.get("ifscCode");
     if (
-      typeof value.title !== "string" ||
-      typeof value.category !== "string" ||
-      typeof value.subCategory !== "string" ||
-      typeof value.remark !== "string" ||
-      typeof value.amount !== "string" ||
-      typeof value.expenseDate !== "string" ||
-      typeof value.accountNumber !== "string" ||
-      typeof value.ifscCode !== "string"
+      typeof title !== "string" ||
+      typeof category !== "string" ||
+      typeof subCategory !== "string" ||
+      typeof remark !== "string" ||
+      typeof amount !== "string" ||
+      typeof expenseDate !== "string" ||
+      typeof accountNumber !== "string" ||
+      typeof ifscCode !== "string"
     ) {
       return validationResponse();
     }
-    const amountMinor = parseAmount(value.amount);
+    const amountMinor = parseAmount(amount);
     if (amountMinor === null) return validationResponse();
-    const attachment = parseAttachment(value.attachment);
-    if (value.attachment !== undefined && attachment === null) return validationResponse();
+    const receiptFile = form.get("receipt");
+    if (receiptFile !== null && !(receiptFile instanceof File)) return validationResponse();
+    let attachment: ReceiptUploadInput | undefined;
+    if (receiptFile instanceof File) {
+      const data = new Uint8Array(await receiptFile.arrayBuffer());
+      attachment = { fileName: receiptFile.name, contentType: receiptFile.type || "application/octet-stream", data };
+    }
     const claim = await commands.createDraft(actorId, {
-      title: value.title,
-      category: value.category,
-      subCategory: value.subCategory,
-      remark: value.remark,
+      title,
+      category,
+      subCategory,
+      remark,
       amountMinor,
       currency: "INR",
-      expenseDate: value.expenseDate,
-      attachment: attachment ?? undefined,
-      payoutDetails: { accountNumber: value.accountNumber, ifscCode: value.ifscCode },
+      expenseDate,
+      attachment,
+      payoutDetails: { accountNumber, ifscCode },
     });
     return Response.json({ claim }, { status: 201 });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleGetReceiptRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const receipt = await commands.getReceipt(actorId, claimId);
+    // Response bodies require an ArrayBuffer-backed view; the blob bytes are
+    // copied into one (the 10 MB cap keeps the copy cheap).
+    return new Response(new Uint8Array(receipt.data), {
+      headers: {
+        "content-type": receipt.contentType,
+        "content-length": String(receipt.sizeBytes),
+        "content-disposition": `inline; filename="${sanitizeFileName(receipt.fileName)}"`,
+      },
+    });
   } catch (error) {
     return expenseErrorResponse(error);
   }
@@ -186,18 +220,6 @@ function parseAmount(value: string): number | null {
   return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
 }
 
-function parseAttachment(value: unknown) {
-  if (value === undefined || value === null) return undefined;
-  if (!value || typeof value !== "object") return null;
-  const input = value as Record<string, unknown>;
-  if (typeof input.fileName !== "string" || typeof input.contentType !== "string") return null;
-  return {
-    fileName: input.fileName,
-    contentType: input.contentType,
-    storageKey: `local/${crypto.randomUUID()}/${input.fileName}`,
-  };
-}
-
 function expenseErrorResponse(error: unknown): Response {
   if (!isExpenseError(error)) {
     console.error("expense command failed", error instanceof Error ? error : String(error));
@@ -205,6 +227,13 @@ function expenseErrorResponse(error: unknown): Response {
   }
   const status = error.code === "unauthorized" ? 403 : error.code === "not-found" ? 404 : error.code === "conflict" ? 409 : 422;
   return Response.json({ error: error.code, message: error.message }, { status });
+}
+
+// The browser-supplied file name lands in a content-disposition header, so
+// header-breaking characters are stripped before it is quoted (RFC 6266).
+function sanitizeFileName(fileName: string): string {
+  const sanitized = fileName.replace(/["\\\r\n]/g, "");
+  return sanitized.trim() ? sanitized : "receipt";
 }
 
 async function readBody(request: Request): Promise<unknown | null> {

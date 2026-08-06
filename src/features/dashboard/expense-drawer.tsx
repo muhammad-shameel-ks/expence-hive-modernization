@@ -452,6 +452,12 @@ export function ExpenseDrawer({
                     </li>
                   ))}
                 </ul>
+                <Button asChild variant="outline" size="sm" className="mt-3">
+                  <a href={`/api/expenses/${expense.id}/receipt`} target="_blank" rel="noopener noreferrer">
+                    View receipt
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                  </a>
+                </Button>
               </section>
             ) : null}
           </div>

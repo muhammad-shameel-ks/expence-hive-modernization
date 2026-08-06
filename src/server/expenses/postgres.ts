@@ -1,7 +1,9 @@
 import type { Pool } from "pg";
+import type { ReceiptContentType } from "../blob/keys";
 import { ExpenseError } from "./commands";
 import type {
   ActivityEntry,
+  ExpenseAttachment,
   ExpenseClaim,
   ExpenseEmployee,
   ExpenseFlow,
@@ -58,9 +60,7 @@ export class PostgresExpenseStore implements ExpenseStore {
         this.pool.query<Row>("SELECT * FROM claim_history_events WHERE claim_id = $1 ORDER BY created_at, id", [claim.id]),
       ]);
       const attachment = attachmentResult.rows[0];
-      claim.attachment = attachment
-        ? { id: String(attachment.id), fileName: String(attachment.file_name), contentType: String(attachment.content_type), storageKey: String(attachment.storage_key), status: "available" }
-        : undefined;
+      claim.attachment = attachment ? attachmentFromRow(attachment) : undefined;
       claim.steps = stepResult.rows.map(stepFromRow);
       claim.history = historyResult.rows.map(historyFromRow);
       return claim;
@@ -75,9 +75,13 @@ export class PostgresExpenseStore implements ExpenseStore {
       await insertHistory(client, claim);
       if (claim.attachment) {
         await client.query(
-          `INSERT INTO claim_attachments (id, claim_id, file_name, content_type, storage_key, status)
-           VALUES ($1, $2, $3, $4, $5, $6)`,
-          [claim.attachment.id, claim.id, claim.attachment.fileName, claim.attachment.contentType, claim.attachment.storageKey, claim.attachment.status],
+          `INSERT INTO claim_attachments (id, claim_id, file_name, content_type, storage_key, status, content_sha256, size_bytes, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
+          [
+            claim.attachment.id, claim.id, claim.attachment.fileName, claim.attachment.contentType,
+            claim.attachment.storageKey, claim.attachment.status, claim.attachment.contentSha256,
+            claim.attachment.sizeBytes, claim.attachment.uploadedAt,
+          ],
         );
       }
       await client.query("COMMIT");
@@ -99,15 +103,7 @@ export class PostgresExpenseStore implements ExpenseStore {
       this.pool.query<Row>("SELECT * FROM claim_history_events WHERE claim_id = $1 ORDER BY created_at, id", [id]),
     ]);
     const attachment = attachmentResult.rows[0];
-    claim.attachment = attachment
-      ? {
-          id: String(attachment.id),
-          fileName: String(attachment.file_name),
-          contentType: String(attachment.content_type),
-          storageKey: String(attachment.storage_key),
-          status: "available",
-        }
-      : undefined;
+    claim.attachment = attachment ? attachmentFromRow(attachment) : undefined;
     claim.steps = stepResult.rows.map(stepFromRow);
     claim.history = historyResult.rows.map(historyFromRow);
     return claim;
@@ -321,6 +317,19 @@ function claimFromRow(row: Row): ExpenseClaim {
       ? { accountNumber: String(row.account_number), ifscCode: String(row.ifsc_code) }
       : undefined,
     comments: row.comments ? String(row.comments) : undefined,
+  };
+}
+
+function attachmentFromRow(row: Row): ExpenseAttachment {
+  return {
+    id: String(row.id),
+    fileName: String(row.file_name),
+    contentType: String(row.content_type) as ReceiptContentType,
+    storageKey: String(row.storage_key),
+    status: "available",
+    contentSha256: String(row.content_sha256),
+    sizeBytes: Number(row.size_bytes),
+    uploadedAt: new Date(String(row.uploaded_at)).toISOString(),
   };
 }
 

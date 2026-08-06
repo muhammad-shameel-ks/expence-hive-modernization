@@ -1,13 +1,19 @@
+import { createHash } from "node:crypto";
+import { buildBlobKey } from "../blob/keys";
+import type { BlobStore } from "../blob/ports";
 import { FINANCE_HEAD_ROLE_CODE, MANAGER_ROLE_CODE, resolveRoleCapabilities } from "../shared/authorization";
 import {
   ACTIVITY_EVENT_KINDS,
   type ActivityEntry,
   type CreateExpenseDraftInput,
+  type ExpenseAttachment,
   type ExpenseClaim,
   type ExpenseEmployee,
   type ExpenseStore,
   type FlowStepTarget,
+  type ReceiptData,
 } from "./ports";
+import { MAX_RECEIPT_SIZE_BYTES, resolveReceiptContentType } from "./receipt-validation";
 
 const ABSENCE_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_REASON_CODE_LENGTH = 200;
@@ -119,6 +125,7 @@ type IdFactory = (prefix: string) => string;
 
 export type ExpenseCommands = {
   createDraft(actorId: string, input: CreateExpenseDraftInput): Promise<ExpenseClaim>;
+  getReceipt(actorId: string, claimId: string): Promise<ReceiptData>;
   getClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   listClaims(actorId: string): Promise<ExpenseClaim[]>;
   getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
@@ -137,10 +144,12 @@ export type ExpenseCommands = {
 
 export function createExpenseCommands({
   store,
+  blobStore,
   now = () => new Date(),
   idFactory = (prefix) => `${prefix}-${crypto.randomUUID()}`,
 }: {
   store: ExpenseStore;
+  blobStore: BlobStore;
   now?: () => Date;
   idFactory?: IdFactory;
 }): ExpenseCommands {
@@ -267,6 +276,35 @@ export function createExpenseCommands({
       validateDraft(input);
       const createdAt = now().toISOString();
       const claimId = idFactory("claim");
+      let attachment: ExpenseAttachment | undefined;
+      if (input.attachment) {
+        // The server is authoritative over the receipt format: the browser's
+        // declared type must match the sniffed magic bytes (ADR-0004).
+        const contentType = resolveReceiptContentType(input.attachment.contentType, input.attachment.data);
+        if (contentType === null) {
+          throw new ExpenseError("validation", "Receipts must be a JPEG, PNG, or PDF file.");
+        }
+        if (input.attachment.data.byteLength > MAX_RECEIPT_SIZE_BYTES) {
+          throw new ExpenseError("validation", "The receipt is larger than 10 MB.");
+        }
+        const contentSha256 = createHash("sha256").update(input.attachment.data).digest("hex");
+        const attachmentId = idFactory("attachment");
+        const storageKey = buildBlobKey(employee.organizationId, claimId, attachmentId, contentType);
+        // All-or-nothing upload (ADR-0005): the bytes land under the
+        // server-derived key before the claim row exists; a failed insert is
+        // compensated by deleting the blob.
+        await blobStore.putBlob(storageKey, input.attachment.data, contentType);
+        attachment = {
+          id: attachmentId,
+          fileName: input.attachment.fileName,
+          contentType,
+          storageKey,
+          status: "available",
+          contentSha256,
+          sizeBytes: input.attachment.data.byteLength,
+          uploadedAt: createdAt,
+        };
+      }
       const claim: ExpenseClaim = {
         id: claimId,
         ref: `EXP-${createdAt.slice(0, 4)}-${claimId.replace(/^claim-/, "").slice(-8).toUpperCase()}`,
@@ -280,17 +318,56 @@ export function createExpenseCommands({
         currency: "INR",
         expenseDate: input.expenseDate,
         status: "draft",
-        attachment: input.attachment
-          ? { ...input.attachment, id: idFactory("attachment"), status: "available" }
-          : undefined,
+        attachment,
         payoutDetails: input.payoutDetails ? { ...input.payoutDetails } : undefined,
         steps: [],
         history: [{ id: idFactory("history"), kind: "draft", actorId, createdAt }],
         version: 1,
         createdAt,
       };
-      await store.createClaim(claim);
+      try {
+        await store.createClaim(claim);
+      } catch (error) {
+        // Compensating delete, best-effort: the claim never references a
+        // blob it does not own (ADR-0005). The original failure propagates.
+        if (attachment) {
+          try {
+            await blobStore.deleteBlob(attachment.storageKey);
+          } catch {
+            // The orphan blob is unreachable from any claim and can be
+            // swept later; the insert failure is the one to report.
+          }
+        }
+        throw error;
+      }
       return claim;
+    },
+
+    async getReceipt(actorId, claimId) {
+      const claim = await requireViewableClaim(actorId, claimId);
+      if (!claim.attachment) {
+        throw new ExpenseError("not-found", "This claim has no receipt.");
+      }
+      const blob = await blobStore.getBlob(claim.attachment.storageKey);
+      if (!blob) {
+        throw new ExpenseError("not-found", "The receipt is unavailable.");
+      }
+      // Re-verify integrity before serving: corrupted or swapped bytes are
+      // refused rather than streamed to the browser (ADR-0005).
+      const contentSha256 = createHash("sha256").update(blob.data).digest("hex");
+      if (
+        contentSha256 !== claim.attachment.contentSha256 ||
+        blob.data.byteLength !== claim.attachment.sizeBytes
+      ) {
+        throw new ExpenseError("not-found", "The receipt is unavailable.");
+      }
+      return {
+        fileName: claim.attachment.fileName,
+        contentType: claim.attachment.contentType,
+        contentSha256,
+        sizeBytes: blob.data.byteLength,
+        data: blob.data,
+      };
     },
 
     async getClaim(actorId, claimId) {

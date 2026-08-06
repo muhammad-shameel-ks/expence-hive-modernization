@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
+import { InMemoryBlobStore } from "../blob/fakes";
+import type { BlobStore } from "../blob/ports";
 import { createExpenseCommands } from "./commands";
 import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee, ExpenseFlow, FlowStepTarget } from "./ports";
+import { MAX_RECEIPT_SIZE_BYTES } from "./receipt-validation";
 
 const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive" };
 const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
@@ -46,18 +50,32 @@ const BASE_EMPLOYEES: ExpenseEmployee[] = [
   emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
 ];
 
-function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date } = {}) {
+function bytes(...values: number[]): Uint8Array {
+  return new Uint8Array(values);
+}
+
+const PDF_RECEIPT: Uint8Array = bytes(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a); // "%PDF-1.4\n"
+const JPEG_RECEIPT: Uint8Array = bytes(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46);
+
+function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date; blobStore?: BlobStore } = {}) {
   const store = new InMemoryExpenseStore({
     employees: overrides.employees ?? BASE_EMPLOYEES,
     flows: overrides.flows ?? [STANDARD_FLOW],
   });
+  const blobStore = overrides.blobStore ?? new InMemoryBlobStore();
   return {
     store,
+    blobStore,
     commands: createExpenseCommands({
       store,
+      blobStore,
       idFactory: (() => {
-        let index = 0;
-        return (prefix: string) => `${prefix}-${++index}`;
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
       })(),
       now: overrides.now ?? (() => new Date("2026-08-04T10:00:00.000Z")),
     }),
@@ -77,7 +95,7 @@ async function submitStandardDraft(commands: ReturnType<typeof buildCommands>["c
 
 describe("expense commands", () => {
   it("creates a receipt-backed INR draft that the requester can retrieve", async () => {
-    const { commands } = buildCommands();
+    const { commands, blobStore } = buildCommands();
 
     const draft = await commands.createDraft(employee.id, {
       title: "Bengaluru client flight",
@@ -88,7 +106,7 @@ describe("expense commands", () => {
       attachment: {
         fileName: "flight-receipt.pdf",
         contentType: "application/pdf",
-        storageKey: "prototype/flight-receipt.pdf",
+        data: PDF_RECEIPT,
       },
     });
 
@@ -98,13 +116,146 @@ describe("expense commands", () => {
       title: "Bengaluru client flight",
       amountMinor: 1250000,
       currency: "INR",
-      attachment: { fileName: "flight-receipt.pdf" },
+      attachment: {
+        id: "attachment-1",
+        fileName: "flight-receipt.pdf",
+        contentType: "application/pdf",
+        storageKey: "org-1/claim-1/attachment-1.pdf",
+        status: "available",
+        sizeBytes: PDF_RECEIPT.byteLength,
+        uploadedAt: "2026-08-04T10:00:00.000Z",
+      },
+    });
+    expect(draft.attachment?.contentSha256).toBe(createHash("sha256").update(PDF_RECEIPT).digest("hex"));
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
     });
     await expect(commands.getClaim(employee.id, draft.id)).resolves.toMatchObject({
       id: draft.id,
       requesterId: employee.id,
       status: "draft",
     });
+  });
+
+  it("rejects a receipt whose declared content type is not an accepted receipt type", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: {
+          fileName: "scan.bin",
+          contentType: "application/octet-stream",
+          data: PDF_RECEIPT,
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Receipts must be a JPEG, PNG, or PDF file.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
+  it("persists nothing when the blob write fails", async () => {
+    const { store, blobStore, commands } = buildCommands();
+    vi.spyOn(blobStore, "putBlob").mockRejectedValue(new Error("blob storage unavailable"));
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "scan.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      }),
+    ).rejects.toThrow("blob storage unavailable");
+    await expect(store.getClaim("claim-1")).resolves.toBeNull();
+  });
+
+  it("deletes the blob best-effort when the claim insert fails, and propagates the error", async () => {
+    const { store, blobStore, commands } = buildCommands();
+    vi.spyOn(store, "createClaim").mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "scan.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      }),
+    ).rejects.toThrow("database unavailable");
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
+  it("rejects an oversized receipt without touching the blob store", async () => {
+    const { commands, blobStore } = buildCommands();
+    const bigReceipt = new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1);
+    bigReceipt.set(PDF_RECEIPT);
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "huge.pdf", contentType: "application/pdf", data: bigReceipt },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The receipt is larger than 10 MB.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
+  it("rejects a declared PNG whose bytes are actually a JPEG", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "photo.png", contentType: "image/png", data: JPEG_RECEIPT },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Receipts must be a JPEG, PNG, or PDF file.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.jpg")).resolves.toBeNull();
+  });
+
+  it("rejects receipt bytes that match no known format", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: {
+          fileName: "mystery.bin",
+          contentType: "application/pdf",
+          data: bytes(0x00, 0x01, 0x02, 0x03, 0x04),
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Receipts must be a JPEG, PNG, or PDF file.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
 
   it("lets the requester see their own payout details on their claim", async () => {
@@ -1167,6 +1318,110 @@ describe("expense commands", () => {
       await expect(commands.listActivity("emp-pramod", "emp-ada")).resolves.toEqual([
         expect.objectContaining({ claimId: draft.id, kind: "rejected" }),
       ]);
+    });
+  });
+
+  describe("receipt downloads", () => {
+    async function createReceiptDraft(commands: ReturnType<typeof buildCommands>["commands"]) {
+      return commands.createDraft(employee.id, {
+        title: "Bengaluru client flight",
+        category: "Travel",
+        amountMinor: 1250000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "flight-receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+    }
+
+    it("gives the requester the stored receipt bytes", async () => {
+      const { commands } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+
+      const receipt = await commands.getReceipt(employee.id, draft.id);
+
+      expect(receipt).toEqual({
+        fileName: "flight-receipt.pdf",
+        contentType: "application/pdf",
+        contentSha256: createHash("sha256").update(PDF_RECEIPT).digest("hex"),
+        sizeBytes: PDF_RECEIPT.byteLength,
+        data: PDF_RECEIPT,
+      });
+    });
+
+    it("gives a manager who acted on the claim the receipt, even after the claim moved past their stage", async () => {
+      const { commands } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+      await commands.submitClaim(employee.id, draft.id);
+      await commands.approveStage("emp-ada", draft.id);
+
+      await expect(commands.getReceipt("emp-ada", draft.id)).resolves.toMatchObject({
+        fileName: "flight-receipt.pdf",
+        sizeBytes: PDF_RECEIPT.byteLength,
+      });
+    });
+
+    it("gives Finance standing access to any claim's receipt", async () => {
+      const { commands } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+
+      await expect(commands.getReceipt("emp-finance", draft.id)).resolves.toMatchObject({
+        fileName: "flight-receipt.pdf",
+      });
+    });
+
+    it("denies the receipt to an employee of another organization", async () => {
+      const outsider: ExpenseEmployee = {
+        id: "emp-outsider",
+        organizationId: "org-2",
+        name: "Outsider",
+        role: ROLE_EXECUTIVE,
+        active: true,
+        managerId: null,
+      };
+      const { commands } = buildCommands({ employees: [...BASE_EMPLOYEES, outsider] });
+      const draft = await createReceiptDraft(commands);
+
+      await expect(commands.getReceipt(outsider.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+      });
+    });
+
+    it("reports not-found for a claim without a receipt", async () => {
+      const { commands } = buildCommands();
+      const draft = await commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+
+      await expect(commands.getReceipt(employee.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+        message: "This claim has no receipt.",
+      });
+    });
+
+    it("reports not-found when the blob is missing from the store", async () => {
+      const { commands, blobStore } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+      await blobStore.deleteBlob(draft.attachment!.storageKey);
+
+      await expect(commands.getReceipt(employee.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+        message: "The receipt is unavailable.",
+      });
+    });
+
+    it("refuses to serve bytes whose digest no longer matches the attachment record", async () => {
+      const { commands, blobStore } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+      await blobStore.putBlob(draft.attachment!.storageKey, bytes(0x00, 0x11, 0x22, 0x33), "application/pdf");
+
+      await expect(commands.getReceipt(employee.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+        message: "The receipt is unavailable.",
+      });
     });
   });
 });

@@ -1,3 +1,5 @@
+import type { ReceiptContentType } from "../blob/keys";
+
 export type ExpenseRole = {
   id: string;
   code: string;
@@ -22,12 +24,27 @@ export type ExpenseEmployee = {
 export type ExpenseAttachment = {
   id: string;
   fileName: string;
-  contentType: string;
+  contentType: ReceiptContentType;
   storageKey: string;
   status: "available";
+  contentSha256: string;
+  sizeBytes: number;
+  uploadedAt: string;
 };
 
-export type ExpenseAttachmentInput = Omit<ExpenseAttachment, "id" | "status">;
+export type ReceiptUploadInput = {
+  fileName: string;
+  contentType: string;
+  data: Uint8Array;
+};
+
+export type ReceiptData = {
+  fileName: string;
+  contentType: ReceiptContentType;
+  contentSha256: string;
+  sizeBytes: number;
+  data: Uint8Array;
+};
 
 export type ExpensePayoutDetails = {
   accountNumber: string;
@@ -127,7 +144,7 @@ export type CreateExpenseDraftInput = {
   amountMinor: number;
   currency: string;
   expenseDate: string;
-  attachment?: ExpenseAttachmentInput;
+  attachment?: ReceiptUploadInput;
   payoutDetails?: ExpensePayoutDetails;
 };
 

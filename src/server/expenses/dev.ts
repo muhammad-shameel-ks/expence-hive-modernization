@@ -1,4 +1,5 @@
 import { Pool } from "pg";
+import { createBlobStore } from "../blob/compose";
 import { databaseUrl } from "@/server/db/connection.mjs";
 import { createExpenseCommands, type ExpenseCommands } from "./commands";
 import { PostgresExpenseStore } from "./postgres";
@@ -19,5 +20,8 @@ export function expenseCommands(): ExpenseCommands {
   if (!globalStore[poolKey]) {
     globalStore[poolKey] = new Pool({ connectionString: databaseUrl });
   }
-  return createExpenseCommands({ store: new PostgresExpenseStore(globalStore[poolKey]) });
+  return createExpenseCommands({
+    store: new PostgresExpenseStore(globalStore[poolKey]),
+    blobStore: createBlobStore(),
+  });
 }
