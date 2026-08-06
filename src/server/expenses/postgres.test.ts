@@ -413,3 +413,96 @@ describe("PostgresExpenseStore", () => {
     expect(stepInsert?.[1]).toEqual(expect.arrayContaining([null, "emp-abilash"]));
   });
 });
+
+describe("PostgresExpenseStore claim lifecycle", () => {
+  it("updates the editable draft columns and upserts the attachment in updateClaim", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+    const claim = buildClaim();
+    claim.attachment = {
+      id: "attachment-1",
+      fileName: "receipt.pdf",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
+      status: "available",
+      contentSha256: "abc123",
+      sizeBytes: 209,
+      uploadedAt: "2026-08-04T10:00:00.000Z",
+    };
+
+    await store.updateClaim(claim);
+
+    const updateCall = query.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("UPDATE reimbursement_claims"),
+    );
+    expect(updateCall?.[0]).toContain("title");
+    expect(updateCall?.[0]).toContain("amount_minor");
+    expect(updateCall?.[0]).toContain("expense_date");
+    expect(updateCall?.[1]).toEqual(
+      expect.arrayContaining(["Bengaluru client flight", 1250000, "2026-08-04", "32534240620", "SBIN0012861"]),
+    );
+    const attachmentCall = query.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO claim_attachments"),
+    );
+    expect(attachmentCall?.[1]).toEqual(
+      expect.arrayContaining([
+        "attachment-1",
+        "claim-1",
+        "receipt.pdf",
+        "application/pdf",
+        "org-1/claim-1/attachment-1.pdf",
+        "available",
+        "abc123",
+        209,
+      ]),
+    );
+  });
+
+  it("deletes a claim by id, cascading its children", async () => {
+    const query = vi.fn().mockResolvedValue(undefined);
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await store.deleteClaim("claim-1");
+
+    expect(query).toHaveBeenCalledWith("DELETE FROM reimbursement_claims WHERE id = $1", ["claim-1"]);
+  });
+});
+
+describe("PostgresExpenseStore date normalization", () => {
+  it("maps a DATE column Date object to yyyy-mm-dd without timezone drift", async () => {
+    const rows = [
+      {
+        id: "claim-1",
+        reference: "EXP-2026-0001",
+        organization_id: "org-1",
+        requester_id: "emp-shameel",
+        title: "Bengaluru client flight",
+        category: "Travel",
+        sub_category: "Airfare",
+        remark: "Round trip",
+        amount_minor: 1250000,
+        currency: "INR",
+        expense_date: new Date(2026, 7, 6),
+        status: "draft",
+        version: 1,
+        created_at: "2026-08-04T10:00:00.000Z",
+      },
+    ];
+    const pool = {
+      query: vi.fn().mockImplementation(async (sql: string) => {
+        if (typeof sql === "string" && sql.includes("claim_attachments")) return { rows: [] };
+        if (typeof sql === "string" && sql.includes("claim_approval_steps")) return { rows: [] };
+        if (typeof sql === "string" && sql.includes("claim_history_events")) return { rows: [] };
+        return { rows };
+      }),
+    } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = await store.getClaim("claim-1");
+
+    expect(claim?.expenseDate).toBe("2026-08-06");
+  });
+});

@@ -148,6 +148,11 @@ export type CreateExpenseDraftInput = {
   payoutDetails?: ExpensePayoutDetails;
 };
 
+// Editing a draft accepts the same fields as creation. An attachment is
+// only ever ADDED: replacing the receipt of an existing draft is not
+// supported (delete the draft and start over instead).
+export type UpdateExpenseDraftInput = CreateExpenseDraftInput;
+
 // The target of one flow step. 'role' steps resolve to eligible holders of
 // the role (org-wide, or same-department for the Manager role); 'team-lead'
 // steps resolve to the requester's assigned named person from
@@ -170,6 +175,7 @@ export interface ExpenseStore {
   createClaim(claim: ExpenseClaim): Promise<void>;
   getClaim(id: string): Promise<ExpenseClaim | null>;
   updateClaim(claim: ExpenseClaim): Promise<void>;
+  deleteClaim(id: string): Promise<void>;
   getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null>;
   listActivityForActor(
     organizationId: string,

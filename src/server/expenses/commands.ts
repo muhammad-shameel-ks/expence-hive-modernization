@@ -12,6 +12,8 @@ import {
   type ExpenseStore,
   type FlowStepTarget,
   type ReceiptData,
+  type ReceiptUploadInput,
+  type UpdateExpenseDraftInput,
 } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES, resolveReceiptContentType } from "./receipt-validation";
 
@@ -125,6 +127,8 @@ type IdFactory = (prefix: string) => string;
 
 export type ExpenseCommands = {
   createDraft(actorId: string, input: CreateExpenseDraftInput): Promise<ExpenseClaim>;
+  updateDraft(actorId: string, claimId: string, input: UpdateExpenseDraftInput): Promise<ExpenseClaim>;
+  deleteDraft(actorId: string, claimId: string): Promise<void>;
   getReceipt(actorId: string, claimId: string): Promise<ReceiptData>;
   getClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   listClaims(actorId: string): Promise<ExpenseClaim[]>;
@@ -270,6 +274,52 @@ export function createExpenseCommands({
     return claim;
   }
 
+  // Uploads receipt bytes to a claim-scoped key and returns the attachment
+  // record. The server is authoritative over the receipt format: the
+  // browser's declared type must match the sniffed magic bytes (ADR-0004).
+  // The bytes land before the claim row changes; callers compensate with a
+  // best-effort blob delete when their store write fails (ADR-0005).
+  async function uploadReceipt(
+    input: ReceiptUploadInput,
+    organizationId: string,
+    claimId: string,
+    uploadedAt: string,
+  ): Promise<ExpenseAttachment> {
+    const contentType = resolveReceiptContentType(input.contentType, input.data);
+    if (contentType === null) {
+      throw new ExpenseError("validation", "Receipts must be a JPEG, PNG, or PDF file.");
+    }
+    if (input.data.byteLength > MAX_RECEIPT_SIZE_BYTES) {
+      throw new ExpenseError("validation", "The receipt is larger than 10 MB.");
+    }
+    const contentSha256 = createHash("sha256").update(input.data).digest("hex");
+    const attachmentId = idFactory("attachment");
+    const storageKey = buildBlobKey(organizationId, claimId, attachmentId, contentType);
+    await blobStore.putBlob(storageKey, input.data, contentType);
+    return {
+      id: attachmentId,
+      fileName: input.fileName,
+      contentType,
+      storageKey,
+      status: "available",
+      contentSha256,
+      sizeBytes: input.data.byteLength,
+      uploadedAt,
+    };
+  }
+
+  // Best-effort compensating delete for a failed store write after the
+  // bytes landed (ADR-0005): the claim never references a blob it does not
+  // own. The original failure always propagates.
+  async function compensateBlob(attachment: ExpenseAttachment | undefined): Promise<void> {
+    if (!attachment) return;
+    try {
+      await blobStore.deleteBlob(attachment.storageKey);
+    } catch {
+      // The orphan blob is unreachable from any claim and can be swept later.
+    }
+  }
+
   return {
     async createDraft(actorId, input) {
       const employee = await requireEmployee(actorId);
@@ -278,32 +328,7 @@ export function createExpenseCommands({
       const claimId = idFactory("claim");
       let attachment: ExpenseAttachment | undefined;
       if (input.attachment) {
-        // The server is authoritative over the receipt format: the browser's
-        // declared type must match the sniffed magic bytes (ADR-0004).
-        const contentType = resolveReceiptContentType(input.attachment.contentType, input.attachment.data);
-        if (contentType === null) {
-          throw new ExpenseError("validation", "Receipts must be a JPEG, PNG, or PDF file.");
-        }
-        if (input.attachment.data.byteLength > MAX_RECEIPT_SIZE_BYTES) {
-          throw new ExpenseError("validation", "The receipt is larger than 10 MB.");
-        }
-        const contentSha256 = createHash("sha256").update(input.attachment.data).digest("hex");
-        const attachmentId = idFactory("attachment");
-        const storageKey = buildBlobKey(employee.organizationId, claimId, attachmentId, contentType);
-        // All-or-nothing upload (ADR-0005): the bytes land under the
-        // server-derived key before the claim row exists; a failed insert is
-        // compensated by deleting the blob.
-        await blobStore.putBlob(storageKey, input.attachment.data, contentType);
-        attachment = {
-          id: attachmentId,
-          fileName: input.attachment.fileName,
-          contentType,
-          storageKey,
-          status: "available",
-          contentSha256,
-          sizeBytes: input.attachment.data.byteLength,
-          uploadedAt: createdAt,
-        };
+        attachment = await uploadReceipt(input.attachment, employee.organizationId, claimId, createdAt);
       }
       const claim: ExpenseClaim = {
         id: claimId,
@@ -328,19 +353,57 @@ export function createExpenseCommands({
       try {
         await store.createClaim(claim);
       } catch (error) {
-        // Compensating delete, best-effort: the claim never references a
-        // blob it does not own (ADR-0005). The original failure propagates.
-        if (attachment) {
-          try {
-            await blobStore.deleteBlob(attachment.storageKey);
-          } catch {
-            // The orphan blob is unreachable from any claim and can be
-            // swept later; the insert failure is the one to report.
-          }
-        }
+        await compensateBlob(attachment);
         throw error;
       }
       return claim;
+    },
+
+    async updateDraft(actorId, claimId, input) {
+      const claim = await requireClaim(actorId, claimId);
+      if (claim.status !== "draft") {
+        throw new ExpenseError("conflict", "Only a draft claim can be edited.");
+      }
+      validateDraft(input);
+      // Only a newly uploaded receipt is compensated on failure; a kept
+      // attachment's blob must never be deleted while its row survives.
+      let addedAttachment: ExpenseAttachment | undefined;
+      if (input.attachment) {
+        if (claim.attachment) {
+          throw new ExpenseError(
+            "validation",
+            "This draft already has a receipt. Delete the draft to start over with a different receipt.",
+          );
+        }
+        addedAttachment = await uploadReceipt(input.attachment, claim.organizationId, claimId, now().toISOString());
+        claim.attachment = addedAttachment;
+      }
+      claim.title = input.title.trim();
+      claim.category = input.category.trim();
+      claim.subCategory = (input.subCategory ?? "").trim();
+      claim.remark = (input.remark ?? "").trim();
+      claim.amountMinor = input.amountMinor;
+      claim.expenseDate = input.expenseDate;
+      claim.payoutDetails = input.payoutDetails ? { ...input.payoutDetails } : undefined;
+      claim.version += 1;
+      try {
+        await store.updateClaim(claim);
+      } catch (error) {
+        await compensateBlob(addedAttachment);
+        throw error;
+      }
+      return claim;
+    },
+
+    async deleteDraft(actorId, claimId) {
+      const claim = await requireClaim(actorId, claimId);
+      if (claim.status !== "draft") {
+        throw new ExpenseError("conflict", "Only a draft claim can be deleted.");
+      }
+      await store.deleteClaim(claim.id);
+      // The attachment row cascades away with the claim; the stored bytes
+      // are removed best-effort so an orphan blob never blocks the delete.
+      await compensateBlob(claim.attachment);
     },
 
     async getReceipt(actorId, claimId) {

@@ -1,5 +1,52 @@
 import { isExpenseError, type ExpenseCommands } from "./commands";
-import type { ReceiptUploadInput } from "./ports";
+import type { CreateExpenseDraftInput, ReceiptUploadInput } from "./ports";
+
+// Parses the receipt-first form's multipart body: eight text fields plus an
+// optional file part named "receipt". Returns null on any malformed part;
+// the size cap and content-type authority live in the command layer.
+async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput | null> {
+  const form = await request.formData();
+  const title = form.get("title");
+  const category = form.get("category");
+  const subCategory = form.get("subCategory");
+  const remark = form.get("remark");
+  const amount = form.get("amount");
+  const expenseDate = form.get("expenseDate");
+  const accountNumber = form.get("accountNumber");
+  const ifscCode = form.get("ifscCode");
+  if (
+    typeof title !== "string" ||
+    typeof category !== "string" ||
+    typeof subCategory !== "string" ||
+    typeof remark !== "string" ||
+    typeof amount !== "string" ||
+    typeof expenseDate !== "string" ||
+    typeof accountNumber !== "string" ||
+    typeof ifscCode !== "string"
+  ) {
+    return null;
+  }
+  const amountMinor = parseAmount(amount);
+  if (amountMinor === null) return null;
+  const receiptFile = form.get("receipt");
+  if (receiptFile !== null && !(receiptFile instanceof File)) return null;
+  let attachment: ReceiptUploadInput | undefined;
+  if (receiptFile instanceof File) {
+    const data = new Uint8Array(await receiptFile.arrayBuffer());
+    attachment = { fileName: receiptFile.name, contentType: receiptFile.type || "application/octet-stream", data };
+  }
+  return {
+    title,
+    category,
+    subCategory,
+    remark,
+    amountMinor,
+    currency: "INR",
+    expenseDate,
+    attachment,
+    payoutDetails: { accountNumber, ifscCode },
+  };
+}
 
 export async function handleCreateExpenseRequest(
   request: Request,
@@ -7,48 +54,40 @@ export async function handleCreateExpenseRequest(
   actorId: string,
 ): Promise<Response> {
   try {
-    const form = await request.formData();
-    const title = form.get("title");
-    const category = form.get("category");
-    const subCategory = form.get("subCategory");
-    const remark = form.get("remark");
-    const amount = form.get("amount");
-    const expenseDate = form.get("expenseDate");
-    const accountNumber = form.get("accountNumber");
-    const ifscCode = form.get("ifscCode");
-    if (
-      typeof title !== "string" ||
-      typeof category !== "string" ||
-      typeof subCategory !== "string" ||
-      typeof remark !== "string" ||
-      typeof amount !== "string" ||
-      typeof expenseDate !== "string" ||
-      typeof accountNumber !== "string" ||
-      typeof ifscCode !== "string"
-    ) {
-      return validationResponse();
-    }
-    const amountMinor = parseAmount(amount);
-    if (amountMinor === null) return validationResponse();
-    const receiptFile = form.get("receipt");
-    if (receiptFile !== null && !(receiptFile instanceof File)) return validationResponse();
-    let attachment: ReceiptUploadInput | undefined;
-    if (receiptFile instanceof File) {
-      const data = new Uint8Array(await receiptFile.arrayBuffer());
-      attachment = { fileName: receiptFile.name, contentType: receiptFile.type || "application/octet-stream", data };
-    }
-    const claim = await commands.createDraft(actorId, {
-      title,
-      category,
-      subCategory,
-      remark,
-      amountMinor,
-      currency: "INR",
-      expenseDate,
-      attachment,
-      payoutDetails: { accountNumber, ifscCode },
-    });
+    const input = await parseDraftForm(request);
+    if (!input) return validationResponse();
+    const claim = await commands.createDraft(actorId, input);
     return Response.json({ claim }, { status: 201 });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleUpdateExpenseRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const input = await parseDraftForm(request);
+    if (!input) return validationResponse();
+    const claim = await commands.updateDraft(actorId, claimId, input);
+    return Response.json({ claim });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleDeleteExpenseRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    await commands.deleteDraft(actorId, claimId);
+    return new Response(null, { status: 204 });
   } catch (error) {
     return expenseErrorResponse(error);
   }

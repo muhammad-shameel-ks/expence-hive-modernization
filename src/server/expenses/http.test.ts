@@ -5,6 +5,7 @@ import { createExpenseCommands } from "./commands";
 import {
   handleApproveExpenseRequest,
   handleCreateExpenseRequest,
+  handleDeleteExpenseRequest,
   handleFinancePaymentQueueRequest,
   handleGetExpenseRequest,
   handleGetReceiptRequest,
@@ -12,6 +13,7 @@ import {
   handleSubmitExpenseRequest,
   handleTakeOverExpenseRequest,
   handleUpdateCommentsRequest,
+  handleUpdateExpenseRequest,
 } from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee } from "./ports";
@@ -792,5 +794,131 @@ describe("expense HTTP boundary", () => {
     await expect(approveResponse.json()).resolves.toMatchObject({
       claim: { currentStage: ROLE_MANAGER.id },
     });
+  });
+});
+
+describe("draft update and delete handlers", () => {
+  function updateRequest(fields: Record<string, string>, file?: { name: string; type: string; data: Uint8Array<ArrayBuffer> }): Request {
+    return new Request("http://localhost/api/expenses/claim-1", {
+      method: "PATCH",
+      body: multipartBody(fields, file),
+    });
+  }
+
+  async function createDraft() {
+    const { commands, blobStore } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    return { commands, blobStore, claimId: payload.claim.id };
+  }
+
+  it("updates draft fields through PATCH and returns the claim", async () => {
+    const { commands, claimId } = await createDraft();
+
+    const response = await handleUpdateExpenseRequest(
+      updateRequest({ ...BASE_FIELDS, title: "Renamed taxi", amount: "999.00" }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      claim: { id: claimId, title: "Renamed taxi", amountMinor: 99900 },
+    });
+  });
+
+  it("adds a receipt to a draft that skipped it through PATCH", async () => {
+    const { commands, blobStore, claimId } = await createDraft();
+
+    const response = await handleUpdateExpenseRequest(
+      updateRequest(BASE_FIELDS, { name: "late.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { claim: { attachment: { fileName: string; storageKey: string } } };
+    expect(payload.claim.attachment.fileName).toBe("late.pdf");
+    await expect(blobStore.getBlob(payload.claim.attachment.storageKey)).resolves.not.toBeNull();
+  });
+
+  it("returns 422 for a malformed PATCH body", async () => {
+    const { commands, claimId } = await createDraft();
+    const form = new FormData();
+    form.set("title", "Only a title");
+
+    const response = await handleUpdateExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1", { method: "PATCH", body: form }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("rejects editing a submitted claim with 409", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    await handleSubmitExpenseRequest(new Request("http://localhost"), commands, "emp-shameel", payload.claim.id);
+
+    const response = await handleUpdateExpenseRequest(updateRequest(BASE_FIELDS), commands, "emp-shameel", payload.claim.id);
+
+    expect(response.status).toBe(409);
+  });
+
+  it("rejects editing another employee's draft with 403", async () => {
+    const { commands, claimId } = await createDraft();
+
+    const response = await handleUpdateExpenseRequest(updateRequest(BASE_FIELDS), commands, "emp-katherine", claimId);
+
+    expect(response.status).toBe(403);
+  });
+
+  it("deletes a draft and its receipt through DELETE, returning 204", async () => {
+    const { commands, blobStore, claimId } = await createDraft();
+    const addResponse = await handleUpdateExpenseRequest(
+      updateRequest(BASE_FIELDS, { name: "late.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+    const payload = (await addResponse.json()) as { claim: { attachment: { storageKey: string } } };
+
+    const deleteResponse = await handleDeleteExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1", { method: "DELETE" }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(deleteResponse.status).toBe(204);
+    await expect(blobStore.getBlob(payload.claim.attachment.storageKey)).resolves.toBeNull();
+    const getResponse = await handleGetExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1"),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+    expect(getResponse.status).toBe(404);
+  });
+
+  it("rejects deleting a submitted claim with 409", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    await handleSubmitExpenseRequest(new Request("http://localhost"), commands, "emp-shameel", payload.claim.id);
+
+    const deleteResponse = await handleDeleteExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1", { method: "DELETE" }),
+      commands,
+      "emp-shameel",
+      payload.claim.id,
+    );
+
+    expect(deleteResponse.status).toBe(409);
   });
 });

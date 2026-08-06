@@ -59,6 +59,10 @@ export class InMemoryExpenseStore implements ExpenseStore {
     this.claims.set(claim.id, structuredClone(claim));
   }
 
+  async deleteClaim(id: string): Promise<void> {
+    this.claims.delete(id);
+  }
+
   async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {
     // Deterministic routing: only the flow published for the role matches.
     // A role without its own published flow gets no flow at all - the
