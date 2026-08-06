@@ -1,5 +1,8 @@
 import {
+  ACTIVITY_EVENT_KINDS,
   FINANCE_OR_HR_ROLE_CODES,
+  ORGANIZATION_ACTIVITY_ROLE_CODES,
+  type ActivityEntry,
   type CreateExpenseDraftInput,
   type ExpenseClaim,
   type ExpenseEmployee,
@@ -11,6 +14,10 @@ const MAX_REASON_CODE_LENGTH = 200;
 
 function isFinanceOrHr(employee: ExpenseEmployee): boolean {
   return employee.role !== null && FINANCE_OR_HR_ROLE_CODES.includes(employee.role.code);
+}
+
+function canViewOrganizationActivity(employee: ExpenseEmployee): boolean {
+  return employee.role !== null && ORGANIZATION_ACTIVITY_ROLE_CODES.includes(employee.role.code);
 }
 
 function canSeePayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
@@ -56,11 +63,14 @@ export type ExpenseCommands = {
   getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
   submitClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  rejectClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
   takeOverClaim(actorId: string, claimId: string, reasonCode: string): Promise<ExpenseClaim>;
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
   listFinancePaymentQueue(actorId: string): Promise<ExpenseClaim[]>;
   updateComments(actorId: string, claimId: string, comments: string): Promise<ExpenseClaim>;
+  listActivity(actorId: string, targetEmployeeId?: string): Promise<ActivityEntry[]>;
+  listOrganizationActivity(actorId: string): Promise<ActivityEntry[]>;
 };
 
 export function createExpenseCommands({
@@ -151,6 +161,27 @@ export function createExpenseCommands({
     return catchUp(claim);
   }
 
+  // Broader than requireClaim: anyone who has ever acted on a claim (an
+  // approver, even after it has moved past their stage) remains authorized
+  // to look up its detail, alongside the requester, the currently assigned
+  // actor, and Finance/HR's standing oversight access. This is read-only.
+  // Mutation commands keep using the stricter requireClaim/requireAssignedClaim.
+  async function requireViewableClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+    const employee = await requireEmployee(actorId);
+    const claimRow = await store.getClaim(claimId);
+    if (!claimRow || claimRow.organizationId !== employee.organizationId) {
+      throw new ExpenseError("not-found", "Expense claim does not exist.");
+    }
+    const claim = await catchUp(claimRow);
+    const isRequester = claim.requesterId === actorId;
+    const isCurrentActor = claim.currentActorId === actorId;
+    const actedBefore = claim.history.some((event) => event.actorId === actorId);
+    if (!isRequester && !isCurrentActor && !actedBefore && !isFinanceOrHr(employee)) {
+      throw new ExpenseError("unauthorized", "You cannot access this expense claim.");
+    }
+    return claim;
+  }
+
   async function requireAssignedClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
     const actor = await requireEmployee(actorId);
     const claimRow = await store.getClaim(claimId);
@@ -201,7 +232,7 @@ export function createExpenseCommands({
 
     async getClaim(actorId, claimId) {
       const employee = await requireEmployee(actorId);
-      const claim = await requireClaim(actorId, claimId);
+      const claim = await requireViewableClaim(actorId, claimId);
       return maskPayoutDetails(claim, employee);
     },
 
@@ -285,6 +316,33 @@ export function createExpenseCommands({
       claim.version += 1;
       const employees = await store.listEmployees(claim.organizationId);
       catchUpAbsentStages(claim, new Set(employees.map((employee) => employee.id)));
+      await store.updateClaim(claim);
+      return claim;
+    },
+
+    async rejectClaim(actorId, claimId, reason) {
+      const claim = await requireAssignedClaim(actorId, claimId);
+      const index = claim.steps.findIndex((step) => step.status === "pending");
+      if (index === -1 || (claim.status !== "in-approval" && claim.status !== "in-finance")) {
+        throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
+      }
+      const trimmedReason = reason.trim();
+      if (!trimmedReason) {
+        throw new ExpenseError("validation", "A reason is required to reject a claim.");
+      }
+      const step = claim.steps[index];
+      const decidedAt = now().toISOString();
+      step.status = "rejected";
+      step.decidedAt = decidedAt;
+      claim.history.push({ id: idFactory("history"), kind: "rejected", actorId, detail: trimmedReason, createdAt: decidedAt });
+      // Rejection is outright and terminal at any stage: there is no
+      // send-back-for-correction cycle. The employee may submit a brand new
+      // claim for the same expense, but this claim is never edited or
+      // resubmitted.
+      claim.status = "rejected";
+      claim.currentStage = undefined;
+      claim.currentActorId = undefined;
+      claim.version += 1;
       await store.updateClaim(claim);
       return claim;
     },
@@ -403,10 +461,34 @@ export function createExpenseCommands({
       if (!claim || claim.organizationId !== employee.organizationId) {
         throw new ExpenseError("not-found", "Expense claim does not exist.");
       }
-      claim.comments = comments.trim();
+      if (claim.status === "rejected") {
+        throw new ExpenseError("conflict", "A rejected claim is terminal and cannot be commented on.");
+      }
+      const trimmed = comments.trim();
+      if (trimmed !== (claim.comments ?? "")) {
+        claim.history.push({ id: idFactory("history"), kind: "comment", actorId, detail: trimmed, createdAt: now().toISOString() });
+      }
+      claim.comments = trimmed;
       claim.version += 1;
       await store.updateClaim(claim);
       return claim;
+    },
+
+    async listActivity(actorId, targetEmployeeId) {
+      const actor = await requireEmployee(actorId);
+      const target = targetEmployeeId ?? actorId;
+      if (target !== actorId && !isFinanceOrHr(actor)) {
+        throw new ExpenseError("unauthorized", "Only Finance or HR can view another employee's activity.");
+      }
+      return store.listActivityForActor(actor.organizationId, target, ACTIVITY_EVENT_KINDS);
+    },
+
+    async listOrganizationActivity(actorId) {
+      const actor = await requireEmployee(actorId);
+      if (!canViewOrganizationActivity(actor)) {
+        throw new ExpenseError("unauthorized", "Only Finance Head can view the organization activity feed.");
+      }
+      return store.listActivityForOrganization(actor.organizationId, ACTIVITY_EVENT_KINDS);
     },
   };
 }

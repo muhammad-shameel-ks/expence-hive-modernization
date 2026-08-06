@@ -7,7 +7,7 @@ import { Button } from "@/components/ui/button";
 import styles from "./expenses.module.css";
 import { AppHeader } from "@/components/layout/app-header";
 import { ExpenseDashboard } from "@/features/dashboard/dashboard";
-import { claimToExpense } from "@/features/dashboard/expense-read-model";
+import { activityEntryToItem, claimToExpense } from "@/features/dashboard/expense-read-model";
 
 export default async function ExpensesPage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
@@ -15,13 +15,17 @@ export default async function ExpensesPage() {
   if (!employee) {
     redirect("/login");
   }
-  const workspace = await expenseCommands().getWorkspace(employee.id);
+  const [workspace, activityEntries] = await Promise.all([
+    expenseCommands().getWorkspace(employee.id),
+    expenseCommands().listActivity(employee.id),
+  ]);
   const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
+  const activity = activityEntries.map(activityEntryToItem);
 
   return (
     <main className={styles.page}>
       <AppHeader
-        employeeName={employee.name}
+        employeeName={workspace.employee.name}
         role={workspace.employee.role}
         activePath="/expenses"
       />
@@ -57,7 +61,12 @@ export default async function ExpensesPage() {
         </div>
 
         <div className="mt-8">
-          <ExpenseDashboard currentUser={employee.name} expenses={expenses} />
+          <ExpenseDashboard
+            currentUser={workspace.employee.name}
+            currentUserId={workspace.employee.id}
+            expenses={expenses}
+            activity={activity}
+          />
         </div>
       </div>
     </main>

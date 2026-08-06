@@ -42,7 +42,7 @@ GOV.UK and WCAG guidance support an error summary linked to field-level messages
 
 Validation should not interrupt users on every keystroke.
 
-Correction, rejection, cancellation, payment failure, and resubmission should have distinct labels and recovery paths.
+Rejection, cancellation, and payment failure should have distinct labels and recovery paths.
 
 Sources: [GOV.UK validation](https://design-system.service.gov.uk/patterns/validation/), [GOV.UK error summary](https://design-system.service.gov.uk/components/error-summary/), [WCAG error identification](https://www.w3.org/WAI/WCAG22/Understanding/error-identification.html), and [WCAG error suggestion](https://www.w3.org/WAI/WCAG22/Understanding/error-suggestion.html).
 
@@ -74,7 +74,7 @@ Sources: [Ramp transaction review](https://support.ramp.com/reviewing-transactio
 
 Mobile should optimize frequent actions rather than reproduce desktop density.
 
-Receipt capture, correction, comments, status, and approval are mobile-friendly actions.
+Receipt capture, comments, status, and approval are mobile-friendly actions.
 
 Dense administration and reporting are desktop-oriented, but must still have an accessible responsive representation.
 
@@ -116,13 +116,13 @@ Sources: [Fluent message bar](https://fluent2.microsoft.design/components/web/re
 
 6. Preserve user input across validation, upload failure, server errors, and interrupted sessions.
 
-7. Treat `Needs correction` as recoverable and distinguish it from final rejection.
+7. Present rejection as an outright, terminal outcome with a clear reason rather than as a recoverable state.
 
 8. Put decision evidence beside approval controls.
 
 9. Explain policy results, routing, automation, and authority overrides in human language.
 
-10. Use mobile for capture, correction, comments, status, and approval, and desktop for dense administration.
+10. Use mobile for capture, comments, status, and approval, and desktop for dense administration.
 
 11. Make the approval inbox task-focused rather than a general record archive.
 
@@ -149,8 +149,8 @@ Sources: [Fluent message bar](https://fluent2.microsoft.design/components/web/re
 - The approver inbox defaults to items requiring action from the current user.
 - The inbox separates `Needs my action`, `Waiting`, and `Completed` states.
 - The inbox supports search, filters, sorting, urgency indicators, and exception indicators.
-- Approve, request changes, reject, takeover, verify, and payment actions are labeled with their consequences.
-- `Needs correction`, rejected, paid, skipped, taken over, and adjusted states use distinct labels and explanations.
+- Approve, reject, takeover, verify, and payment actions are labeled with their consequences.
+- Rejected, paid, skipped, taken over, and adjusted states use distinct labels and explanations.
 - The full history is visible to the employee and authorized approvers.
 - Notifications deep-link to the exact request and describe the required action.
 - Temporary toasts are not the only communication for required action or blocking errors.
@@ -182,7 +182,7 @@ Sources: [Fluent message bar](https://fluent2.microsoft.design/components/web/re
 
 - Do not represent every state only through color.
 
-- Do not use one generic action for submit, approve, reject, request changes, and payment.
+- Do not use one generic action for submit, approve, reject, and payment.
 
 - Do not mix actionable, waiting, and completed records in one unfiltered inbox.
 

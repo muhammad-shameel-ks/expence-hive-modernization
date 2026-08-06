@@ -30,16 +30,7 @@ describe("groupAttentionItems", () => {
     expect(pending.map((e) => e.id)).toEqual(["a", "b"]);
   });
 
-  it("puts needs-correction claims in needsCorrection", () => {
-    const list = [
-      expense({ id: "a", status: "needs-correction" }),
-      expense({ id: "b", status: "draft" }),
-    ];
-    const { needsCorrection } = groupAttentionItems(list);
-    expect(needsCorrection.map((e) => e.id)).toEqual(["a"]);
-  });
-
-  it("excludes drafts, approved, in-finance, paid, and rejected from both groups", () => {
+  it("excludes drafts, approved, in-finance, paid, and rejected from pending", () => {
     const list = [
       expense({ id: "a", status: "draft" }),
       expense({ id: "b", status: "approved" }),
@@ -47,12 +38,11 @@ describe("groupAttentionItems", () => {
       expense({ id: "d", status: "paid" }),
       expense({ id: "e", status: "rejected" }),
     ];
-    const { pending, needsCorrection } = groupAttentionItems(list);
+    const { pending } = groupAttentionItems(list);
     expect(pending).toEqual([]);
-    expect(needsCorrection).toEqual([]);
   });
 
   it("returns empty groups for an empty list", () => {
-    expect(groupAttentionItems([])).toEqual({ pending: [], needsCorrection: [] });
+    expect(groupAttentionItems([])).toEqual({ pending: [] });
   });
 });

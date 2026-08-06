@@ -41,8 +41,7 @@ describe("filterAndSortExpenses", () => {
     const ids = (filter: "All" | "Needs action" | "In progress" | "Paid") =>
       filterAndSortExpenses(expenses, { filter }).map((e) => e.id);
 
-    expect(ids("Needs action")).toHaveLength(2);
-    expect(ids("Needs action")).toContain("ex-dinner");
+    expect(ids("Needs action")).toHaveLength(1);
     expect(ids("Needs action")).toContain("ex-team-lunch");
 
     expect(ids("In progress")).toHaveLength(5);

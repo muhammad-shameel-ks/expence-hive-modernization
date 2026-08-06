@@ -142,4 +142,89 @@ describe("PostgresExpenseStore", () => {
     expect(claims).toHaveLength(1);
     expect(claims[0].payoutDetails).toEqual({ accountNumber: "32534240620", ifscCode: "SBIN0012861" });
   });
+
+  it("queries an actor's activity by joining history events to their claims, filtered to the given kinds", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      expect(sql).toContain("JOIN reimbursement_claims");
+      expect(params).toEqual(["org-1", "emp-ada", ["approved", "rejected"]]);
+      return Promise.resolve({
+        rows: [
+          {
+            id: "history-1",
+            claim_id: "claim-1",
+            kind: "approved",
+            detail: null,
+            created_at: "2026-08-04T10:00:00.000Z",
+            reference: "EXP-2026-0001",
+            title: "Bengaluru client flight",
+            category: "Travel",
+            amount_minor: "1250000",
+            currency: "INR",
+            requester_id: "emp-shameel",
+            requester_name: "Muhammad Shameel",
+            actor_id: "emp-ada",
+            actor_name: "Ada Lovelace",
+          },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const activity = await store.listActivityForActor("org-1", "emp-ada", ["approved", "rejected"]);
+
+    expect(activity).toEqual([
+      {
+        id: "history-1",
+        claimId: "claim-1",
+        claimRef: "EXP-2026-0001",
+        claimTitle: "Bengaluru client flight",
+        claimCategory: "Travel",
+        claimAmountMinor: 1250000,
+        claimCurrency: "INR",
+        requesterId: "emp-shameel",
+        requesterName: "Muhammad Shameel",
+        actorId: "emp-ada",
+        actorName: "Ada Lovelace",
+        kind: "approved",
+        detail: undefined,
+        createdAt: "2026-08-04T10:00:00.000Z",
+      },
+    ]);
+  });
+
+  it("queries every actor's activity in the organization, not just one actor's", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      expect(sql).not.toContain("che.actor_id = $2");
+      expect(sql).toContain("che.actor_id IS NOT NULL");
+      expect(params).toEqual(["org-1", ["approved", "rejected"]]);
+      return Promise.resolve({
+        rows: [
+          {
+            id: "history-1",
+            claim_id: "claim-1",
+            kind: "rejected",
+            detail: "Missing itemized receipt",
+            created_at: "2026-08-04T10:00:00.000Z",
+            reference: "EXP-2026-0001",
+            title: "Client dinner",
+            category: "Meals",
+            amount_minor: "24000",
+            currency: "INR",
+            requester_id: "emp-shameel",
+            requester_name: "Muhammad Shameel",
+            actor_id: "emp-ada",
+            actor_name: "Ada Lovelace",
+          },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const activity = await store.listActivityForOrganization("org-1", ["approved", "rejected"]);
+
+    expect(activity).toHaveLength(1);
+    expect(activity[0]).toMatchObject({ actorId: "emp-ada", actorName: "Ada Lovelace", kind: "rejected" });
+  });
 });

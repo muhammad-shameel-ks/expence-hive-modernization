@@ -21,8 +21,11 @@ It separates confirmed business direction from recommendations and unresolved de
 - A skipped stage must be visible in the request history as skipped rather than approved.
 - A CEO delegate cannot approve their own expense.
 - A delegate's own expense should be routed to the CEO.
-- A rejected request can be corrected and resubmitted.
-- A corrected request restarts at the first approval stage.
+- There is no send-back-for-correction cycle anywhere in the approval path.
+- Any approver at any stage, including Finance, rejects a request outright and immediately rather than returning it for correction.
+- A rejection is terminal for the rejected request: it is never edited or resubmitted.
+- An employee may submit a brand-new claim for the same expense after a rejection; the new claim is a distinct request with its own identity and history, not a resubmission of the rejected one.
+- A rejection reason remains mandatory so the employee understands the outcome, even though there is no path back to fix the rejected request in place.
 - If a required approver is missing, the request should go to the next configured hierarchy stage.
 - The missing stage must be recorded as skipped and the missing assignment should be visible to an administrator.
 - Finance verifies an approved request and sends it to payment.
@@ -45,7 +48,7 @@ It separates confirmed business direction from recommendations and unresolved de
 - System administrators publish tested workflow versions.
 - Notification nodes do not block a workflow.
 - Employees and authorized approvers can see the full claim history.
-- Finance corrections use a distinct `Needs correction` state.
+- Finance has no distinct `Needs correction` state; Finance rejects a claim outright, the same as any other approval stage, when payment information or evidence is missing or invalid.
 - Paid claims cannot be directly edited after payment.
 - Paid claims are corrected through a new adjustment claim rather than by editing the paid claim.
 - System administrators define CEO override reason codes.
@@ -124,7 +127,7 @@ Flag missing or conflicting Graph data for an administrator instead of changing 
 
 The current policy allows the same Finance person to verify and mark a payment as paid.
 
-The application should still record the verifier, payment actor, timestamps, and any correction cycle separately.
+The application should still record the verifier, payment actor, and timestamps separately.
 
 The visual editor should represent approval, notification, verification, and payment-completion nodes while keeping the first executable path ordered.
 
@@ -166,7 +169,15 @@ The request-specific instance of an approval stage, including its assigned actor
 
 ### Approval History
 
-The immutable record of submissions, decisions, corrections, skipped stages, overrides, and payment events.
+The immutable record of submissions, decisions, rejections, skipped stages, overrides, and payment events.
+
+### Rejection
+
+An outright, terminal decision by an approver at any stage, including Finance, that ends the request with a mandatory reason. A rejection is never edited or resubmitted; the employee may submit a new, distinct claim for the same expense instead. Replaces the retired correction/send-back cycle described above.
+
+### Activity Feed
+
+A chronological view of an actor's own decisions and comments across claims (personal feed) or of every employee's decisions and comments (organization feed, restricted to Finance Head). Activity is derived from append-only history events and does not create a separate mutable record store.
 
 ### Application Manager
 

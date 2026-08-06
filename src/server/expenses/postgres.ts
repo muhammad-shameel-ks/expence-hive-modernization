@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type {
+  ActivityEntry,
   ExpenseClaim,
   ExpenseEmployee,
   ExpenseFlow,
@@ -196,6 +197,61 @@ export class PostgresExpenseStore implements ExpenseStore {
       steps: fallbackSteps.rows.map((row) => String(row.role_id)),
     };
   }
+
+  async listActivityForActor(
+    organizationId: string,
+    actorId: string,
+    kinds: readonly ExpenseHistoryEvent["kind"][],
+  ): Promise<ActivityEntry[]> {
+    const result = await this.pool.query<Row>(
+      `${ACTIVITY_SELECT} WHERE rc.organization_id = $1 AND che.actor_id = $2 AND che.kind = ANY($3::text[])
+       ORDER BY che.created_at DESC, che.id DESC`,
+      [organizationId, actorId, kinds],
+    );
+    return result.rows.map(activityFromRow);
+  }
+
+  async listActivityForOrganization(
+    organizationId: string,
+    kinds: readonly ExpenseHistoryEvent["kind"][],
+  ): Promise<ActivityEntry[]> {
+    const result = await this.pool.query<Row>(
+      `${ACTIVITY_SELECT} WHERE rc.organization_id = $1 AND che.actor_id IS NOT NULL AND che.kind = ANY($2::text[])
+       ORDER BY che.created_at DESC, che.id DESC`,
+      [organizationId, kinds],
+    );
+    return result.rows.map(activityFromRow);
+  }
+}
+
+const ACTIVITY_SELECT = `
+  SELECT che.id, che.claim_id, che.kind, che.detail, che.created_at,
+         rc.reference, rc.title, rc.category, rc.amount_minor, rc.currency,
+         rc.requester_id, requester.name AS requester_name,
+         che.actor_id, actor.name AS actor_name
+  FROM claim_history_events che
+  JOIN reimbursement_claims rc ON rc.id = che.claim_id
+  JOIN employees requester ON requester.id = rc.requester_id
+  JOIN employees actor ON actor.id = che.actor_id
+`;
+
+function activityFromRow(row: Row): ActivityEntry {
+  return {
+    id: String(row.id),
+    claimId: String(row.claim_id),
+    claimRef: String(row.reference),
+    claimTitle: String(row.title),
+    claimCategory: String(row.category),
+    claimAmountMinor: Number(row.amount_minor),
+    claimCurrency: String(row.currency),
+    requesterId: String(row.requester_id),
+    requesterName: String(row.requester_name),
+    actorId: String(row.actor_id),
+    actorName: String(row.actor_name),
+    kind: String(row.kind) as ExpenseHistoryEvent["kind"],
+    detail: row.detail ? String(row.detail) : undefined,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+  };
 }
 
 const employeeQuery = `

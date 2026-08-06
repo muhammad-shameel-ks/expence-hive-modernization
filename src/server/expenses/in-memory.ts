@@ -1,4 +1,4 @@
-import type { ExpenseClaim, ExpenseEmployee, ExpenseFlow, ExpenseStore } from "./ports";
+import type { ActivityEntry, ExpenseClaim, ExpenseEmployee, ExpenseFlow, ExpenseHistoryEvent, ExpenseStore } from "./ports";
 
 export class InMemoryExpenseStore implements ExpenseStore {
   private readonly employees: ExpenseEmployee[];
@@ -52,5 +52,53 @@ export class InMemoryExpenseStore implements ExpenseStore {
     const specific = this.flows.find((flow) => flow.roleId === roleId);
     if (specific) return specific;
     return this.flows.find((flow) => flow.id.length > 0) ?? null;
+  }
+
+  async listActivityForActor(
+    organizationId: string,
+    actorId: string,
+    kinds: readonly ExpenseHistoryEvent["kind"][],
+  ): Promise<ActivityEntry[]> {
+    return this.collectActivity(organizationId, kinds, (event) => event.actorId === actorId);
+  }
+
+  async listActivityForOrganization(
+    organizationId: string,
+    kinds: readonly ExpenseHistoryEvent["kind"][],
+  ): Promise<ActivityEntry[]> {
+    return this.collectActivity(organizationId, kinds, () => true);
+  }
+
+  private async collectActivity(
+    organizationId: string,
+    kinds: readonly ExpenseHistoryEvent["kind"][],
+    matches: (event: ExpenseClaim["history"][number]) => boolean,
+  ): Promise<ActivityEntry[]> {
+    const entries: ActivityEntry[] = [];
+    for (const claim of this.claims.values()) {
+      if (claim.organizationId !== organizationId) continue;
+      const requester = this.employees.find((employee) => employee.id === claim.requesterId);
+      for (const event of claim.history) {
+        if (!event.actorId || !kinds.includes(event.kind) || !matches(event)) continue;
+        const actor = this.employees.find((employee) => employee.id === event.actorId);
+        entries.push({
+          id: event.id,
+          claimId: claim.id,
+          claimRef: claim.ref,
+          claimTitle: claim.title,
+          claimCategory: claim.category,
+          claimAmountMinor: claim.amountMinor,
+          claimCurrency: claim.currency,
+          requesterId: claim.requesterId,
+          requesterName: requester?.name ?? "Unknown",
+          actorId: event.actorId,
+          actorName: actor?.name ?? "Unknown",
+          kind: event.kind,
+          detail: event.detail,
+          createdAt: event.createdAt,
+        });
+      }
+    }
+    return entries.sort((a, b) => (a.createdAt < b.createdAt ? 1 : a.createdAt > b.createdAt ? -1 : 0));
   }
 }

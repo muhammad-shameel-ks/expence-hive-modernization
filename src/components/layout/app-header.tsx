@@ -1,4 +1,4 @@
-import { FINANCE_OR_HR_ROLE_CODES, type ExpenseRole } from "@/server/expenses/ports";
+import { FINANCE_OR_HR_ROLE_CODES, ORGANIZATION_ACTIVITY_ROLE_CODES, type ExpenseRole } from "@/server/expenses/ports";
 import styles from "@/app/expenses/expenses.module.css";
 
 const EMPLOYEE_ROLE_CODE = "employee";
@@ -11,10 +11,11 @@ export function AppHeader({
 }: {
   employeeName: string;
   role?: ExpenseRole | null;
-  activePath?: "/expenses" | "/expenses/all" | "/finance/payments" | "/admin";
+  activePath?: "/expenses" | "/expenses/all" | "/finance/payments" | "/finance/activity" | "/admin";
 }) {
   const isApprover = role !== null && role.code !== EMPLOYEE_ROLE_CODE && !FINANCE_OR_HR_ROLE_CODES.includes(role.code);
   const canViewPaymentQueue = role !== null && FINANCE_OR_HR_ROLE_CODES.includes(role.code);
+  const canViewOrganizationActivity = role !== null && ORGANIZATION_ACTIVITY_ROLE_CODES.includes(role.code);
   const canViewAdminConsole =
     (role !== null && ADMIN_CONSOLE_ROLE_CODES.includes(role.code)) || activePath === "/admin";
 
@@ -54,6 +55,14 @@ export function AppHeader({
             href="/finance/payments"
           >
             Payment queue
+          </a>
+        ) : null}
+        {canViewOrganizationActivity ? (
+          <a
+            className={`${styles.navLink} ${activePath === "/finance/activity" ? styles.navLinkActive : ""}`}
+            href="/finance/activity"
+          >
+            Activity
           </a>
         ) : null}
         {canViewAdminConsole ? (

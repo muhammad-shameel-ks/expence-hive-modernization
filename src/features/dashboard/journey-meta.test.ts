@@ -155,5 +155,47 @@ describe("getJourneyFlowItems", () => {
     expect(steps[3].actor).toBe("Pramod");
     expect(steps[4].actor).toBe("Rishikesh");
   });
+
+  it("marks a history entry as isMine by actor id even when the display name differs", () => {
+    const expense = {
+      id: "ex-mine",
+      ref: "EXP-MINE",
+      title: "Test",
+      category: "Software",
+      amount: 100,
+      currency: "INR",
+      date: "Aug 4",
+      submittedAt: "2026-08-03T10:00:00Z",
+      status: "in-finance" as const,
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 3", actor: "Shameel", actorId: "emp-shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 3", actor: "Sanil Davis", actorId: "emp-sanil", kind: "approved" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense, "Sanil Davis / Manager (IT)", "emp-sanil");
+    expect(steps[0].isMine).toBe(false);
+    expect(steps[1].isMine).toBe(true);
+  });
+
+  it("falls back to name matching for isMine when no actor id is present", () => {
+    const expense = {
+      id: "ex-mine-2",
+      ref: "EXP-MINE-2",
+      title: "Test",
+      category: "Software",
+      amount: 100,
+      currency: "INR",
+      date: "Aug 4",
+      submittedAt: "2026-08-03T10:00:00Z",
+      status: "in-finance" as const,
+      attachments: [],
+      history: [{ id: "h1", date: "Aug 3", actor: "Ada Lovelace", kind: "approved" as const }],
+    };
+
+    expect(getJourneyFlowItems(expense, "Ada Lovelace")[0].isMine).toBe(true);
+    expect(getJourneyFlowItems(expense, "Someone Else")[0].isMine).toBe(false);
+  });
 });
 

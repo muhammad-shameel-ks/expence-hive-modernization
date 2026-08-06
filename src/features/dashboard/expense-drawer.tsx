@@ -1,6 +1,7 @@
 "use client";
 // Right-side expense detail drawer: amount, facts, next action, journey, attachments.
 
+import { useState } from "react";
 import { AlertTriangle, ArrowUpRight, Paperclip, X, type LucideIcon } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -14,6 +15,13 @@ import {
 } from "@/components/motion/timeline";
 import { Button } from "@/components/ui/button";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogHeader,
+  DialogTitle,
+} from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { ME, STATUS_META, type Expense } from "./mock-data";
 import { isTerminal, nextActionFor } from "./next-action";
@@ -29,11 +37,14 @@ export interface JourneyFlowStep {
   icon: LucideIcon;
   isCurrent: boolean;
   pending: boolean;
+  isMine: boolean;
 }
 
-export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
+export function getJourneyFlowItems(expense: Expense, currentUser = "", currentUserId?: string): JourneyFlowStep[] {
   const terminal = isTerminal(expense.status);
   const historyKinds = new Set(expense.history.map((h) => h.kind));
+  const isMine = (actor: string, actorId?: string) =>
+    currentUserId && actorId ? actorId === currentUserId : !!currentUser && actor === currentUser;
 
   const historySteps: JourneyFlowStep[] = expense.history.map((event, i) => {
     const meta = KIND_META[event.kind];
@@ -48,6 +59,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
       icon: meta.icon,
       isCurrent,
       pending: false,
+      isMine: isMine(event.actor, event.actorId),
     };
   });
 
@@ -68,18 +80,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
       icon: KIND_META.submitted.icon,
       isCurrent: false,
       pending: true,
-    });
-  } else if (expense.status === "needs-correction") {
-    pendingSteps.push({
-      id: "pending-resubmission",
-      label: "Resubmission",
-      date: "Pending",
-      actor: ME,
-      detail: "Pending correction & resubmission",
-      tone: "info",
-      icon: KIND_META.submitted.icon,
-      isCurrent: false,
-      pending: true,
+      isMine: false,
     });
   }
 
@@ -97,6 +98,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
         icon: isFinance ? KIND_META.verified.icon : KIND_META.approved.icon,
         isCurrent: idx === 0,
         pending: true,
+        isMine: false,
       });
     });
 
@@ -111,6 +113,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
         icon: KIND_META.paid.icon,
         isCurrent: false,
         pending: true,
+        isMine: false,
       });
     }
 
@@ -121,7 +124,6 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
     expense.status === "in-approval" ||
     expense.status === "submitted" ||
     expense.status === "draft" ||
-    expense.status === "needs-correction" ||
     (!historyKinds.has("approved") &&
       !historyKinds.has("takeover") &&
       expense.status !== "approved" &&
@@ -146,6 +148,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
       icon: KIND_META.approved.icon,
       isCurrent: false,
       pending: true,
+      isMine: false,
     });
   }
 
@@ -171,6 +174,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
       icon: KIND_META.verified.icon,
       isCurrent: false,
       pending: true,
+      isMine: false,
     });
   }
 
@@ -185,6 +189,7 @@ export function getJourneyFlowItems(expense: Expense): JourneyFlowStep[] {
       icon: KIND_META.paid.icon,
       isCurrent: false,
       pending: true,
+      isMine: false,
     });
   }
 
@@ -195,11 +200,10 @@ const PRIMARY_ACTION: Record<Expense["status"], string> = {
   draft: "Continue draft",
   submitted: "Withdraw",
   "in-approval": "Remind approver",
-  "needs-correction": "Resubmit claim",
   approved: "Add note",
   "in-finance": "Add note",
   paid: "Download summary",
-  rejected: "Resubmit claim",
+  rejected: "No action available",
 };
 
 export function ExpenseDrawer({
@@ -207,15 +211,22 @@ export function ExpenseDrawer({
   onOpenChange,
   expense,
   currentUser,
+  currentUserId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   expense: Expense | null;
   currentUser: string;
+  currentUserId?: string;
 }) {
+  const [rejectOpen, setRejectOpen] = useState(false);
+  const [rejectReason, setRejectReason] = useState("");
+  const [rejecting, setRejecting] = useState(false);
+  const [rejectError, setRejectError] = useState<string | null>(null);
+
   const statusMeta = expense ? STATUS_META[expense.status] : null;
   const terminal = expense ? isTerminal(expense.status) : false;
-  const next = expense ? nextActionFor(expense, currentUser) : null;
+  const next = expense ? nextActionFor(expense, currentUser, currentUserId) : null;
   const actionLabel = expense?.primaryAction === "approve"
     ? "Approve claim"
     : expense?.primaryAction === "verify"
@@ -225,11 +236,48 @@ export function ExpenseDrawer({
         : expense
           ? PRIMARY_ACTION[expense.status]
           : "Action";
+  // Rejection is only possible while the assigned stage is still pending a
+  // decision: once Finance has verified, the step has moved past "pending"
+  // and only payment marking remains.
+  const canReject =
+    !!next?.mine && (expense?.primaryAction === "approve" || expense?.primaryAction === "verify");
 
   async function performAction() {
     if (!expense?.primaryAction || !next?.mine) return;
     const response = await fetch(`/api/expenses/${expense.id}/${expense.primaryAction}`, { method: "POST" });
     if (response.ok) window.location.reload();
+  }
+
+  function openReject() {
+    setRejectReason("");
+    setRejectError(null);
+    setRejectOpen(true);
+  }
+
+  async function performReject() {
+    if (!expense) return;
+    const reason = rejectReason.trim();
+    if (!reason) {
+      setRejectError("Enter a reason for rejecting this claim.");
+      return;
+    }
+    setRejecting(true);
+    setRejectError(null);
+    try {
+      const response = await fetch(`/api/expenses/${expense.id}/reject`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ reason }),
+      });
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+      const body = await response.json().catch(() => null);
+      setRejectError(body?.message ?? "Could not reject this claim.");
+    } finally {
+      setRejecting(false);
+    }
   }
 
   return (
@@ -316,9 +364,19 @@ export function ExpenseDrawer({
             <section className="mt-6" aria-label="What happens next">
               <h3 className="text-sm font-semibold text-foreground">What happens next</h3>
               {terminal ? (
-                <p className="mt-2 text-sm text-muted-foreground">
-                  This expense is {statusMeta.label.toLowerCase()}. No action is required.
-                </p>
+                <div className="mt-2 rounded-xl border border-border bg-card p-4 text-sm">
+                  <p className="text-muted-foreground">
+                    {expense.status === "rejected"
+                      ? "This claim was rejected and cannot be edited or resubmitted. Submit a new claim if the expense is still valid."
+                      : `This expense is ${statusMeta.label.toLowerCase()}. No action is required.`}
+                  </p>
+                  {expense.status === "rejected" && expense.blockingReason ? (
+                    <p className="mt-2 flex gap-2 text-amber-700 dark:text-amber-400">
+                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                      {expense.blockingReason}
+                    </p>
+                  ) : null}
+                </div>
               ) : (
                 <div
                   className={cn(
@@ -347,7 +405,7 @@ export function ExpenseDrawer({
             <section className="mt-6" aria-label="Expense journey">
               <h3 className="text-sm font-semibold text-foreground">Journey</h3>
               <Timeline position="right" className="mt-4">
-                {getJourneyFlowItems(expense).map((step) => {
+                {getJourneyFlowItems(expense, currentUser, currentUserId).map((step) => {
                   const Icon = step.icon;
                   return (
                     <TimelineItem key={step.id} pending={step.pending}>
@@ -358,9 +416,16 @@ export function ExpenseDrawer({
                       </TimelineSeparator>
                       <TimelineContent>
                         <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-                          <p className={cn("text-sm font-medium", step.pending ? "text-muted-foreground" : "text-foreground")}>
-                            {step.label}
-                          </p>
+                          <div className="flex items-center gap-1.5">
+                            <p className={cn("text-sm font-medium", step.pending ? "text-muted-foreground" : "text-foreground")}>
+                              {step.label}
+                            </p>
+                            {step.isMine ? (
+                              <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                                You
+                              </span>
+                            ) : null}
+                          </div>
                           <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
                         </div>
                         <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
@@ -393,6 +458,11 @@ export function ExpenseDrawer({
 
           <footer className="flex items-center gap-3 border-t border-border bg-card px-6 py-4">
             <Button className="flex-1" disabled={!expense.primaryAction || !next.mine} onClick={performAction}>{actionLabel}</Button>
+            {canReject ? (
+              <Button variant="destructive" onClick={openReject}>
+                Reject
+              </Button>
+            ) : null}
             <Button variant="outline" className="gap-1.5">
               Full record
               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -400,6 +470,40 @@ export function ExpenseDrawer({
           </footer>
         </>
       ) : null}
+
+      <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Reject this claim</DialogTitle>
+            <DialogDescription>
+              This is outright and final. The employee cannot edit or resubmit this claim. They would need to
+              submit a new one.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="reject-reason" className="text-xs font-medium text-muted-foreground">
+              Reason
+            </label>
+            <textarea
+              id="reject-reason"
+              value={rejectReason}
+              onChange={(e) => setRejectReason(e.target.value)}
+              rows={3}
+              className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              placeholder="Explain why this claim is being rejected"
+            />
+            {rejectError ? <p className="text-xs text-destructive">{rejectError}</p> : null}
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setRejectOpen(false)} disabled={rejecting}>
+              Cancel
+            </Button>
+            <Button variant="destructive" onClick={performReject} disabled={rejecting}>
+              {rejecting ? "Rejecting…" : "Reject claim"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
     </Drawer>
   );
 }

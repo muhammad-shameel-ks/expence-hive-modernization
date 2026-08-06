@@ -29,7 +29,7 @@ export default async function AdminPage() {
   return (
     <main className={styles.page}>
       <AppHeader
-        employeeName={employee.name}
+        employeeName={workspace.employee.name}
         role={workspace.employee.role}
         activePath="/admin"
       />

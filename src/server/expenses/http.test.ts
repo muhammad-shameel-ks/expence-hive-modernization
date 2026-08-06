@@ -3,6 +3,8 @@ import { createExpenseCommands } from "./commands";
 import {
   handleCreateExpenseRequest,
   handleFinancePaymentQueueRequest,
+  handleGetExpenseRequest,
+  handleRejectExpenseRequest,
   handleSubmitExpenseRequest,
   handleTakeOverExpenseRequest,
   handleUpdateCommentsRequest,
@@ -322,5 +324,167 @@ describe("expense HTTP boundary", () => {
     );
 
     expect(response.status).toBe(422);
+  });
+
+  it("lets an assigned approver reject a claim outright with a reason", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    const response = await handleRejectExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Missing itemized receipt" }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({ claim: { status: "rejected" } });
+  });
+
+  it("rejects a rejection request without a reason", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    const response = await handleRejectExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("returns the claim and organization employees for someone authorized to view it", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Conference taxi",
+          category: "Travel",
+          subCategory: "Cab/Taxi",
+          remark: "Airport pickup",
+          amount: "850.00",
+          expenseDate: "2026-08-04",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+    await commands.approveStage("emp-ada", claim.id);
+    await commands.approveStage("emp-it", claim.id);
+
+    // emp-ada is no longer assigned to this claim (it moved on to Finance),
+    // but they approved it before, so they can still look it up.
+    const response = await handleGetExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}`),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.claim).toMatchObject({ id: claim.id, status: "in-finance" });
+    expect(body.employees.length).toBeGreaterThan(0);
+  });
+
+  it("denies viewing a claim to someone who never touched it and is not Finance/HR", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    const response = await handleGetExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}`),
+      commands,
+      "emp-it",
+      claim.id,
+    );
+
+    expect(response.status).toBe(403);
   });
 });

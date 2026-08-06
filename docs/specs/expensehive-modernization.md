@@ -18,7 +18,7 @@ The current application does not provide an administrator-managed hierarchy or a
 
 Microsoft Graph is available for email but is not currently a reliable source for the company’s approval hierarchy.
 
-Employees and approvers need a transparent, auditable process for permission requests, reimbursements, approvals, skipped stages, payment, and corrections.
+Employees and approvers need a transparent, auditable process for permission requests, reimbursements, approvals, skipped stages, payment, and rejections.
 
 The replacement must be possible to develop locally before production Azure permissions are available.
 
@@ -90,11 +90,11 @@ The final employee-facing status is `Approved and paid`.
 
 18. As an employee, I want an amount above the permission request to require approval for the additional amount, so that the original approval remains meaningful while legitimate overruns can be considered.
 
-19. As an employee, I want a rejected claim to enter `Needs correction` or an equivalent correction flow when correction is allowed, so that I know it is not a final rejection.
+19. As an employee, I want a rejected claim to show a clear, final `Rejected` status with the approver's reason, so that I understand the outcome without expecting it to reopen.
 
-20. As an employee, I want to edit a claim returned for correction and resubmit it, so that the corrected claim can be reviewed again.
+20. As an employee, I want to submit a new claim for the same expense after a rejection, so that a legitimate expense is not permanently blocked by one rejected attempt.
 
-21. As an employee, I want a corrected claim to restart at the first approval stage, so that every approver reviews the corrected information.
+21. As an employee, I want a new claim submitted after a rejection to start at the first approval stage like any other claim, so that every approver reviews it from the beginning.
 
 22. As an employee, I want to see all decisions, skipped stages, reasons, actors, and Finance actions for my claim, so that the process is transparent.
 
@@ -102,9 +102,9 @@ The final employee-facing status is `Approved and paid`.
 
 24. As an approver, I want to approve my assigned stage, so that the request advances according to the published workflow.
 
-25. As an approver, I want to reject a request with a reason, so that the employee understands why correction or resubmission is needed.
+25. As an approver, I want to reject a request outright with a reason at my stage, so that the employee understands why the request will not proceed.
 
-26. As an approver, I want to request correction when the request is incomplete, so that the request can be fixed without representing the outcome as a final rejection.
+26. As an approver, I want rejection to be the only negative outcome I can record, so that there is no ambiguity between a recoverable state and a final decision.
 
 27. As an approver pool member, I want one valid decision from an eligible pool member to complete the pool stage, so that multiple people do not need to approve the same ordinary stage.
 
@@ -160,11 +160,11 @@ The final employee-facing status is `Approved and paid`.
 
 53. As a Finance user, I want to verify receipts, payment details, and required evidence, so that only valid claims are completed.
 
-54. As a Finance user, I want to send a claim back as `Needs correction`, so that missing information can be fixed without changing the approval history.
+54. As a Finance user, I want to reject a claim outright with a reason when required payment information or evidence is missing, so that the outcome is unambiguous and the employee can submit a new claim if appropriate.
 
 55. As a Finance user, I want to mark a verified claim as paid, so that the employee sees `Approved and paid`.
 
-56. As a Finance user, I want payment actor, verifier, timestamps, and correction cycles recorded separately, so that payment history remains auditable.
+56. As a Finance user, I want payment actor, verifier, and timestamps recorded separately, so that payment history remains auditable.
 
 57. As an employee, I want a paid claim to be protected from ordinary edits, so that the payment record remains trustworthy.
 
@@ -174,7 +174,7 @@ The final employee-facing status is `Approved and paid`.
 
 60. As an authorized approver, I want to see the complete history for requests I am authorized to view, so that decisions are made with context.
 
-61. As an employee, I want to receive email notifications when the request changes stage, needs correction, is approved, or is paid, so that I do not need to monitor the application constantly.
+61. As an employee, I want to receive email notifications when the request changes stage, is rejected, is approved, or is paid, so that I do not need to monitor the application constantly.
 
 62. As an employee, I want local development behavior to be independent of production Azure availability, so that the product can be built before tenant permissions are granted.
 
@@ -206,13 +206,13 @@ The final employee-facing status is `Approved and paid`.
 
 76. As an employee, I want one clear status, next action, blocking reason, and owner for my request, so that I always understand what happens next.
 
-77. As a user, I want `Needs correction`, rejected, skipped, taken over, paid, and adjusted states to be visibly different, so that I understand the consequence of each state.
+77. As a user, I want rejected, skipped, taken over, paid, and adjusted states to be visibly different, so that I understand the consequence of each state.
 
 78. As an employee, I want email notifications to open the exact request and tell me what action is required, so that notifications are useful rather than generic.
 
 79. As a user, I want the application to work with keyboard navigation and assistive technology, so that approval and submission do not depend on a mouse or visual cues.
 
-80. As a mobile user, I want receipt capture, correction, comments, status, and approval to work in a compact layout, so that I can complete common actions away from a desk.
+80. As a mobile user, I want receipt capture, comments, status, and approval to work in a compact layout, so that I can complete common actions away from a desk.
 
 81. As an administrator, I want the visual workflow editor to provide a route preview and validation feedback, so that I can detect bad routing before publication.
 
@@ -254,9 +254,9 @@ The approval inbox will default to actionable work and separate `Needs my action
 
 Decision evidence will be adjacent to decision controls and include amount, currency, dates, requester, receipts, policy result, comments, approval chain, and history.
 
-The interface will distinguish approval, request changes, rejection, takeover, Finance verification, payment, and adjustment actions.
+The interface will distinguish approval, rejection, takeover, Finance verification, payment, and adjustment actions.
 
-The UI will support mobile receipt capture, correction, comments, status review, and approval without reproducing dense desktop tables.
+The UI will support mobile receipt capture, comments, status review, and approval without reproducing dense desktop tables.
 
 Desktop will be optimized for workflow administration, dense review, and reporting while preserving accessible responsive alternatives.
 
@@ -276,7 +276,7 @@ The interface must preserve entered values when client or server validation fail
 
 Submission must show a review-and-confirm step before the request becomes active.
 
-Correction must be a recoverable state and must not be represented as a final rejection.
+Rejection is always outright and terminal, and must be presented as such rather than as a recoverable state.
 
 Required actions must not rely only on temporary toast notifications.
 
@@ -361,7 +361,7 @@ The normalized schema will include an organization boundary and at least the fol
 - WorkflowNode represents an approval, notification, Finance verification, or payment-completion node.
 - WorkflowInstance represents the selected workflow version for one request.
 - ApprovalStep represents a request-specific stage and assigned authority.
-- ApprovalHistoryEvent represents an immutable submission, decision, skip, takeover, correction, or payment event.
+- ApprovalHistoryEvent represents an immutable submission, decision, skip, takeover, or payment event.
 - PaymentRecord represents Finance verification and payment completion.
 - AdjustmentClaim represents a post-payment correction linked to the original claim.
 
@@ -427,9 +427,11 @@ A reimbursement without a linked permission request automatically receives an ad
 
 A reimbursement amount above its permission amount cannot complete until the excess amount receives approval.
 
-A rejected request that can be corrected enters a correction flow and restarts at the first approval stage after resubmission.
+A rejection at any stage, including Finance, is outright and terminal: the rejected request is never edited or resubmitted, and there is no correction or send-back cycle.
 
-Finance uses `Needs correction` when required payment information or evidence is missing.
+An employee may submit a new, distinct claim for the same expense after a rejection; the new claim restarts at the first approval stage like any other claim.
+
+Finance rejects a claim outright, the same as any other stage, when required payment information or evidence is missing or invalid.
 
 The same Finance person may verify and mark payment as paid, but both actions and timestamps must be recorded separately.
 
@@ -445,7 +447,7 @@ History records actor, authority, action, reason code where required, skipped st
 
 Employees and authorized approvers can see the complete history for requests they are allowed to view.
 
-The history must distinguish approved, rejected, needs correction, skipped, taken over, verified, paid, and adjusted outcomes.
+The history must distinguish approved, rejected, skipped, taken over, verified, paid, and adjusted outcomes.
 
 ### Attachments and Email
 
@@ -470,7 +472,7 @@ The server-side application layer will expose behavior equivalent to the followi
 - Create, update, submit, and withdraw a permission request.
 - Create, update, submit, and withdraw a reimbursement claim.
 - Link a reimbursement claim to a permission request.
-- Approve, reject, or request correction for an assigned approval step.
+- Approve or reject an assigned approval step.
 - Take over a request as a higher-stage authority.
 - Approve as CEO or act for CEO through the safe list.
 - Manage hierarchy assignments, approval roles, approval pools, and CEO delegates.
@@ -515,7 +517,7 @@ The main flows should be tested at mobile and desktop viewports, including a 320
 
 Keyboard-only and screen-reader-assisted checks are required for forms, dialogs, workflow editing, approval actions, error summaries, status updates, and attachment controls.
 
-Visual regression checks should cover the primary expense form, approval inbox, request detail, correction state, workflow editor, and mobile layouts after the initial visual language is established.
+Visual regression checks should cover the primary expense form, approval inbox, request detail, rejected state, workflow editor, and mobile layouts after the initial visual language is established.
 
 Task-based usability checks should measure whether a representative employee can submit a claim, an approver can decide, and Finance can complete payment without instruction from the development team.
 
@@ -543,9 +545,9 @@ The minimum acceptance suite should cover the following scenarios.
 
 11. A missing manager skips to the next configured stage and notifies HR and system administrators.
 
-12. A rejected request enters correction, resubmission restarts at the first stage, and previous history remains visible.
+12. A rejected request becomes terminal, and an employee can submit a new claim for the same expense that starts at the first stage while the rejected request's history remains visible unchanged.
 
-13. Finance returns a claim as `Needs correction` and the employee can resubmit it.
+13. Finance rejects a claim outright when required payment information or evidence is missing, and the employee can submit a new claim.
 
 14. Finance verifies and marks payment, and the final status is `Approved and paid`.
 
@@ -579,7 +581,7 @@ The minimum acceptance suite should cover the following scenarios.
 
 29. The approval detail view exposes decision evidence and the next action without unrelated navigation.
 
-30. Request changes, rejection, takeover, payment, and adjustment have distinct labels and outcomes.
+30. Rejection, takeover, payment, and adjustment have distinct labels and outcomes.
 
 31. The key employee, approver, and Finance flows remain usable at a 320 CSS pixel viewport.
 

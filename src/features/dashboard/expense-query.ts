@@ -4,7 +4,7 @@ export type ExpenseFilter = "All" | "Needs action" | "In progress" | "Paid";
 export type ExpenseSortKey = "date" | "amount" | "title" | "category" | "status";
 
 const FILTER_MATCH: Record<Exclude<ExpenseFilter, "All">, (e: Expense) => boolean> = {
-  "Needs action": (e) => e.status === "draft" || e.status === "needs-correction",
+  "Needs action": (e) => e.status === "draft",
   "In progress": (e) =>
     e.status === "submitted" || e.status === "in-approval" || e.status === "approved" || e.status === "in-finance",
   Paid: (e) => e.status === "paid",
