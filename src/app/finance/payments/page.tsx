@@ -21,7 +21,7 @@ export default async function FinancePaymentsPage() {
     if (isExpenseError(error) && error.code === "unauthorized") {
       return (
         <main className={styles.page}>
-          <AppHeader employeeName={employee.name} roleCodes={workspace.employee.roleCodes} />
+          <AppHeader employeeName={employee.name} role={workspace.employee.role} />
           <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-10">
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Payment queue</h1>
             <p className="mt-4 text-sm text-muted-foreground">
@@ -38,7 +38,7 @@ export default async function FinancePaymentsPage() {
     <main className={styles.page}>
       <AppHeader
         employeeName={employee.name}
-        roleCodes={workspace.employee.roleCodes}
+        role={workspace.employee.role}
         activePath="/finance/payments"
       />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">

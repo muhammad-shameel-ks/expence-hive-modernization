@@ -1,19 +1,21 @@
-import { FINANCE_OR_HR_ROLES, type ExpenseRoleCode } from "@/server/expenses/ports";
+import { FINANCE_OR_HR_ROLE_CODES, type ExpenseRole } from "@/server/expenses/ports";
 import styles from "@/app/expenses/expenses.module.css";
 
-const APPROVER_ROLES: ExpenseRoleCode[] = ["manager", "it-reviewer", "finance-reviewer", "ceo"];
+const EMPLOYEE_ROLE_CODE = "employee";
+const ADMIN_CONSOLE_ROLE_CODES = ["superadmin", "hr-administrator"];
 
 export function AppHeader({
   employeeName,
-  roleCodes = [],
+  role = null,
   activePath,
 }: {
   employeeName: string;
-  roleCodes?: ExpenseRoleCode[];
+  role?: ExpenseRole | null;
   activePath?: "/expenses" | "/expenses/all" | "/finance/payments";
 }) {
-  const isApprover = roleCodes.some((role) => APPROVER_ROLES.includes(role));
-  const canViewPaymentQueue = roleCodes.some((role) => FINANCE_OR_HR_ROLES.includes(role));
+  const isApprover = role !== null && role.code !== EMPLOYEE_ROLE_CODE && !FINANCE_OR_HR_ROLE_CODES.includes(role.code);
+  const canViewPaymentQueue = role !== null && FINANCE_OR_HR_ROLE_CODES.includes(role.code);
+  const canViewAdminConsole = role !== null && ADMIN_CONSOLE_ROLE_CODES.includes(role.code);
 
   return (
     <header className={styles.topBar}>
@@ -51,6 +53,11 @@ export function AppHeader({
             href="/finance/payments"
           >
             Payment queue
+          </a>
+        ) : null}
+        {canViewAdminConsole ? (
+          <a className={styles.navLink} href="/admin">
+            Admin
           </a>
         ) : null}
       </nav>

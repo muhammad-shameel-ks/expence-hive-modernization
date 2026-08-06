@@ -218,7 +218,7 @@ function ReviewStep({ form, receipt, onBack, onSubmit, busy, error }: { form: Fo
     <div className={styles.content}>
       <p className={styles.eyebrow}>STEP 3 OF 3 / REVIEW</p>
       <div className={styles.splitLayout}>
-        <aside className={styles.splitAside}><p className={styles.eyebrow}>READY FOR APPROVAL</p><h1>Check it once, then send it on.</h1><p className={styles.intro}>This claim will follow the standard path: Manager → IT → CEO → Finance.</p></aside>
+        <aside className={styles.splitAside}><p className={styles.eyebrow}>READY FOR APPROVAL</p><h1>Check it once, then send it on.</h1><p className={styles.intro}>This claim will follow the standard path: Manager → IT → Finance.</p></aside>
         <section className={styles.panel} aria-label="Review expense claim">
           <div className={styles.panelHeader}><div><p className={styles.eyebrow}>FINAL CHECK</p><h2>Review before submission</h2></div><span className={styles.statusChip}>Draft</span></div>
           <SummaryPanel form={form} label="Submission summary" />
@@ -232,7 +232,7 @@ function ReviewStep({ form, receipt, onBack, onSubmit, busy, error }: { form: Fo
 }
 
 function SubmittedState() {
-  return <div className={styles.content}><div className={styles.panel}><p className={styles.eyebrow}>CLAIM SUBMITTED</p><h1 className={styles.title}>Your claim is moving.</h1><p className={styles.intro}>It is now with your Manager, followed by IT, CEO, and Finance. You can track every decision from the dashboard.</p><a className={styles.button} href="/expenses">Back to dashboard →</a></div></div>;
+  return <div className={styles.content}><div className={styles.panel}><p className={styles.eyebrow}>CLAIM SUBMITTED</p><h1 className={styles.title}>Your claim is moving.</h1><p className={styles.intro}>It is now with your Manager, followed by IT and Finance. You can track every decision from the dashboard.</p><a className={styles.button} href="/expenses">Back to dashboard →</a></div></div>;
 }
 
 function CaptureRail({ receipt, step }: { receipt: { fileName: string; contentType: string } | null; step: number }) {
@@ -240,7 +240,7 @@ function CaptureRail({ receipt, step }: { receipt: { fileName: string; contentTy
 }
 
 function SummaryPanel({ form, label }: { form: FormState; label: string }) {
-  return <aside className={styles.summaryPanel} aria-label={label}><h2>{label}</h2><p className={styles.summaryAmount}>{form.amount ? `₹${form.amount}` : "₹0.00"}</p><div className={styles.summaryRows}><div className={styles.summaryRow}><span>Title</span><strong>{form.title || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Category</span><strong>{form.category} / {form.subCategory}</strong></div><div className={styles.summaryRow}><span>Date</span><strong>{form.expenseDate || "Not added yet"}</strong></div></div><div className={styles.summaryFooter}><p>Next: Manager → IT → CEO → Finance</p></div></aside>;
+  return <aside className={styles.summaryPanel} aria-label={label}><h2>{label}</h2><p className={styles.summaryAmount}>{form.amount ? `₹${form.amount}` : "₹0.00"}</p><div className={styles.summaryRows}><div className={styles.summaryRow}><span>Title</span><strong>{form.title || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Category</span><strong>{form.category} / {form.subCategory}</strong></div><div className={styles.summaryRow}><span>Date</span><strong>{form.expenseDate || "Not added yet"}</strong></div></div><div className={styles.summaryFooter}><p>Next: Manager → IT → Finance</p></div></aside>;
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {

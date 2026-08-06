@@ -66,6 +66,22 @@ It separates confirmed business direction from recommendations and unresolved de
 - Comments is authored by Finance or HR after submission, not by the employee, and is edited directly from the Finance Payment View.
 - Payment Status and Approved On are not new stored fields; Payment Status is derived from claim status (`paid` versus everything else in the Finance queue), and Approved On is derived from the last `approved` history event, matching the existing "workflow state stays visible, payout data stays restricted" split.
 
+## Confirmed Direction: User, Role, and Flow Management
+
+- Superadmin replaces the System administrator role rather than sitting above it; there is one administrative role with full authority over employees, departments, roles, and flows, and it authenticates through the same login as every other employee.
+- The CEO role, the CEO safe list, and the CEO delegate mechanism are retired entirely, along with the CEO-specific vocabulary built around them.
+- Finance Head is the top of a flow's hierarchy: it can bypass every earlier stage in its flow and hand the request directly to Finance Executive.
+- Finance Executive is a required, non-skippable final stage that performs verification and payment marking: the same role the old "CEO approves, then Finance completes payment" split gave to Finance, just relabeled and moved to the end of the chain.
+- A flow (the user-facing term for an Approval Workflow) is an ordered sequence of roles, for example Executive -> Manager -> Finance Head -> Finance Executive, or Intern -> Team Lead -> Manager -> Finance Head -> Finance Executive.
+- Roles are scoped per department: the same title (e.g. "Team Lead") is a distinct role definition in each department, not one shared org-wide role.
+- Superadmin creates flows and assigns each flow to a role, not to a department or an individual. Because a role is already department-scoped, assigning a flow to a role fixes both the department and the entry point in one step: there is no separate department-level flow scope.
+- Every request from an employee holding a given role uses the flow assigned to that role, regardless of which specific person holds it.
+- A flow stage counts as absent when either no employee currently holds that role (vacancy) or the employee who holds it has not acted on the request within 3 days (timeout): both trigger identical behavior.
+- An absent stage auto-skips after 3 days: it is recorded as `Skipped` (reason: absent) and the request auto-advances to the next stage in the flow, without waiting for an administrator.
+- Any role at a later stage in a flow, not only the top of the hierarchy, may manually bypass one or more earlier stages for a specific request: for example a Manager can skip an IT lead's approval on a request they take ownership of.
+- A manual bypass requires the actor to select a reason code and creates an immutable audit event recording the actor, the authority exercised, and the stages skipped. This generalizes the former CEO-override design (actor, authority, reason code, skipped stages) to any higher-stage role instead of only CEO and its delegates.
+- The admin-console role system (`AdminRole`) and the claim/payment-authorization role system (`ExpenseRoleCode`) collapse into one Role entity. A single department-scoped role determines both what an employee can administer and what they are authorized to do in claim/payment flows: there are no longer two lists to keep in sync per employee.
+
 ## Recommendations
 
 ### Workflow Configuration
@@ -170,15 +186,31 @@ The higher-stage hierarchy override is separate from ordinary pool behavior and 
 
 ### Hierarchy Override
 
-An authorized higher-stage action that takes ownership of a submitted request and skips earlier approval stages.
-
-### CEO Delegate
-
-A person on the CEO's safe list who may act for the CEO.
+An authorized higher-stage role's action that takes ownership of a submitted request and skips one or more earlier approval stages in that request's flow. Any role positioned later in a flow can exercise this over the roles before it, not only the flow's top role. Retired: CEO Delegate and the CEO safe list: role unavailability is instead handled uniformly by the absence auto-skip described below.
 
 ### Reason Code
 
 A required standard explanation for a hierarchy override or another exceptional action.
+
+### Superadmin
+
+The single administrative role with full authority over employees, departments, roles, and flows. Replaces the former System administrator role rather than sitting above it.
+
+### Department
+
+An organizational grouping that scopes role definitions. The same role title in two departments (e.g. "Team Lead" in Engineering versus Sales) is a distinct role.
+
+### Role
+
+A department-scoped title that is a step target in a flow, e.g. Intern, Team Lead, Manager, Finance Head, Finance Executive, HR. Roles are created and assigned to flows by Superadmin, not hard-coded.
+
+### Flow
+
+The user-facing term for an Approval Workflow: an ordered sequence of roles assigned by Superadmin to a role so that every request from an employee holding that role is routed through it.
+
+### Absent Stage
+
+A flow stage where either no employee currently holds the target role (vacancy) or the employee holding it has not acted within 3 days (timeout). Both conditions auto-skip the stage.
 
 ### Finance Verification
 
@@ -214,7 +246,9 @@ The Finance-facing screen for verifying Payout Details and marking claims paid, 
 - What amount and category rules define high-risk requests?
 - Should category rules add reviewers, change stage targets, impose limits, require evidence, or all of these?
 - What happens when the reimbursement amount exceeds the pre-approved amount by a configured threshold?
-- How should CEO safe-list entries be displayed and revoked by the CEO?
-- What reason codes are available for a CEO hierarchy override?
-- Should higher-stage takeover reason codes be shared with CEO override reason codes?
-- The admin side already has a separate `hr-administrator` AdminRole (used for flow-builder/admin console authorization). Should that stay independent from the new expense-side `hr` role, or should the two be kept in sync per employee?
+- What reason codes are available for a manual hierarchy-override bypass, now that it is not specific to CEO?
+- Superadmin is inherently organization-wide (it must create departments themselves), which sits at odds with "every role is department-scoped." Is Superadmin a special role exempt from department scoping, or does it live in an implicit organization-level department?
+- Does self-approval prevention still apply universally to every role (not just the former CEO/delegate case) now that CEO-specific rules are retired?
+- Can an employee hold more than one role at a time (e.g. across departments), or exactly one role, for the purpose of flow assignment?
+- Does a Department need to exist (created by Superadmin) before a Role can be created inside it, and can a Department be removed or renamed once roles and flows reference it?
+- What happens to in-flight requests whose flow's role assignment changes (e.g. Superadmin reassigns a different flow to a role): do active requests keep the flow version they started with, matching the existing "active request keeps the workflow version" rule?

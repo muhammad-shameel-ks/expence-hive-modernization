@@ -4,20 +4,27 @@ import {
   handleCreateExpenseRequest,
   handleFinancePaymentQueueRequest,
   handleSubmitExpenseRequest,
+  handleTakeOverExpenseRequest,
   handleUpdateCommentsRequest,
 } from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
 
+const ROLE_EMPLOYEE = { id: "role-employee", code: "employee", displayName: "Employee" };
+const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
+const ROLE_IT = { id: "role-it-reviewer", code: "it-reviewer", displayName: "IT reviewer" };
+const ROLE_FINANCE = { id: "role-finance-reviewer", code: "finance-reviewer", displayName: "Finance reviewer" };
+const ROLE_HR = { id: "role-hr", code: "hr", displayName: "HR" };
+
 function build() {
   const store = new InMemoryExpenseStore({
     employees: [
-      { id: "emp-shameel", organizationId: "org-1", name: "Muhammad Shameel", roleCodes: ["employee"], managerId: "emp-ada" },
-      { id: "emp-ada", organizationId: "org-1", name: "Ada Lovelace", roleCodes: ["manager"] },
-      { id: "emp-it", organizationId: "org-1", name: "IT Head", roleCodes: ["it-reviewer"] },
-      { id: "emp-ceo", organizationId: "org-1", name: "CEO", roleCodes: ["ceo"] },
-      { id: "emp-finance", organizationId: "org-1", name: "Finance Officer", roleCodes: ["finance-reviewer"] },
-      { id: "emp-grace", organizationId: "org-1", name: "Grace Hopper", roleCodes: ["hr"] },
+      { id: "emp-shameel", organizationId: "org-1", name: "Muhammad Shameel", role: ROLE_EMPLOYEE, managerId: "emp-ada" },
+      { id: "emp-ada", organizationId: "org-1", name: "Ada Lovelace", role: ROLE_MANAGER },
+      { id: "emp-it", organizationId: "org-1", name: "IT Head", role: ROLE_IT },
+      { id: "emp-finance", organizationId: "org-1", name: "Finance Officer", role: ROLE_FINANCE },
+      { id: "emp-grace", organizationId: "org-1", name: "Grace Hopper", role: ROLE_HR },
     ],
+    flows: [{ id: "flow-standard", roleId: ROLE_EMPLOYEE.id, steps: [ROLE_MANAGER.id, ROLE_IT.id, ROLE_FINANCE.id] }],
   });
   const commands = createExpenseCommands({
     store,
@@ -138,7 +145,7 @@ describe("expense HTTP boundary", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      claim: { status: "in-approval", currentStage: "manager" },
+      claim: { status: "in-approval", currentStage: ROLE_MANAGER.id },
     });
   });
 
@@ -230,5 +237,90 @@ describe("expense HTTP boundary", () => {
       claim.id,
     );
     expect(deniedResponse.status).toBe(403);
+  });
+
+  it("lets a later-stage role take over a claim with a reason code", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Urgent client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          paymentMethod: "Personal card",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    const response = await handleTakeOverExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/take-over`, {
+        method: "POST",
+        body: JSON.stringify({ reasonCode: "Urgent payment deadline" }),
+      }),
+      commands,
+      "emp-finance",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      claim: { status: "in-finance", currentStage: ROLE_FINANCE.id },
+    });
+  });
+
+  it("rejects a take-over request without a reason code", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: JSON.stringify({
+          title: "Urgent client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+          paymentMethod: "Personal card",
+          accountNumber: "32534240620",
+          ifscCode: "SBIN0012861",
+        }),
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    const response = await handleTakeOverExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/take-over`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      commands,
+      "emp-finance",
+      claim.id,
+    );
+
+    expect(response.status).toBe(422);
   });
 });

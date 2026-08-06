@@ -117,5 +117,43 @@ describe("getJourneyFlowItems", () => {
       pending: true,
     });
   });
+
+  it("renders custom flow steps dynamically when expense.steps is present", () => {
+    const customFlowExpense = {
+      id: "ex-custom",
+      ref: "EXP-CUSTOM",
+      title: "Custom flow claim",
+      category: "Software",
+      amount: 2500,
+      currency: "INR",
+      date: "Aug 5",
+      submittedAt: "2026-08-05T10:00:00Z",
+      status: "in-approval" as const,
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Team Lead", assignedActorName: "Abilash", status: "pending" as const },
+        { id: "s2", roleId: "r2", roleName: "Manager", assignedActorName: "Sanil Davis", status: "pending" as const },
+        { id: "s3", roleId: "r3", roleName: "Finance Head", assignedActorName: "Pramod", status: "pending" as const },
+        { id: "s4", roleId: "r4", roleName: "Finance reviewer", assignedActorName: "Rishikesh", status: "pending" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(customFlowExpense);
+    expect(steps.map((s) => s.label)).toEqual([
+      "Submitted",
+      "Team Lead",
+      "Manager",
+      "Finance Head",
+      "Finance reviewer",
+      "Paid",
+    ]);
+    expect(steps[1].actor).toBe("Abilash");
+    expect(steps[2].actor).toBe("Sanil Davis");
+    expect(steps[3].actor).toBe("Pramod");
+    expect(steps[4].actor).toBe("Rishikesh");
+  });
 });
 

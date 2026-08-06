@@ -69,6 +69,24 @@ export async function handleApproveExpenseRequest(
   }
 }
 
+export async function handleTakeOverExpenseRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).reasonCode !== "string") {
+      return validationResponse();
+    }
+    const reasonCode = (body as Record<string, unknown>).reasonCode as string;
+    return Response.json({ claim: await commands.takeOverClaim(actorId, claimId, reasonCode) });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
 export async function handleVerifyExpenseRequest(
   _request: Request,
   commands: ExpenseCommands,

@@ -20,7 +20,7 @@ export default async function AllExpensesPage() {
     <main className={styles.page}>
       <AppHeader
         employeeName={employee.name}
-        roleCodes={workspace.employee.roleCodes}
+        role={workspace.employee.role}
         activePath="/expenses/all"
       />
 
