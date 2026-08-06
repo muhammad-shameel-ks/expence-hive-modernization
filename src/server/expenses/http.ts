@@ -16,7 +16,6 @@ export async function handleCreateExpenseRequest(
       typeof value.remark !== "string" ||
       typeof value.amount !== "string" ||
       typeof value.expenseDate !== "string" ||
-      typeof value.paymentMethod !== "string" ||
       typeof value.accountNumber !== "string" ||
       typeof value.ifscCode !== "string"
     ) {
@@ -34,7 +33,6 @@ export async function handleCreateExpenseRequest(
       amountMinor,
       currency: "INR",
       expenseDate: value.expenseDate,
-      paymentMethod: value.paymentMethod,
       attachment: attachment ?? undefined,
       payoutDetails: { accountNumber: value.accountNumber, ifscCode: value.ifscCode },
     });

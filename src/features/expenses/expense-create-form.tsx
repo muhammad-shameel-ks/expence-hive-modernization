@@ -11,7 +11,6 @@ type FormState = {
   remark: string;
   amount: string;
   expenseDate: string;
-  paymentMethod: "Personal card" | "Company card";
   accountNumber: string;
   ifscCode: string;
 };
@@ -31,7 +30,6 @@ const initialForm: FormState = {
   remark: "",
   amount: "",
   expenseDate: new Date().toISOString().slice(0, 10),
-  paymentMethod: "Personal card",
   accountNumber: "",
   ifscCode: "",
 };
@@ -201,7 +199,6 @@ function DetailsStep({
               <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
             </div>
             <Field label="Remark" hint="A short note for Finance and HR."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
-            <Field label="Paid with"><select className={styles.select} value={form.paymentMethod} onChange={(event) => update("paymentMethod", event.target.value as FormState["paymentMethod"])}><option>Personal card</option><option>Company card</option></select></Field>
             <div className={styles.formGrid}>
               <Field label="Account number" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.accountNumber} placeholder="Bank account number" onChange={(event) => update("accountNumber", event.target.value)} /></Field>
               <Field label="IFSC code" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.ifscCode} placeholder="e.g. SBIN0012861" onChange={(event) => update("ifscCode", event.target.value.toUpperCase())} /></Field>
@@ -243,7 +240,7 @@ function CaptureRail({ receipt, step }: { receipt: { fileName: string; contentTy
 }
 
 function SummaryPanel({ form, label }: { form: FormState; label: string }) {
-  return <aside className={styles.summaryPanel} aria-label={label}><h2>{label}</h2><p className={styles.summaryAmount}>{form.amount ? `₹${form.amount}` : "₹0.00"}</p><div className={styles.summaryRows}><div className={styles.summaryRow}><span>Title</span><strong>{form.title || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Category</span><strong>{form.category} / {form.subCategory}</strong></div><div className={styles.summaryRow}><span>Date</span><strong>{form.expenseDate || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Payment</span><strong>{form.paymentMethod}</strong></div></div><div className={styles.summaryFooter}><p>Next: Manager → IT → Finance</p></div></aside>;
+  return <aside className={styles.summaryPanel} aria-label={label}><h2>{label}</h2><p className={styles.summaryAmount}>{form.amount ? `₹${form.amount}` : "₹0.00"}</p><div className={styles.summaryRows}><div className={styles.summaryRow}><span>Title</span><strong>{form.title || "Not added yet"}</strong></div><div className={styles.summaryRow}><span>Category</span><strong>{form.category} / {form.subCategory}</strong></div><div className={styles.summaryRow}><span>Date</span><strong>{form.expenseDate || "Not added yet"}</strong></div></div><div className={styles.summaryFooter}><p>Next: Manager → IT → Finance</p></div></aside>;
 }
 
 function Field({ label, hint, children }: { label: string; hint?: string; children: React.ReactNode }) {

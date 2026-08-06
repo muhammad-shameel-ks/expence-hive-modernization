@@ -1,8 +1,11 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminCommands } from "@/server/admin/dev";
+import { expenseCommands } from "@/server/expenses/dev";
 import { AdminSetup } from "@/features/admin/admin-setup";
+import { AppHeader } from "@/components/layout/app-header";
 import { devAuth } from "@/server/auth/dev";
+import styles from "../expenses/expenses.module.css";
 
 export default async function AdminPage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
@@ -22,13 +25,20 @@ export default async function AdminPage() {
     admin.listRoles(actor.id),
     admin.listDepartments(actor.id),
   ]);
+  const workspace = await expenseCommands().getWorkspace(employee.id);
   return (
-    <AdminSetup
-      people={people}
-      flows={flows}
-      roles={roles}
-      departments={departments}
-      operatorName={employee.name}
-    />
+    <main className={styles.page}>
+      <AppHeader
+        employeeName={employee.name}
+        role={workspace.employee.role}
+        activePath="/admin"
+      />
+      <AdminSetup
+        people={people}
+        flows={flows}
+        roles={roles}
+        departments={departments}
+      />
+    </main>
   );
 }

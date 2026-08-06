@@ -78,7 +78,6 @@ const CLAIMS = [
     remark: "Onboarding week team lunch",
     amountMinor: 21000,
     expenseDate: "2026-08-04",
-    paymentMethod: "Personal card",
     status: "draft",
     currentStage: null,
     currentActorId: null,
@@ -97,7 +96,6 @@ const CLAIMS = [
     remark: "Figma Professional plan renewal for H2",
     amountMinor: 59400,
     expenseDate: "2026-08-04",
-    paymentMethod: "Company card",
     status: "in-approval",
     currentStage: "role-manager",
     currentActorId: "emp-ada",
@@ -123,7 +121,6 @@ const CLAIMS = [
     remark: "Hotel for the Karachi office week",
     amountMinor: 62000,
     expenseDate: "2026-07-30",
-    paymentMethod: "Personal card",
     status: "in-finance",
     currentStage: "role-finance-reviewer",
     currentActorId: "emp-finance",
@@ -153,7 +150,6 @@ const CLAIMS = [
     remark: "Pantry restock for the office",
     amountMinor: 9500,
     expenseDate: "2026-07-28",
-    paymentMethod: "Company card",
     status: "paid",
     currentStage: null,
     currentActorId: null,
@@ -288,20 +284,20 @@ async function main() {
     for (const claim of CLAIMS) {
       await client.query(
         `INSERT INTO reimbursement_claims
-          (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, payment_method, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, account_number, ifsc_code, comments)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'INR', $10, $11, $12, $13, $14, $15, 1, $16, $17, $18, $19, $20)
+          (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, account_number, ifsc_code, comments)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'INR', $10, $11, $12, $13, $14, 1, $15, $16, $17, $18, $19)
          ON CONFLICT (id) DO UPDATE SET
            requester_id = EXCLUDED.requester_id, reference = EXCLUDED.reference, title = EXCLUDED.title,
            category = EXCLUDED.category, sub_category = EXCLUDED.sub_category, remark = EXCLUDED.remark,
            amount_minor = EXCLUDED.amount_minor, currency = EXCLUDED.currency,
-           expense_date = EXCLUDED.expense_date, payment_method = EXCLUDED.payment_method, status = EXCLUDED.status,
+           expense_date = EXCLUDED.expense_date, status = EXCLUDED.status,
            current_stage = EXCLUDED.current_stage, current_actor_id = EXCLUDED.current_actor_id,
            current_stage_since = EXCLUDED.current_stage_since,
            submitted_at = EXCLUDED.submitted_at, account_number = EXCLUDED.account_number, ifsc_code = EXCLUDED.ifsc_code,
            comments = EXCLUDED.comments, updated_at = now()`,
         [
           claim.id, ORGANIZATION.id, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory ?? null, claim.remark ?? null,
-          claim.amountMinor, claim.expenseDate, claim.paymentMethod, claim.status, claim.currentStage, claim.currentActorId,
+          claim.amountMinor, claim.expenseDate, claim.status, claim.currentStage, claim.currentActorId,
           claim.currentStage ? claim.submittedAt : null, claim.createdAt, claim.submittedAt,
           claim.accountNumber ?? null, claim.ifscCode ?? null, claim.comments ?? null,
         ],

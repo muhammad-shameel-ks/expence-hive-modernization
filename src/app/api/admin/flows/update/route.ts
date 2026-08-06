@@ -1,6 +1,9 @@
+import { adminCommands } from "@/server/admin/dev";
 import { handleUpdateFlowRequest } from "@/server/admin/http";
-import { adminRoute } from "@/server/admin/route-guard";
+import { requireSessionEmployeeId } from "@/server/admin/route-guard";
 
-export const POST = adminRoute((request, commands, employee) =>
-  handleUpdateFlowRequest(request, commands, employee.id),
-);
+export async function POST(request: Request) {
+  const employeeId = await requireSessionEmployeeId();
+  if (typeof employeeId !== "string") return employeeId;
+  return handleUpdateFlowRequest(request, adminCommands(), employeeId);
+}

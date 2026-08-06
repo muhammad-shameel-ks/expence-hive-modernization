@@ -31,7 +31,6 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
     status: claim.status,
     nextStage: claim.currentStage ? roleNames.get(claim.currentStage) ?? claim.currentStage : undefined,
     nextActor: claim.currentActorId ? names.get(claim.currentActorId) : undefined,
-    paymentMethod: claim.paymentMethod,
     attachments: claim.attachment ? [claim.attachment.fileName] : [],
     history: claim.history.map((event) => ({
       id: event.id,

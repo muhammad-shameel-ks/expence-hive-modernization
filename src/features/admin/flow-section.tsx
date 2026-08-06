@@ -19,7 +19,7 @@ import {
   Zap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import type { AdminDepartment, AdminRole, FlowDraft } from "@/server/admin/ports";
+import type { AdminDepartment, AdminRole, FlowDraft, FlowStatus } from "@/server/admin/ports";
 import { SectionHeading } from "./section-heading";
 
 type FlowStep = {
@@ -218,13 +218,11 @@ export function FlowSection({
     }
   };
 
-  const addStep = (roleIdToAdd?: string) => {
-    const targetRole = roleIdToAdd ?? newStepRoleId;
-    if (!targetRole) return;
+  const addStep = (roleIdToAdd: string) => {
     const id = nextStepId.current;
     nextStepId.current += 1;
-    setSteps((current) => [...current, { id, roleId: targetRole }]);
-    onMessage(`${roleName(targetRole)} added to the flow.`);
+    setSteps((current) => [...current, { id, roleId: roleIdToAdd }]);
+    onMessage(`${roleName(roleIdToAdd)} added to the flow.`);
   };
 
   const insertStepAt = (position: number, roleIdToAdd: string) => {
@@ -654,34 +652,4 @@ export function FlowSection({
   );
 }
 
-function FlowStepRow({
-  label,
-  index,
-  total,
-  onMove,
-  onRemove,
-}: {
-  label: string;
-  index: number;
-  total: number;
-  onMove: (index: number, direction: -1 | 1) => void;
-  onRemove: () => void;
-}) {
-  return (
-    <div className="flex items-center gap-3 rounded-xl border border-[#eef2f6] bg-[#fbfcfd] px-3 py-2.5">
-      <span className="grid size-7 shrink-0 place-items-center rounded-full bg-[#e8f2f6] text-xs font-bold text-[#196d86]">{index + 1}</span>
-      <span className="flex-1 text-sm font-semibold text-[#526278]">{label}</span>
-      <div className="flex items-center gap-1">
-        <button aria-label={`Move ${label} up`} className="rounded-md p-1.5 text-[#9aa6b5] hover:bg-white hover:text-[#526278] disabled:opacity-30" disabled={index === 0} onClick={() => onMove(index, -1)}>
-          <ArrowUp className="size-3.5" />
-        </button>
-        <button aria-label={`Move ${label} down`} className="rounded-md p-1.5 text-[#9aa6b5] hover:bg-white hover:text-[#526278] disabled:opacity-30" disabled={index === total - 1} onClick={() => onMove(index, 1)}>
-          <ArrowDown className="size-3.5" />
-        </button>
-        <button aria-label={`Remove ${label}`} className="rounded-md p-1.5 text-[#b2becb] hover:bg-[#fdf0f2] hover:text-[#b85f70]" onClick={onRemove}>
-          <X className="size-3.5" />
-        </button>
-      </div>
-    </div>
-  );
-}
+

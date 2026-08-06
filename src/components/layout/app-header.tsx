@@ -11,11 +11,12 @@ export function AppHeader({
 }: {
   employeeName: string;
   role?: ExpenseRole | null;
-  activePath?: "/expenses" | "/expenses/all" | "/finance/payments";
+  activePath?: "/expenses" | "/expenses/all" | "/finance/payments" | "/admin";
 }) {
   const isApprover = role !== null && role.code !== EMPLOYEE_ROLE_CODE && !FINANCE_OR_HR_ROLE_CODES.includes(role.code);
   const canViewPaymentQueue = role !== null && FINANCE_OR_HR_ROLE_CODES.includes(role.code);
-  const canViewAdminConsole = role !== null && ADMIN_CONSOLE_ROLE_CODES.includes(role.code);
+  const canViewAdminConsole =
+    (role !== null && ADMIN_CONSOLE_ROLE_CODES.includes(role.code)) || activePath === "/admin";
 
   return (
     <header className={styles.topBar}>
@@ -56,7 +57,10 @@ export function AppHeader({
           </a>
         ) : null}
         {canViewAdminConsole ? (
-          <a className={styles.navLink} href="/admin">
+          <a
+            className={`${styles.navLink} ${activePath === "/admin" ? styles.navLinkActive : ""}`}
+            href="/admin"
+          >
             Admin
           </a>
         ) : null}

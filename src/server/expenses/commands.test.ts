@@ -53,7 +53,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       attachment: {
         fileName: "flight-receipt.pdf",
         contentType: "application/pdf",
@@ -84,7 +83,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
 
@@ -101,7 +99,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
     await commands.submitClaim(employee.id, draft.id);
@@ -119,7 +116,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
     await commands.submitClaim(employee.id, draft.id);
@@ -144,7 +140,6 @@ describe("expense commands", () => {
       amountMinor: 240000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
     });
 
     const submitted = await commands.submitClaim(employee.id, draft.id);
@@ -238,7 +233,6 @@ describe("expense commands", () => {
       amountMinor: 85000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
     });
     await commands.submitClaim(employee.id, draft.id);
 
@@ -259,7 +253,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
     await commands.submitClaim(employee.id, draft.id);
@@ -293,7 +286,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
 
@@ -320,7 +312,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
 
@@ -349,7 +340,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
       payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
     await commands.updateComments("emp-finance", draft.id, "Awaiting invoice copy before payout");
@@ -370,7 +360,6 @@ describe("expense commands", () => {
       amountMinor: 10000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      paymentMethod: "Personal card",
     });
     await commands.submitClaim(employee.id, draft.id);
 

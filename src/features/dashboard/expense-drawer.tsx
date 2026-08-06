@@ -285,12 +285,6 @@ export function ExpenseDrawer({
 
             <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 rounded-xl border border-border bg-muted/40 p-4 text-sm">
               <div>
-                <dt className="text-xs font-medium text-muted-foreground">Payment method</dt>
-                <dd className="mt-1 font-medium text-foreground">
-                  {expense.paymentMethod ?? "—"}
-                </dd>
-              </div>
-              <div>
                 <dt className="text-xs font-medium text-muted-foreground">Category</dt>
                 <dd className="mt-1 font-medium text-foreground">{expense.category}</dd>
               </div>
