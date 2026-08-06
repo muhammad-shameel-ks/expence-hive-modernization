@@ -21,16 +21,18 @@ const ada: Employee = {
 
 const baseOrigin = "http://localhost:3000";
 
-function buildRouteAuth() {
+function buildRouteAuth(provision: (email: string) => Promise<Employee | null> = async () => null) {
   const emailProvider = new RecordingEmailProvider();
+  const identityProvider = new InMemoryIdentityStore([ada]);
   const auth = createAuthCommands({
     baseUrl: baseOrigin,
-    identityProvider: new InMemoryIdentityStore([ada]),
+    identityProvider,
     tokenStore: new InMemoryTokenStore(),
     sessionStore: new InMemorySessionStore(),
     emailProvider,
+    provisioner: { provision },
   });
-  return { auth, emailProvider };
+  return { auth, emailProvider, identityProvider };
 }
 
 describe("POST /api/auth/login", () => {
@@ -62,6 +64,29 @@ describe("POST /api/auth/login", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toEqual({ accepted: true });
     expect(emailProvider.sent).toHaveLength(0);
+  });
+
+  it("provisions a first-time identity without changing the response shape", async () => {
+    const provisioned: string[] = [];
+    const { auth, emailProvider, identityProvider } = buildRouteAuth(async (email) => {
+      provisioned.push(email);
+      const employee: Employee = { id: "emp-stranger", email, name: "Stranger Person" };
+      identityProvider.register(employee);
+      return employee;
+    });
+    const request = new Request(`${baseOrigin}/api/auth/login`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ email: "STRANGER@hive.local" }),
+    });
+
+    const response = await handleLoginRequest(request, auth);
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toEqual({ accepted: true });
+    expect(provisioned).toEqual(["stranger@hive.local"]);
+    expect(identityProvider.findByEmail("stranger@hive.local")).not.toBeNull();
+    expect(emailProvider.sent).toHaveLength(1);
   });
 });
 

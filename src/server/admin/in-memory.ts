@@ -17,14 +17,15 @@ type StoredRole = AdminRole;
 export class InMemoryAdminStore implements AdminStore {
   private readonly employeesById: Map<string, AdminEmployee>;
   private readonly departments: AdminDepartment[] = [];
-  private readonly roles: StoredRole[] = [];
+  private readonly roles: StoredRole[];
   private readonly flows: StoredFlow[] = [];
   readonly audit: AuditEvent[] = [];
 
-  constructor(employees: readonly AdminEmployee[]) {
+  constructor(employees: readonly AdminEmployee[], roles: readonly AdminRole[] = []) {
     this.employeesById = new Map(
       employees.map((employee) => [employee.id, { ...employee }]),
     );
+    this.roles = roles.map((role) => ({ ...role }));
   }
 
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {
@@ -35,6 +36,25 @@ export class InMemoryAdminStore implements AdminStore {
 
   async getEmployee(id: string): Promise<AdminEmployee | null> {
     return this.employeesById.get(id) ?? null;
+  }
+
+  async createEmployee(
+    organizationId: string,
+    input: { id: string; name: string; email: string },
+  ): Promise<AdminEmployee> {
+    const employee: AdminEmployee = {
+      id: input.id,
+      organizationId,
+      name: input.name,
+      email: input.email,
+      department: "",
+      departmentId: null,
+      role: null,
+      active: true,
+      managerId: null,
+    };
+    this.employeesById.set(employee.id, employee);
+    return employee;
   }
 
   // Organization scoping is the caller's contract: the command layer resolves
@@ -55,6 +75,20 @@ export class InMemoryAdminStore implements AdminStore {
     if (employee && department) {
       employee.department = department.name;
       employee.departmentId = department.id;
+    }
+  }
+
+  async setEmployeeActive(employeeId: string, active: boolean): Promise<void> {
+    const employee = this.employeesById.get(employeeId);
+    if (employee) {
+      employee.active = active;
+    }
+  }
+
+  async setEmployeeManager(employeeId: string, managerId: string | null): Promise<void> {
+    const employee = this.employeesById.get(employeeId);
+    if (employee) {
+      employee.managerId = managerId;
     }
   }
 
@@ -114,8 +148,9 @@ export class InMemoryAdminStore implements AdminStore {
       organizationId,
       code: input.code,
       displayName: input.displayName,
-      departmentId: input.departmentId,
+      departmentId: null,
       active: true,
+      locked: false,
     };
     this.roles.push(role);
     return role;

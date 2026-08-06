@@ -10,10 +10,19 @@ import type {
   FlowDraft,
   FlowInput,
   FlowStatus,
+  FlowStepInput,
   RoleInput,
 } from "./ports";
 
 type Row = Record<string, unknown>;
+
+// A flow_steps row maps back to its target kind: team-lead steps carry a
+// null role id, role steps always reference a role.
+function flowStepFromRow(row: Row): FlowStepInput {
+  return row.kind === "team-lead"
+    ? { kind: "team-lead" }
+    : { kind: "role", roleId: String(row.role_id) };
+}
 
 // employee_roles remains many-to-many in the schema (ADR-0002 forward
 // compatibility note), but this module treats an employee as having one
@@ -25,6 +34,17 @@ const employeeRoleJoin = `
     SELECT role_id FROM employee_roles WHERE employee_id = e.id ORDER BY role_id LIMIT 1
   ) er ON true
   LEFT JOIN roles r ON r.id = er.role_id
+`;
+
+const employeeSelect = `
+  SELECT e.id, e.organization_id, e.name, e.email, e.active, e.department_id,
+    d.name AS department_name,
+    r.id AS role_id, r.code AS role_code, r.display_name AS role_name,
+    ha.manager_id
+  FROM employees e
+  LEFT JOIN departments d ON d.id = e.department_id
+  ${employeeRoleJoin}
+  LEFT JOIN hierarchy_assignments ha ON ha.employee_id = e.id
 `;
 
 function roleRefFromRow(row: Row): AdminEmployee["role"] {
@@ -51,6 +71,10 @@ function employeeFromRow(row: Row): AdminEmployee {
       ? null
       : String(row.department_id),
     role: roleRefFromRow(row),
+    active: Boolean(row.active),
+    managerId: row.manager_id === null || row.manager_id === undefined
+      ? null
+      : String(row.manager_id),
   };
 }
 
@@ -62,6 +86,7 @@ function roleFromRow(row: Row): AdminRole {
     displayName: String(row.display_name),
     departmentId: row.department_id === null ? null : String(row.department_id),
     active: Boolean(row.active),
+    locked: Boolean(row.locked),
   };
 }
 
@@ -84,11 +109,7 @@ export class PostgresAdminStore implements AdminStore {
   async listEmployees(organizationId: string): Promise<AdminEmployee[]> {
     const result = await this.pool.query<Row>(
       `
-        SELECT e.id, e.organization_id, e.name, e.email, e.department_id, d.name AS department_name,
-          r.id AS role_id, r.code AS role_code, r.display_name AS role_name
-        FROM employees e
-        LEFT JOIN departments d ON d.id = e.department_id
-        ${employeeRoleJoin}
+        ${employeeSelect}
         WHERE e.organization_id = $1
         ORDER BY e.name
       `,
@@ -100,16 +121,39 @@ export class PostgresAdminStore implements AdminStore {
   async getEmployee(id: string): Promise<AdminEmployee | null> {
     const result = await this.pool.query<Row>(
       `
-        SELECT e.id, e.organization_id, e.name, e.email, e.department_id, d.name AS department_name,
-          r.id AS role_id, r.code AS role_code, r.display_name AS role_name
-        FROM employees e
-        LEFT JOIN departments d ON d.id = e.department_id
-        ${employeeRoleJoin}
+        ${employeeSelect}
         WHERE e.id = $1
       `,
       [id],
     );
     return result.rows.length > 0 ? employeeFromRow(result.rows[0]) : null;
+  }
+
+  // First-login provisioning creates a bare employee record: no department,
+  // no manager, active by default. The role is assigned right after via
+  // setEmployeeRole; the console assigns department and manager later.
+  async createEmployee(
+    organizationId: string,
+    input: { id: string; name: string; email: string },
+  ): Promise<AdminEmployee> {
+    const result = await this.pool.query<Row>(
+      `INSERT INTO employees (id, organization_id, name, email, department_id)
+       VALUES ($1, $2, $3, $4, NULL)
+       RETURNING id, organization_id, name, email, active`,
+      [input.id, organizationId, input.name, input.email],
+    );
+    const row = result.rows[0];
+    return {
+      id: String(row.id),
+      organizationId: String(row.organization_id),
+      name: String(row.name),
+      email: String(row.email),
+      department: "",
+      departmentId: null,
+      role: null,
+      active: true,
+      managerId: null,
+    };
   }
 
   // This slice models one administration role per employee (ADR 0002), so
@@ -136,6 +180,24 @@ export class PostgresAdminStore implements AdminStore {
     await this.pool.query(
       "UPDATE employees SET department_id = $1 WHERE id = $2",
       [departmentId, employeeId],
+    );
+  }
+
+  async setEmployeeActive(employeeId: string, active: boolean): Promise<void> {
+    await this.pool.query("UPDATE employees SET active = $2 WHERE id = $1", [employeeId, active]);
+  }
+
+  async setEmployeeManager(employeeId: string, managerId: string | null): Promise<void> {
+    if (managerId === null) {
+      await this.pool.query("DELETE FROM hierarchy_assignments WHERE employee_id = $1", [
+        employeeId,
+      ]);
+      return;
+    }
+    await this.pool.query(
+      `INSERT INTO hierarchy_assignments (employee_id, manager_id) VALUES ($1, $2)
+       ON CONFLICT (employee_id) DO UPDATE SET manager_id = $2, updated_at = now()`,
+      [employeeId, managerId],
     );
   }
 
@@ -172,7 +234,7 @@ export class PostgresAdminStore implements AdminStore {
 
   async listRoles(organizationId: string): Promise<AdminRole[]> {
     const result = await this.pool.query<Row>(
-      "SELECT id, organization_id, code, display_name, department_id, active FROM roles WHERE organization_id = $1 ORDER BY display_name",
+      "SELECT id, organization_id, code, display_name, department_id, active, locked FROM roles WHERE organization_id = $1 ORDER BY display_name",
       [organizationId],
     );
     return result.rows.map(roleFromRow);
@@ -180,7 +242,7 @@ export class PostgresAdminStore implements AdminStore {
 
   async getRole(roleId: string): Promise<AdminRole | null> {
     const result = await this.pool.query<Row>(
-      "SELECT id, organization_id, code, display_name, department_id, active FROM roles WHERE id = $1",
+      "SELECT id, organization_id, code, display_name, department_id, active, locked FROM roles WHERE id = $1",
       [roleId],
     );
     return result.rows.length > 0 ? roleFromRow(result.rows[0]) : null;
@@ -190,8 +252,8 @@ export class PostgresAdminStore implements AdminStore {
     const id = `role-${crypto.randomUUID()}`;
     try {
       await this.pool.query(
-        "INSERT INTO roles (id, organization_id, code, display_name, department_id) VALUES ($1, $2, $3, $4, $5)",
-        [id, organizationId, input.code, input.displayName, input.departmentId],
+        "INSERT INTO roles (id, organization_id, code, display_name, locked) VALUES ($1, $2, $3, $4, false)",
+        [id, organizationId, input.code, input.displayName],
       );
     } catch (error) {
       if (isUniqueViolation(error, "idx_roles_org_code")) {
@@ -204,8 +266,9 @@ export class PostgresAdminStore implements AdminStore {
       organizationId,
       code: input.code,
       displayName: input.displayName,
-      departmentId: input.departmentId,
+      departmentId: null,
       active: true,
+      locked: false,
     };
   }
 
@@ -224,9 +287,10 @@ export class PostgresAdminStore implements AdminStore {
         [flowId, organizationId, input.name, input.roleId],
       );
       for (let index = 0; index < input.steps.length; index += 1) {
+        const step = input.steps[index];
         await client.query(
-          "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
-          [flowId, index, input.steps[index]],
+          "INSERT INTO flow_steps (flow_id, position, kind, role_id) VALUES ($1, $2, $3, $4)",
+          [flowId, index, step.kind, step.kind === "role" ? step.roleId : null],
         );
       }
       await client.query("COMMIT");
@@ -269,9 +333,10 @@ export class PostgresAdminStore implements AdminStore {
       );
       await client.query("DELETE FROM flow_steps WHERE flow_id = $1", [flowId]);
       for (let index = 0; index < input.steps.length; index += 1) {
+        const step = input.steps[index];
         await client.query(
-          "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
-          [flowId, index, input.steps[index]],
+          "INSERT INTO flow_steps (flow_id, position, kind, role_id) VALUES ($1, $2, $3, $4)",
+          [flowId, index, step.kind, step.kind === "role" ? step.roleId : null],
         );
       }
       await client.query("COMMIT");
@@ -326,12 +391,12 @@ export class PostgresAdminStore implements AdminStore {
     await this.pool.query("DELETE FROM flows WHERE id = $1", [flowId]);
   }
 
-  private async loadSteps(flowId: string): Promise<string[]> {
+  private async loadSteps(flowId: string): Promise<FlowStepInput[]> {
     const result = await this.pool.query<Row>(
-      "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+      "SELECT kind, role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
       [flowId],
     );
-    return result.rows.map((row) => String(row.role_id));
+    return result.rows.map(flowStepFromRow);
   }
 
   async listFlows(organizationId: string): Promise<FlowDraft[]> {
@@ -344,7 +409,7 @@ export class PostgresAdminStore implements AdminStore {
     );
     const steps = await this.pool.query<Row>(
       `
-        SELECT fs.flow_id, fs.role_id
+        SELECT fs.flow_id, fs.kind, fs.role_id
         FROM flow_steps fs
         WHERE fs.flow_id IN (
           SELECT id FROM flows WHERE organization_id = $1
@@ -353,11 +418,11 @@ export class PostgresAdminStore implements AdminStore {
       `,
       [organizationId],
     );
-    const stepsByFlow = new Map<string, string[]>();
+    const stepsByFlow = new Map<string, FlowStepInput[]>();
     for (const step of steps.rows) {
       const flowId = String(step.flow_id);
       const list = stepsByFlow.get(flowId) ?? [];
-      list.push(String(step.role_id));
+      list.push(flowStepFromRow(step));
       stepsByFlow.set(flowId, list);
     }
     return flows.rows.map((row) => ({

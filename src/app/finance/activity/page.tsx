@@ -15,7 +15,17 @@ export default async function OrganizationActivityPage() {
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) redirect("/login");
 
-  const workspace = await expenseCommands().getWorkspace(employee.id);
+  let workspace;
+  try {
+    workspace = await expenseCommands().getWorkspace(employee.id);
+  } catch (error) {
+    // A deactivated employee still holds a session but is rejected by the
+    // expense domain; send them back to sign-in instead of crashing.
+    if (isExpenseError(error) && error.code === "unauthorized") {
+      redirect("/login");
+    }
+    throw error;
+  }
 
   let activity;
   try {

@@ -1,8 +1,15 @@
 import { isAdminError, type AdminCommands } from "./commands";
+import type { FlowStepInput } from "./ports";
 
 export function adminErrorResponse(error: { code: string }): Response {
   const status =
-    error.code === "unauthorized" ? 403 : error.code === "not-found" ? 404 : 422;
+    error.code === "unauthorized"
+      ? 403
+      : error.code === "not-found"
+        ? 404
+        : error.code === "conflict"
+          ? 409
+          : 422;
   return Response.json({ error: error.code }, { status });
 }
 
@@ -24,10 +31,33 @@ function invalidBodyResponse(): Response {
 
 async function readJsonBody(request: Request): Promise<unknown | null> {
   try {
-    return (await request.json()) as unknown;
+    return await request.json();
   } catch {
     return null;
   }
+}
+
+// Steps arrive as either { kind: 'role', roleId } or { kind: 'team-lead' }.
+// The team-lead shape intentionally ignores any stray roleId field: the
+// command layer rejects a team-lead step that carries one with a clear
+// validation error.
+function parseFlowSteps(value: unknown): FlowStepInput[] | null {
+  if (!Array.isArray(value)) return null;
+  const steps: FlowStepInput[] = [];
+  for (const step of value) {
+    if (typeof step !== "object" || step === null) return null;
+    const candidate = step as { kind?: unknown; roleId?: unknown };
+    if (candidate.kind === "team-lead") {
+      steps.push({ kind: "team-lead" });
+      continue;
+    }
+    if (candidate.kind === "role" && typeof candidate.roleId === "string") {
+      steps.push({ kind: "role", roleId: candidate.roleId });
+      continue;
+    }
+    return null;
+  }
+  return steps;
 }
 
 async function handle<T>(
@@ -104,15 +134,12 @@ export async function handleCreateFlowRequest(
         roleId?: unknown;
         steps?: unknown;
       };
-      if (
-        typeof name !== "string" ||
-        typeof roleId !== "string" ||
-        !Array.isArray(steps) ||
-        steps.some((step) => typeof step !== "string")
-      ) {
+      if (typeof name !== "string" || typeof roleId !== "string") {
         return null;
       }
-      return { name, roleId, steps: steps as string[] };
+      const parsedSteps = parseFlowSteps(steps);
+      if (parsedSteps === null) return null;
+      return { name, roleId, steps: parsedSteps };
     },
     async (input) => {
       const flow = await commands.createFlow(actorId, input);
@@ -154,12 +181,12 @@ export async function handleUpdateFlowRequest(
         roleId?: unknown;
         steps?: unknown;
       };
-      if (typeof flowId !== "string" || typeof name !== "string" || typeof roleId !== "string" || !Array.isArray(steps)) {
+      if (typeof flowId !== "string" || typeof name !== "string" || typeof roleId !== "string") {
         return null;
       }
-      const stringSteps = steps.filter((step): step is string => typeof step === "string");
-      if (stringSteps.length !== steps.length) return null;
-      return { flowId, name, roleId, steps: stringSteps };
+      const parsedSteps = parseFlowSteps(steps);
+      if (parsedSteps === null) return null;
+      return { flowId, name, roleId, steps: parsedSteps };
     },
     async (input) => {
       const flow = await commands.updateFlow(actorId, input.flowId, {
@@ -237,19 +264,14 @@ export async function handleCreateRoleRequest(
   return handle(
     request,
     (body) => {
-      const { code, displayName, departmentId } = body as {
+      const { code, displayName } = body as {
         code?: unknown;
         displayName?: unknown;
-        departmentId?: unknown;
       };
-      if (
-        typeof code !== "string" ||
-        typeof displayName !== "string" ||
-        (departmentId !== null && typeof departmentId !== "string")
-      ) {
+      if (typeof code !== "string" || typeof displayName !== "string") {
         return null;
       }
-      return { code, displayName, departmentId: departmentId ?? null };
+      return { code, displayName };
     },
     async (input) => {
       const role = await commands.createRole(actorId, input);
@@ -272,6 +294,67 @@ export async function handleDeactivateRoleRequest(
     },
     async (input) => {
       await commands.deactivateRole(actorId, input.roleId);
+      return Response.json({ ok: true });
+    },
+  );
+}
+
+function employeeIdInput(body: unknown): { employeeId: string } | null {
+  const { employeeId } = body as { employeeId?: unknown };
+  if (typeof employeeId !== "string") return null;
+  return { employeeId };
+}
+
+export async function handleDeactivateEmployeeRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => employeeIdInput(body),
+    async (input) => {
+      await commands.deactivateEmployee(actorId, input.employeeId);
+      return Response.json({ ok: true });
+    },
+  );
+}
+
+export async function handleReactivateEmployeeRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => employeeIdInput(body),
+    async (input) => {
+      await commands.reactivateEmployee(actorId, input.employeeId);
+      return Response.json({ ok: true });
+    },
+  );
+}
+
+export async function handleAssignManagerRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { employeeId, managerId } = body as {
+        employeeId?: unknown;
+        managerId?: unknown;
+      };
+      if (typeof employeeId !== "string") return null;
+      if (managerId !== null && managerId !== undefined && typeof managerId !== "string") {
+        return null;
+      }
+      return { employeeId, managerId: (managerId as string | null | undefined) ?? null };
+    },
+    async (input) => {
+      await commands.assignManager(actorId, input);
       return Response.json({ ok: true });
     },
   );

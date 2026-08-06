@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createExpenseCommands } from "./commands";
 import {
+  handleApproveExpenseRequest,
   handleCreateExpenseRequest,
   handleFinancePaymentQueueRequest,
   handleGetExpenseRequest,
@@ -10,23 +11,44 @@ import {
   handleUpdateCommentsRequest,
 } from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
+import type { ExpenseEmployee } from "./ports";
 
-const ROLE_EMPLOYEE = { id: "role-employee", code: "employee", displayName: "Employee" };
+const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive" };
 const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
-const ROLE_IT = { id: "role-it-reviewer", code: "it-reviewer", displayName: "IT reviewer" };
-const ROLE_FINANCE = { id: "role-finance-reviewer", code: "finance-reviewer", displayName: "Finance reviewer" };
-const ROLE_HR = { id: "role-hr", code: "hr", displayName: "HR" };
+const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head" };
+const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" };
+const ROLE_INTERN = { id: "role-intern", code: "intern", displayName: "Intern" };
+
+function emp(
+  id: string,
+  name: string,
+  role: ExpenseEmployee["role"],
+  extra: Partial<ExpenseEmployee> = {},
+): ExpenseEmployee {
+  return { id, organizationId: "org-1", name, role, active: true, managerId: null, ...extra };
+}
 
 function build() {
   const store = new InMemoryExpenseStore({
     employees: [
-      { id: "emp-shameel", organizationId: "org-1", name: "Muhammad Shameel", role: ROLE_EMPLOYEE, managerId: "emp-ada" },
-      { id: "emp-ada", organizationId: "org-1", name: "Ada Lovelace", role: ROLE_MANAGER },
-      { id: "emp-it", organizationId: "org-1", name: "IT Head", role: ROLE_IT },
-      { id: "emp-finance", organizationId: "org-1", name: "Finance Officer", role: ROLE_FINANCE },
-      { id: "emp-grace", organizationId: "org-1", name: "Grace Hopper", role: ROLE_HR },
+      emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
+      emp("emp-katherine", "Katherine Johnson", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
+      emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
+      emp("emp-sanil", "Sanil Davis", ROLE_MANAGER, { departmentId: "dept-eng" }),
+      emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
+      emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
     ],
-    flows: [{ id: "flow-standard", roleId: ROLE_EMPLOYEE.id, steps: [ROLE_MANAGER.id, ROLE_IT.id, ROLE_FINANCE.id] }],
+    flows: [
+      {
+        id: "flow-standard",
+        roleId: ROLE_EXECUTIVE.id,
+        steps: [
+          { kind: "role", roleId: ROLE_MANAGER.id },
+          { kind: "role", roleId: ROLE_FINANCE_HEAD.id },
+          { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
+        ],
+      },
+    ],
   });
   const commands = createExpenseCommands({
     store,
@@ -37,6 +59,34 @@ function build() {
     now: () => new Date("2026-08-04T10:00:00.000Z"),
   });
   return { commands };
+}
+
+async function createAndSubmit(commands: ReturnType<typeof build>["commands"], actorId = "emp-shameel") {
+  const createResponse = await handleCreateExpenseRequest(
+    new Request("http://localhost/api/expenses", {
+      method: "POST",
+      body: JSON.stringify({
+        title: "Taxi",
+        category: "Travel",
+        subCategory: "Cab/Taxi",
+        remark: "Airport pickup",
+        amount: "850.00",
+        expenseDate: "2026-08-04",
+        accountNumber: "32534240620",
+        ifscCode: "SBIN0012861",
+      }),
+    }),
+    commands,
+    actorId,
+  );
+  const { claim } = await createResponse.json();
+  await handleSubmitExpenseRequest(
+    new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+    commands,
+    actorId,
+    claim.id,
+  );
+  return claim as { id: string };
 }
 
 describe("expense HTTP boundary", () => {
@@ -281,7 +331,7 @@ describe("expense HTTP boundary", () => {
 
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
-      claim: { status: "in-finance", currentStage: ROLE_FINANCE.id },
+      claim: { status: "in-finance", currentStage: ROLE_FINANCE_EXECUTIVE.id },
     });
   });
 
@@ -434,7 +484,7 @@ describe("expense HTTP boundary", () => {
       claim.id,
     );
     await commands.approveStage("emp-ada", claim.id);
-    await commands.approveStage("emp-it", claim.id);
+    await commands.approveStage("emp-pramod", claim.id);
 
     // emp-ada is no longer assigned to this claim (it moved on to Finance),
     // but they approved it before, so they can still look it up.
@@ -451,7 +501,7 @@ describe("expense HTTP boundary", () => {
     expect(body.employees.length).toBeGreaterThan(0);
   });
 
-  it("denies viewing a claim to someone who never touched it and is not Finance/HR", async () => {
+  it("denies viewing a claim to someone who never touched it and is not Finance", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
       new Request("http://localhost/api/expenses", {
@@ -481,10 +531,122 @@ describe("expense HTTP boundary", () => {
     const response = await handleGetExpenseRequest(
       new Request(`http://localhost/api/expenses/${claim.id}`),
       commands,
-      "emp-it",
+      "emp-katherine",
       claim.id,
     );
 
     expect(response.status).toBe(403);
+  });
+
+  it("lets a second Manager-role holder in the department approve the manager stage through HTTP", async () => {
+    const { commands } = build();
+    const claim = await createAndSubmit(commands);
+
+    // emp-ada was assigned, but emp-sanil (same department, same role) is
+    // equally eligible under pool semantics.
+    const response = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-sanil",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      claim: { status: "in-approval", currentStage: ROLE_FINANCE_HEAD.id },
+    });
+  });
+
+  it("rejects a manager from another department who tries to approve through HTTP", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
+        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
+        emp("emp-arun", "Arun Kumar", ROLE_MANAGER, { departmentId: "dept-ops" }),
+        emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+      ],
+      flows: [
+        {
+          id: "flow-standard",
+          roleId: ROLE_EXECUTIVE.id,
+          steps: [
+            { kind: "role", roleId: ROLE_MANAGER.id },
+            { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
+          ],
+        },
+      ],
+    });
+    const commands = createExpenseCommands({
+      store,
+      idFactory: (() => {
+        let index = 0;
+        return (prefix: string) => `${prefix}-${++index}`;
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    const claim = await createAndSubmit(commands);
+
+    const response = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-arun",
+      claim.id,
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("routes an intern claim through the assigned team lead over HTTP", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-intern", "Ananya Iyer", ROLE_INTERN, { departmentId: "dept-eng", managerId: "emp-abilash" }),
+        emp("emp-abilash", "Abilash", { id: "role-team-lead", code: "team-lead", displayName: "Team Lead" }, { departmentId: "dept-eng" }),
+        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
+        emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+      ],
+      flows: [
+        {
+          id: "flow-intern",
+          roleId: ROLE_INTERN.id,
+          steps: [
+            { kind: "team-lead" },
+            { kind: "role", roleId: ROLE_MANAGER.id },
+            { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
+          ],
+        },
+      ],
+    });
+    const commands = createExpenseCommands({
+      store,
+      idFactory: (() => {
+        let index = 0;
+        return (prefix: string) => `${prefix}-${++index}`;
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    const claim = await createAndSubmit(commands, "emp-intern");
+
+    const submitBody = await handleGetExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}`),
+      commands,
+      "emp-intern",
+      claim.id,
+    );
+    const body = (await submitBody.json()) as {
+      claim: { steps: Array<{ roleId: string | null; assignedActorId?: string }> };
+    };
+    expect(body.claim.steps[0]).toMatchObject({ roleId: null, assignedActorId: "emp-abilash" });
+
+    const approveResponse = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-abilash",
+      claim.id,
+    );
+
+    expect(approveResponse.status).toBe(200);
+    await expect(approveResponse.json()).resolves.toMatchObject({
+      claim: { currentStage: ROLE_MANAGER.id },
+    });
   });
 });

@@ -21,11 +21,13 @@ export function AdminSetup({
   flows,
   roles: initialRoles,
   departments: initialDepartments,
+  currentEmployeeId,
 }: {
   people: AdminEmployee[];
   flows: FlowDraft[];
   roles: AdminRole[];
   departments: AdminDepartment[];
+  currentEmployeeId: string;
 }) {
   const [activeTab, setActiveTab] = useState<TabSection>("org");
   const [message, setMessage] = useState("");
@@ -70,7 +72,7 @@ export function AdminSetup({
         >
           <Users className="size-3.5" />
           <span className="sm:hidden">People</span>
-          <span className="hidden sm:inline">People &amp; Allocations</span>
+          <span className="hidden sm:inline">People</span>
           <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[0.62rem] font-bold ${
             activeTab === "people" ? "bg-[#d9e8ef] text-[#175d75]" : "bg-[#e2e8f0] text-[#475569]"
           }`}>
@@ -115,14 +117,14 @@ export function AdminSetup({
             {activeTab === "org"
               ? "Departments & Roles Management"
               : activeTab === "people"
-                ? "People, Departments & Role Allocations"
+                ? "People Management"
                 : "Approval Flow Pipelines"}
           </h1>
           <p className="mt-0.5 text-xs text-[#7d8a9b]">
             {activeTab === "org"
               ? "Create company departments and define department-scoped roles."
               : activeTab === "people"
-                ? "Allocate team members to departments and assign administrative or approval roles."
+                ? "Search people, assign roles, departments and managers, and manage active access."
                 : "Design, build, and publish multi-stage expense approval workflows."}
           </p>
         </div>
@@ -142,6 +144,7 @@ export function AdminSetup({
             people={people}
             roles={rolesState}
             departments={departmentsState}
+            currentEmployeeId={currentEmployeeId}
             onMessage={setMessage}
             onError={setError}
           />

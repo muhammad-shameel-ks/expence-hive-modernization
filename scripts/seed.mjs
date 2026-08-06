@@ -7,65 +7,84 @@ import { databaseUrl } from "../src/server/db/connection.mjs";
 
 const ORGANIZATION = { id: "org-1", name: "Hive" };
 
+// Plain display names with no role embedded: the role lives on the
+// assignment, not in the name.
 const EMPLOYEES = [
-  { id: "emp-ada", name: "Ada Lovelace", email: "ada@hive.local", department: "Engineering" },
-  { id: "emp-grace", name: "Grace Hopper", email: "grace@hive.local", department: "Operations" },
-  { id: "emp-katherine", name: "Katherine Johnson", email: "katherine@hive.local", department: "Engineering" },
-  { id: "emp-dorothy", name: "Dorothy Vaughan", email: "dorothy@hive.local", department: "Finance" },
-  { id: "emp-superadmin", name: "Super Admin", email: "superadmin@hive.local", department: "Executive" },
-  { id: "emp-finance", name: "Finance Officer", email: "finance@hive.local", department: "Finance" },
-  { id: "emp-it", name: "IT Head", email: "it@hive.local", department: "IT" },
+  { id: "emp-superadmin", name: "Super Admin", email: "superadmin@hive.local", department: "Operations" },
   { id: "emp-shameel", name: "Muhammad Shameel", email: "muhammadshameelks@hive.local", department: "Engineering" },
-  { id: "emp-abilash", name: "Abilash", email: "abilash@hive.local", department: "IT" },
-  { id: "emp-sanil", name: "Sanil Davis", email: "sanil@hive.local", department: "IT" },
-  { id: "emp-arun", name: "Arun Kumar", email: "arun@hive.local", department: "IT" },
-  { id: "emp-pramod", name: "Pramod", email: "pramod@hive.local", department: "IT" },
-  { id: "emp-rishikesh", name: "Rishikesh", email: "rishikesh@hive.local", department: "IT" },
+  { id: "emp-katherine", name: "Katherine Johnson", email: "katherine@hive.local", department: "Engineering" },
+  { id: "emp-ada", name: "Ada Lovelace", email: "ada@hive.local", department: "Engineering" },
+  { id: "emp-sanil", name: "Sanil Davis", email: "sanil@hive.local", department: "Engineering" },
+  { id: "emp-arun", name: "Arun Kumar", email: "arun@hive.local", department: "Operations" },
+  { id: "emp-dorothy", name: "Dorothy Vaughan", email: "dorothy@hive.local", department: "Operations" },
+  { id: "emp-abilash", name: "Abilash", email: "abilash@hive.local", department: "Engineering" },
+  { id: "emp-intern", name: "Ananya Iyer", email: "ananya@hive.local", department: "Engineering" },
+  { id: "emp-pramod", name: "Pramod", email: "pramod@hive.local", department: "Finance" },
+  { id: "emp-finance", name: "Rishikesh", email: "finance@hive.local", department: "Finance" },
+  { id: "emp-rishikesh", name: "Farhan", email: "rishikesh@hive.local", department: "Finance" },
 ];
 
-const DEPARTMENTS = ["Engineering", "Operations", "Finance", "IT", "Executive"];
+const DEPARTMENTS = ["Engineering", "Operations", "Finance"];
 
-// Admin-console and claim/payment-authorization roles share one table
-// (see docs/domain-model/approval-workflow.md). Roles without a department
-// are organization-wide by design (Superadmin, HR administrator); the
-// expense-side roles (manager/it-reviewer/finance-reviewer/hr/employee)
-// stay department-agnostic here because per-department role scoping is not
-// yet exercised by the seed data (tracked as follow-up work). CEO and CEO
-// delegate are retired (see docs/domain-model/approval-workflow.md).
+// The five locked predefined roles (intern, executive, manager,
+// finance-head, finance-executive) plus the built-in Superadmin role are
+// seeded locked: they cannot be deactivated through the console. Team Lead
+// is a custom, org-wide role (locked = false) usable as an approval step
+// target, e.g. as the named team-lead step of an intern flow (slice 4).
 const ROLES = [
-  { code: "employee", displayName: "Employee" },
-  { code: "manager", displayName: "Manager" },
-  { code: "team-lead", displayName: "Team Lead" },
-  { code: "finance-head", displayName: "Finance Head" },
-  { code: "finance-reviewer", displayName: "Finance reviewer" },
-  { code: "it-reviewer", displayName: "IT reviewer" },
-  { code: "hr-administrator", displayName: "HR administrator" },
-  { code: "hr", displayName: "HR" },
-  { code: "superadmin", displayName: "Superadmin" },
+  { code: "intern", displayName: "Intern", locked: true },
+  { code: "executive", displayName: "Executive", locked: true },
+  { code: "manager", displayName: "Manager", locked: true },
+  { code: "finance-head", displayName: "Finance Head", locked: true },
+  { code: "finance-executive", displayName: "Finance Executive", locked: true },
+  { code: "team-lead", displayName: "Team Lead", locked: false },
+  { code: "superadmin", displayName: "Superadmin", locked: true },
 ];
 
 const EMPLOYEE_ROLES = [
-  { employeeId: "emp-grace", roleCode: "hr-administrator" },
-  { employeeId: "emp-grace", roleCode: "hr" },
-  { employeeId: "emp-shameel", roleCode: "employee" },
-  { employeeId: "emp-ada", roleCode: "manager" },
-  { employeeId: "emp-finance", roleCode: "finance-reviewer" },
-  { employeeId: "emp-it", roleCode: "it-reviewer" },
   { employeeId: "emp-superadmin", roleCode: "superadmin" },
-  { employeeId: "emp-abilash", roleCode: "team-lead" },
+  { employeeId: "emp-shameel", roleCode: "executive" },
+  { employeeId: "emp-katherine", roleCode: "executive" },
+  { employeeId: "emp-ada", roleCode: "manager" },
   { employeeId: "emp-sanil", roleCode: "manager" },
   { employeeId: "emp-arun", roleCode: "manager" },
+  { employeeId: "emp-dorothy", roleCode: "manager" },
+  { employeeId: "emp-abilash", roleCode: "team-lead" },
+  { employeeId: "emp-intern", roleCode: "intern" },
   { employeeId: "emp-pramod", roleCode: "finance-head" },
-  { employeeId: "emp-rishikesh", roleCode: "finance-reviewer" },
+  { employeeId: "emp-finance", roleCode: "finance-executive" },
+  { employeeId: "emp-rishikesh", roleCode: "finance-executive" },
 ];
 
-// Published (not draft) so submitClaim can resolve it for the "employee"
-// role: only published Flows route new requests.
-const FLOW = {
-  name: "Standard reimbursement",
-  targetRoleCode: "employee",
-  steps: ["manager", "it-reviewer", "finance-reviewer"],
-};
+// Published (not draft) so submitClaim can resolve them for the "executive"
+// and "intern" roles: only published Flows route new requests. The Manager
+// step resolves to Manager-role holders in the requester's department
+// (routing slice); the Finance Head and Finance Executive steps are
+// org-wide, and Finance Executive is the required terminal
+// verification-and-payment stage. The intern flow's first step is a
+// named-person team-lead target: it resolves to the intern's assigned
+// hierarchy manager (emp-abilash) at submission, not to a role.
+const FLOWS = [
+  {
+    name: "Standard reimbursement",
+    targetRoleCode: "executive",
+    steps: [
+      { kind: "role", roleCode: "manager" },
+      { kind: "role", roleCode: "finance-head" },
+      { kind: "role", roleCode: "finance-executive" },
+    ],
+  },
+  {
+    name: "Intern reimbursement",
+    targetRoleCode: "intern",
+    steps: [
+      { kind: "team-lead" },
+      { kind: "role", roleCode: "manager" },
+      { kind: "role", roleCode: "finance-head" },
+      { kind: "role", roleCode: "finance-executive" },
+    ],
+  },
+];
 
 const CLAIMS = [
   {
@@ -102,9 +121,9 @@ const CLAIMS = [
     createdAt: "2026-08-03T10:42:00Z",
     submittedAt: "2026-08-03T10:42:00Z",
     steps: [
-      ["step-demo-approval-manager", 0, "role-manager", "emp-ada", "pending"],
-      ["step-demo-approval-it", 1, "role-it-reviewer", "emp-it", "pending"],
-      ["step-demo-approval-finance", 2, "role-finance-reviewer", "emp-finance", "pending"],
+      ["step-demo-approval-manager", 0, "manager", "emp-ada", "pending"],
+      ["step-demo-approval-finance-head", 1, "finance-head", "emp-pramod", "pending"],
+      ["step-demo-approval-finance-executive", 2, "finance-executive", "emp-finance", "pending"],
     ],
     history: [
       { id: "history-demo-approval-draft", kind: "draft", actorId: "emp-shameel", detail: "Draft saved", createdAt: "2026-08-03T10:40:00Z" },
@@ -122,7 +141,7 @@ const CLAIMS = [
     amountMinor: 62000,
     expenseDate: "2026-07-30",
     status: "in-finance",
-    currentStage: "role-finance-reviewer",
+    currentStage: "role-finance-executive",
     currentActorId: "emp-finance",
     createdAt: "2026-07-26T08:55:00Z",
     submittedAt: "2026-07-26T08:55:00Z",
@@ -130,14 +149,14 @@ const CLAIMS = [
     ifscCode: "SBIN0012861",
     comments: "Awaiting invoice copy before payout",
     steps: [
-      ["step-demo-finance-manager", 0, "role-manager", "emp-ada", "approved"],
-      ["step-demo-finance-it", 1, "role-it-reviewer", "emp-it", "approved"],
-      ["step-demo-finance-finance", 2, "role-finance-reviewer", "emp-finance", "pending"],
+      ["step-demo-finance-manager", 0, "manager", "emp-ada", "approved"],
+      ["step-demo-finance-finance-head", 1, "finance-head", "emp-pramod", "approved"],
+      ["step-demo-finance-finance-executive", 2, "finance-executive", "emp-finance", "pending"],
     ],
     history: [
       { id: "history-demo-finance-submitted", kind: "submitted", actorId: "emp-shameel", detail: "Sent for approval", createdAt: "2026-07-26T08:55:00Z" },
       { id: "history-demo-finance-manager", kind: "approved", actorId: "emp-ada", detail: "Manager approval", createdAt: "2026-07-27T10:00:00Z" },
-      { id: "history-demo-finance-it", kind: "approved", actorId: "emp-it", detail: "IT review complete", createdAt: "2026-07-28T13:10:00Z" },
+      { id: "history-demo-finance-finance-head", kind: "approved", actorId: "emp-pramod", detail: "Finance Head review complete", createdAt: "2026-07-28T13:10:00Z" },
     ],
   },
   {
@@ -159,18 +178,27 @@ const CLAIMS = [
     ifscCode: "SBIN0012861",
     comments: "Paid via NEFT on 30 Apr",
     steps: [
-      ["step-demo-paid-manager", 0, "role-manager", "emp-ada", "approved"],
-      ["step-demo-paid-it", 1, "role-it-reviewer", "emp-it", "approved"],
-      ["step-demo-paid-finance", 2, "role-finance-reviewer", "emp-finance", "paid"],
+      ["step-demo-paid-manager", 0, "manager", "emp-ada", "approved"],
+      ["step-demo-paid-finance-head", 1, "finance-head", "emp-pramod", "approved"],
+      ["step-demo-paid-finance-executive", 2, "finance-executive", "emp-finance", "paid"],
     ],
     history: [
       { id: "history-demo-paid-submitted", kind: "submitted", actorId: "emp-shameel", detail: "Sent for approval", createdAt: "2026-07-25T16:20:00Z" },
       { id: "history-demo-paid-manager", kind: "approved", actorId: "emp-ada", detail: "Manager approval", createdAt: "2026-07-26T10:02:00Z" },
-      { id: "history-demo-paid-it", kind: "approved", actorId: "emp-it", detail: "IT review complete", createdAt: "2026-07-26T13:05:00Z" },
+      { id: "history-demo-paid-finance-head", kind: "approved", actorId: "emp-pramod", detail: "Finance Head review complete", createdAt: "2026-07-26T13:05:00Z" },
       { id: "history-demo-paid-verified", kind: "verified", actorId: "emp-finance", detail: "Finance verified", createdAt: "2026-07-28T10:15:00Z" },
       { id: "history-demo-paid-paid", kind: "paid", actorId: "emp-finance", detail: "Payment marked complete", createdAt: "2026-07-28T12:15:00Z" },
     ],
   },
+];
+
+const HIERARCHY = [
+  // emp-shameel reports to emp-ada.
+  // The intern's named team lead is emp-abilash: slice 4 consumes this
+  // hierarchy entry as the named-person team-lead step target of the intern
+  // flow.
+  ["emp-shameel", "emp-ada"],
+  ["emp-intern", "emp-abilash"],
 ];
 
 async function main() {
@@ -205,10 +233,10 @@ async function main() {
 
     for (const role of ROLES) {
       await client.query(
-        `INSERT INTO roles (id, organization_id, code, display_name)
-         VALUES ($1, $2, $3, $4)
-         ON CONFLICT (organization_id, code) DO UPDATE SET display_name = EXCLUDED.display_name`,
-        [`role-${role.code}`, ORGANIZATION.id, role.code, role.displayName],
+        `INSERT INTO roles (id, organization_id, code, display_name, locked)
+         VALUES ($1, $2, $3, $4, $5)
+         ON CONFLICT (organization_id, code) DO UPDATE SET display_name = EXCLUDED.display_name, locked = EXCLUDED.locked`,
+        [`role-${role.code}`, ORGANIZATION.id, role.code, role.displayName, role.locked],
       );
     }
 
@@ -232,54 +260,62 @@ async function main() {
       }
     }
 
-    const targetRoleRes = await client.query(
-      "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
-      [ORGANIZATION.id, FLOW.targetRoleCode],
-    );
-    const flowTargetRoleId = targetRoleRes.rows[0]?.id ?? `role-${FLOW.targetRoleCode}`;
-    const existingFlow = await client.query(
-      "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
-      [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
-    );
-    let flowId = existingFlow.rows[0]?.id;
-    if (!flowId) {
-      const insertedFlow = await client.query(
-        `INSERT INTO flows (id, organization_id, name, role_id, status)
-         VALUES ($1, $2, $3, $4, 'published')
-         RETURNING id`,
-        [`flow-${crypto.randomUUID()}`, ORGANIZATION.id, FLOW.name, flowTargetRoleId],
+    for (const flow of FLOWS) {
+      const targetRoleRes = await client.query(
+        "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
+        [ORGANIZATION.id, flow.targetRoleCode],
       );
-      flowId = insertedFlow.rows[0]?.id;
-      if (flowId) {
-        for (let index = 0; index < FLOW.steps.length; index += 1) {
-          const stepRoleRes = await client.query(
-            "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
-            [ORGANIZATION.id, FLOW.steps[index]],
-          );
-          const stepRoleId = stepRoleRes.rows[0]?.id ?? `role-${FLOW.steps[index]}`;
-          await client.query(
-            "INSERT INTO flow_steps (flow_id, position, role_id) VALUES ($1, $2, $3)",
-            [flowId, index, stepRoleId],
-          );
-        }
-      }
-    } else {
-      const concurrentFlow = await client.query(
+      const flowTargetRoleId = targetRoleRes.rows[0]?.id ?? `role-${flow.targetRoleCode}`;
+      const existingFlow = await client.query(
         "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
-        [FLOW.name, ORGANIZATION.id, flowTargetRoleId],
+        [flow.name, ORGANIZATION.id, flowTargetRoleId],
       );
-      flowId = concurrentFlow.rows[0]?.id;
-    }
-    if (!flowId) {
-      throw new Error("Could not create or find the seeded flow.");
+      let flowId = existingFlow.rows[0]?.id;
+      if (!flowId) {
+        const insertedFlow = await client.query(
+          `INSERT INTO flows (id, organization_id, name, role_id, status)
+           VALUES ($1, $2, $3, $4, 'published')
+           RETURNING id`,
+          [`flow-${crypto.randomUUID()}`, ORGANIZATION.id, flow.name, flowTargetRoleId],
+        );
+        flowId = insertedFlow.rows[0]?.id;
+        if (flowId) {
+          for (let index = 0; index < flow.steps.length; index += 1) {
+            const step = flow.steps[index];
+            let stepRoleId = null;
+            if (step.kind === "role") {
+              const stepRoleRes = await client.query(
+                "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
+                [ORGANIZATION.id, step.roleCode],
+              );
+              stepRoleId = stepRoleRes.rows[0]?.id ?? `role-${step.roleCode}`;
+            }
+            await client.query(
+              "INSERT INTO flow_steps (flow_id, position, kind, role_id) VALUES ($1, $2, $3, $4)",
+              [flowId, index, step.kind, stepRoleId],
+            );
+          }
+        }
+      } else {
+        const concurrentFlow = await client.query(
+          "SELECT id FROM flows WHERE name = $1 AND organization_id = $2 AND role_id = $3",
+          [flow.name, ORGANIZATION.id, flowTargetRoleId],
+        );
+        flowId = concurrentFlow.rows[0]?.id;
+      }
+      if (!flowId) {
+        throw new Error("Could not create or find the seeded flow.");
+      }
     }
 
-    await client.query(
-      `INSERT INTO hierarchy_assignments (employee_id, manager_id)
-       VALUES ($1, $2)
-       ON CONFLICT (employee_id) DO UPDATE SET manager_id = EXCLUDED.manager_id, updated_at = now()`,
-      ["emp-shameel", "emp-ada"],
-    );
+    for (const [employeeId, managerId] of HIERARCHY) {
+      await client.query(
+        `INSERT INTO hierarchy_assignments (employee_id, manager_id)
+         VALUES ($1, $2)
+         ON CONFLICT (employee_id) DO UPDATE SET manager_id = EXCLUDED.manager_id, updated_at = now()`,
+        [employeeId, managerId],
+      );
+    }
 
     for (const claim of CLAIMS) {
       await client.query(
@@ -303,7 +339,12 @@ async function main() {
         ],
       );
       await client.query("DELETE FROM claim_approval_steps WHERE claim_id = $1", [claim.id]);
-      for (const [id, position, roleId, assignedActorId, status] of claim.steps) {
+      for (const [id, position, roleCode, assignedActorId, status] of claim.steps) {
+        const roleRes = await client.query(
+          "SELECT id FROM roles WHERE organization_id = $1 AND code = $2 LIMIT 1",
+          [ORGANIZATION.id, roleCode],
+        );
+        const roleId = roleRes.rows[0]?.id ?? `role-${roleCode}`;
         await client.query(
           `INSERT INTO claim_approval_steps (id, claim_id, position, role_id, assigned_actor_id, status)
            VALUES ($1, $2, $3, $4, $5, $6)`,
@@ -320,8 +361,35 @@ async function main() {
       }
     }
 
+    // Retire roles from the pre-rewrite vocabulary (employee, hr,
+    // it-reviewer, finance-reviewer, ceo) that an earlier seed run left
+    // behind, together with their flow and claim-step references. Roles
+    // whose code is in the seed list are updated in place, so a
+    // console-created role with a seeded code (e.g. finance-head) keeps
+    // its id and remains intact.
+    const seededCodes = ROLES.map((role) => role.code);
+    await client.query(
+      `DELETE FROM claim_approval_steps
+       WHERE role_id IN (SELECT id FROM roles WHERE organization_id = $1 AND code != ALL($2::text[]))`,
+      [ORGANIZATION.id, seededCodes],
+    );
+    await client.query(
+      `DELETE FROM flow_steps
+       WHERE role_id IN (SELECT id FROM roles WHERE organization_id = $1 AND code != ALL($2::text[]))`,
+      [ORGANIZATION.id, seededCodes],
+    );
+    await client.query(
+      `DELETE FROM flows
+       WHERE role_id IN (SELECT id FROM roles WHERE organization_id = $1 AND code != ALL($2::text[]))`,
+      [ORGANIZATION.id, seededCodes],
+    );
+    await client.query(
+      `DELETE FROM roles WHERE organization_id = $1 AND code != ALL($2::text[])`,
+      [ORGANIZATION.id, seededCodes],
+    );
+
     await client.query("COMMIT");
-    console.log(`seeded organization "${ORGANIZATION.name}" with ${EMPLOYEES.length} employees, ${ROLES.length} roles, and flow "${FLOW.name}"`);
+    console.log(`seeded organization "${ORGANIZATION.name}" with ${EMPLOYEES.length} employees, ${ROLES.length} roles, and ${FLOWS.length} published flows`);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

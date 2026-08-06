@@ -1,5 +1,6 @@
-export const SUPERADMIN_ROLE_CODE = "superadmin";
-export const HR_ADMINISTRATOR_ROLE_CODE = "hr-administrator";
+import { SUPERADMIN_ROLE_CODE } from "../shared/authorization";
+
+export { SUPERADMIN_ROLE_CODE };
 
 export type FlowStatus = "draft" | "published" | "archived";
 
@@ -17,6 +18,12 @@ export type AdminEmployee = {
   department: string;
   departmentId?: string | null;
   role: AdminRoleRef | null;
+  // The employee lifecycle flag: deactivated staff cannot be reassigned
+  // approval work (enforced by the expense side in a later slice) and are
+  // blocked from signing in by the identity seam.
+  active: boolean;
+  // The person this employee reports to, from hierarchy_assignments.
+  managerId: string | null;
 };
 
 export type AdminDepartment = {
@@ -32,20 +39,30 @@ export type DepartmentInput = {
 
 export type AdminRole = AdminRoleRef & {
   organizationId: string;
+  // The roles.department_id column is retained in the schema for
+  // forward-compatibility but is no longer written or validated: roles are
+  // org-wide definitions and the department lives on the person.
   departmentId: string | null;
   active: boolean;
+  locked: boolean;
 };
 
 export type RoleInput = {
   code: string;
   displayName: string;
-  departmentId: string | null;
 };
+
+// One step of a Flow: a 'role' step targets any locked or custom role,
+// while a 'team-lead' step targets the requester's assigned named person
+// (kind 'team-lead' carries no role id - the hierarchy assignment governs).
+export type FlowStepInput =
+  | { kind: "role"; roleId: string }
+  | { kind: "team-lead" };
 
 export type FlowInput = {
   name: string;
   roleId: string;
-  steps: string[];
+  steps: FlowStepInput[];
 };
 
 export type FlowDraft = FlowInput & {
@@ -65,8 +82,14 @@ export type AuditEvent = {
 export interface AdminStore {
   listEmployees(organizationId: string): Promise<AdminEmployee[]>;
   getEmployee(id: string): Promise<AdminEmployee | null>;
+  createEmployee(
+    organizationId: string,
+    input: { id: string; name: string; email: string },
+  ): Promise<AdminEmployee>;
   setEmployeeRole(employeeId: string, roleId: string): Promise<void>;
   setEmployeeDepartment(employeeId: string, departmentId: string): Promise<void>;
+  setEmployeeActive(employeeId: string, active: boolean): Promise<void>;
+  setEmployeeManager(employeeId: string, managerId: string | null): Promise<void>;
   listDepartments(organizationId: string): Promise<AdminDepartment[]>;
   createDepartment(organizationId: string, input: DepartmentInput): Promise<AdminDepartment>;
   deactivateDepartment(departmentId: string): Promise<void>;

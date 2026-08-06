@@ -227,4 +227,189 @@ describe("PostgresExpenseStore", () => {
     expect(activity).toHaveLength(1);
     expect(activity[0]).toMatchObject({ actorId: "emp-ada", actorName: "Ada Lovelace", kind: "rejected" });
   });
+
+  it("employee queries select the active flag and the hierarchy manager id", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      expect(sql).toContain("e.active");
+      expect(sql).toContain("LEFT JOIN hierarchy_assignments ha ON ha.employee_id = e.id");
+      expect(sql).toContain("ha.manager_id");
+      return Promise.resolve({
+        rows: [
+          {
+            id: "emp-1",
+            organization_id: "org-1",
+            name: "Ananya Iyer",
+            department_id: "dept-1",
+            active: true,
+            role_id: "role-intern",
+            role_code: "intern",
+            role_name: "Intern",
+            role_department_id: null,
+            manager_id: "emp-2",
+          },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const employee = await store.getEmployee("emp-1");
+
+    expect(employee).toMatchObject({
+      id: "emp-1",
+      active: true,
+      managerId: "emp-2",
+      departmentId: "dept-1",
+    });
+  });
+
+  it("maps an absent active flag and manager to inactive with no manager", async () => {
+    const poolQuery = vi.fn().mockImplementation(() =>
+      Promise.resolve({
+        rows: [
+          {
+            id: "emp-1",
+            organization_id: "org-1",
+            name: "Ananya Iyer",
+            department_id: null,
+            active: false,
+            role_id: null,
+            role_code: null,
+            role_name: null,
+            role_department_id: null,
+            manager_id: null,
+          },
+        ],
+      }),
+    );
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const employee = await store.getEmployee("emp-1");
+
+    expect(employee).toMatchObject({ active: false, managerId: null, role: null });
+  });
+
+  it("loads flow steps with their target kind, mapping team-lead steps to a null role id", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes("FROM flows WHERE organization_id = $1 AND role_id = $2")) {
+        expect(params).toEqual(["org-1", "role-intern"]);
+        return Promise.resolve({ rows: [{ id: "flow-intern", role_id: "role-intern" }] });
+      }
+      expect(sql).toContain("SELECT kind, role_id FROM flow_steps");
+      expect(params).toEqual(["flow-intern"]);
+      return Promise.resolve({
+        rows: [
+          { kind: "team-lead", role_id: null },
+          { kind: "role", role_id: "role-manager" },
+          { kind: "role", role_id: "role-finance-executive" },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const flow = await store.getPublishedFlowForRole("org-1", "role-intern");
+
+    expect(flow?.steps).toEqual([
+      { kind: "team-lead" },
+      { kind: "role", roleId: "role-manager" },
+      { kind: "role", roleId: "role-finance-executive" },
+    ]);
+  });
+
+  it("returns null when the role has no published flow, without a most-recently-created fallback", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      expect(sql).toContain("role_id = $2");
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const flow = await store.getPublishedFlowForRole("org-1", "role-executive");
+
+    expect(flow).toBeNull();
+    expect(poolQuery).toHaveBeenCalledOnce();
+  });
+
+  it("maps a claim step with a null role id (team-lead stage) back to the claim", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes("FROM reimbursement_claims")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "claim-1",
+              organization_id: "org-1",
+              requester_id: "emp-intern",
+              reference: "EXP-2026-0001",
+              title: "Intern cab ride",
+              category: "Travel",
+              amount_minor: "45000",
+              expense_date: "2026-08-04",
+              status: "in-approval",
+              current_stage: null,
+              current_actor_id: "emp-abilash",
+              version: "2",
+              created_at: "2026-08-04T10:00:00.000Z",
+              submitted_at: "2026-08-04T10:00:00.000Z",
+            },
+          ],
+        });
+      }
+      if (sql.includes("FROM claim_approval_steps")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "step-1",
+              claim_id: "claim-1",
+              role_id: null,
+              assigned_actor_id: "emp-abilash",
+              status: "pending",
+              decided_at: null,
+            },
+            {
+              id: "step-2",
+              claim_id: "claim-1",
+              role_id: "role-finance-executive",
+              assigned_actor_id: "emp-finance",
+              status: "pending",
+              decided_at: null,
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = await store.getClaim("claim-1");
+
+    expect(claim?.steps).toEqual([
+      { id: "step-1", roleId: null, assignedActorId: "emp-abilash", status: "pending", decidedAt: undefined },
+      { id: "step-2", roleId: "role-finance-executive", assignedActorId: "emp-finance", status: "pending", decidedAt: undefined },
+    ]);
+  });
+
+  it("writes a claim step with a null role id for a team-lead stage", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = buildClaim();
+    claim.status = "in-approval";
+    claim.currentStage = undefined;
+    claim.version = 2;
+    claim.steps = [
+      { id: "step-1", roleId: null, assignedActorId: "emp-abilash", status: "pending" },
+      { id: "step-2", roleId: "role-finance-executive", assignedActorId: "emp-finance", status: "pending" },
+    ];
+    await store.updateClaim(claim);
+
+    const stepInsert = query.mock.calls.find(
+      ([sql, values]) => typeof sql === "string" && sql.includes("INSERT INTO claim_approval_steps") && Array.isArray(values) && values.includes("step-1"),
+    );
+    expect(stepInsert?.[1]).toEqual(expect.arrayContaining([null, "emp-abilash"]));
+  });
 });

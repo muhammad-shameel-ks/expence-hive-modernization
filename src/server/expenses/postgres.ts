@@ -8,6 +8,7 @@ import type {
   ExpenseHistoryEvent,
   ExpenseStep,
   ExpenseStore,
+  FlowStepTarget,
 } from "./ports";
 
 type Row = Record<string, unknown>;
@@ -170,32 +171,16 @@ export class PostgresExpenseStore implements ExpenseStore {
       `SELECT id, role_id FROM flows WHERE organization_id = $1 AND role_id = $2 AND status = 'published' LIMIT 1`,
       [organizationId, roleId],
     );
-    if (flowResult.rows.length > 0) {
-      const flowId = String(flowResult.rows[0].id);
-      const stepsResult = await this.pool.query<Row>(
-        "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
-        [flowId],
-      );
-      return {
-        id: flowId,
-        roleId: String(flowResult.rows[0].role_id),
-        steps: stepsResult.rows.map((row) => String(row.role_id)),
-      };
-    }
-    const fallbackResult = await this.pool.query<Row>(
-      `SELECT id, role_id FROM flows WHERE organization_id = $1 AND status = 'published' ORDER BY created_at DESC LIMIT 1`,
-      [organizationId],
-    );
-    if (fallbackResult.rows.length === 0) return null;
-    const fallbackFlowId = String(fallbackResult.rows[0].id);
-    const fallbackSteps = await this.pool.query<Row>(
-      "SELECT role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
-      [fallbackFlowId],
+    if (flowResult.rows.length === 0) return null;
+    const flowId = String(flowResult.rows[0].id);
+    const stepsResult = await this.pool.query<Row>(
+      "SELECT kind, role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+      [flowId],
     );
     return {
-      id: fallbackFlowId,
-      roleId: String(fallbackResult.rows[0].role_id),
-      steps: fallbackSteps.rows.map((row) => String(row.role_id)),
+      id: flowId,
+      roleId: String(flowResult.rows[0].role_id),
+      steps: stepsResult.rows.map(flowStepFromRow),
     };
   }
 
@@ -256,7 +241,7 @@ function activityFromRow(row: Row): ActivityEntry {
 }
 
 const employeeQuery = `
-  SELECT e.id, e.organization_id, e.name, e.department_id,
+  SELECT e.id, e.organization_id, e.name, e.department_id, e.active,
          r.id AS role_id, r.code AS role_code, r.display_name AS role_name, r.department_id AS role_department_id,
          ha.manager_id
   FROM employees e
@@ -274,6 +259,7 @@ function employeeFromRow(row: Row): ExpenseEmployee {
     organizationId: String(row.organization_id),
     name: String(row.name),
     departmentId: row.department_id ? String(row.department_id) : null,
+    active: Boolean(row.active),
     role: row.role_id
       ? {
           id: String(row.role_id),
@@ -282,7 +268,7 @@ function employeeFromRow(row: Row): ExpenseEmployee {
           departmentId: row.role_department_id ? String(row.role_department_id) : null,
         }
       : null,
-    managerId: row.manager_id ? String(row.manager_id) : undefined,
+    managerId: row.manager_id ? String(row.manager_id) : null,
   };
 }
 
@@ -341,11 +327,17 @@ function claimFromRow(row: Row): ExpenseClaim {
 function stepFromRow(row: Row): ExpenseStep {
   return {
     id: String(row.id),
-    roleId: String(row.role_id),
+    roleId: row.role_id ? String(row.role_id) : null,
     assignedActorId: row.assigned_actor_id ? String(row.assigned_actor_id) : undefined,
     status: String(row.status) as ExpenseStep["status"],
     decidedAt: row.decided_at ? new Date(String(row.decided_at)).toISOString() : undefined,
   };
+}
+
+function flowStepFromRow(row: Row): FlowStepTarget {
+  return row.kind === "team-lead"
+    ? { kind: "team-lead" }
+    : { kind: "role", roleId: String(row.role_id) };
 }
 
 function historyFromRow(row: Row): ExpenseHistoryEvent {

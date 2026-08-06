@@ -215,14 +215,18 @@ function Login() {
                   <div className={styles.devLogin}>
                     <span className={styles.devLoginLabel}>LOCAL DEVELOPMENT</span>
                     <select value={devEmployee} aria-label="Development identity" onChange={(event) => setDevEmployee(event.target.value)}>
-                      <option value="emp-shameel">Muhammad Shameel / Employee</option>
-                      <option value="emp-ada">Ada Lovelace / Manager</option>
-                      <option value="emp-it">IT Head / IT reviewer</option>
-                      <option value="emp-finance">Finance Officer / Finance</option>
-                      <option value="emp-grace">Grace Hopper / HR</option>
-                      <option value="emp-sanil">Sanil Davis / Manager (IT)</option>
-                      <option value="emp-pramod">Pramod / Finance Head (IT)</option>
                       <option value="emp-superadmin">Super Admin / Superadmin</option>
+                      <option value="emp-shameel">Muhammad Shameel / Executive</option>
+                      <option value="emp-katherine">Katherine Johnson / Executive</option>
+                      <option value="emp-ada">Ada Lovelace / Manager</option>
+                      <option value="emp-sanil">Sanil Davis / Manager</option>
+                      <option value="emp-arun">Arun Kumar / Manager</option>
+                      <option value="emp-dorothy">Dorothy Vaughan / Manager</option>
+                      <option value="emp-abilash">Abilash / Team Lead</option>
+                      <option value="emp-intern">Ananya Iyer / Intern</option>
+                      <option value="emp-pramod">Pramod / Finance Head</option>
+                      <option value="emp-finance">Rishikesh / Finance Executive</option>
+                      <option value="emp-rishikesh">Farhan / Finance Executive</option>
                     </select>
                     <button type="button" onClick={handleDevLogin}>Open as this user</button>
                   </div>

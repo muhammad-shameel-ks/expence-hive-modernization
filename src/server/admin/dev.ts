@@ -16,7 +16,7 @@ type GlobalStore = {
 
 const globalStore = globalThis as GlobalStore;
 
-export function adminCommands(): AdminCommands {
+export function adminDevStore(): PostgresAdminStore {
   if (process.env.NODE_ENV === "production") {
     throw new Error("The development admin adapter must not run in production.");
   }
@@ -26,7 +26,9 @@ export function adminCommands(): AdminCommands {
   if (!globalStore[storeKey]) {
     globalStore[storeKey] = new PostgresAdminStore(globalStore[poolKey]!);
   }
-  return createAdminCommands({
-    store: globalStore[storeKey]!,
-  });
+  return globalStore[storeKey]!;
+}
+
+export function adminCommands(): AdminCommands {
+  return createAdminCommands({ store: adminDevStore() });
 }

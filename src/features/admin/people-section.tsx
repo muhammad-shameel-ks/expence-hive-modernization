@@ -1,26 +1,39 @@
 "use client";
 
-import { useMemo, useState } from "react";
-import { CheckCircle2, ChevronDown, Search, Users } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, List, Network, Search, Users, X } from "lucide-react";
 import type { AdminDepartment, AdminEmployee, AdminRole } from "@/server/admin/ports";
+import { initials } from "./initials";
+import { OrgTree } from "./org-tree";
 import { SectionHeading } from "./section-heading";
+import { StatusBadge } from "./status-badge";
+
+type ActiveFilter = "all" | "active" | "deactivated";
+
+type PeopleView = "list" | "tree";
 
 export function PeopleSection({
   people,
   roles,
   departments,
+  currentEmployeeId,
   onMessage,
   onError,
 }: {
   people: AdminEmployee[];
   roles: AdminRole[];
   departments: AdminDepartment[];
+  currentEmployeeId: string;
   onMessage: (message: string) => void;
   onError: (error: string) => void;
 }) {
   const [peopleState, setPeopleState] = useState(people);
   const [query, setQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("All departments");
+  const [roleFilter, setRoleFilter] = useState("All roles");
+  const [activeFilter, setActiveFilter] = useState<ActiveFilter>("all");
+  const [view, setView] = useState<PeopleView>("list");
+  const [selectedPersonId, setSelectedPersonId] = useState<string | null>(null);
   const [saving, setSaving] = useState<string | null>(null);
 
   const activeDepartments = useMemo(
@@ -28,10 +41,20 @@ export function PeopleSection({
     [departments],
   );
 
+  const activeRoles = useMemo(() => roles.filter((role) => role.active), [roles]);
+
   const departmentOptions = useMemo(
     () => ["All departments", ...new Set(peopleState.map((person) => person.department))],
     [peopleState],
   );
+
+  const roleOptions = useMemo(() => {
+    const names = new Set(roles.map((role) => role.displayName));
+    for (const person of peopleState) {
+      if (person.role) names.add(person.role.displayName);
+    }
+    return ["All roles", ...[...names].sort()];
+  }, [peopleState, roles]);
 
   const filteredPeople = useMemo(
     () =>
@@ -41,10 +64,53 @@ export function PeopleSection({
           .includes(query.toLowerCase());
         const matchesDepartment =
           departmentFilter === "All departments" || person.department === departmentFilter;
-        return matchesQuery && matchesDepartment;
+        const matchesRole =
+          roleFilter === "All roles" || person.role?.displayName === roleFilter;
+        const matchesActive =
+          activeFilter === "all" ||
+          (activeFilter === "active" ? person.active : !person.active);
+        return matchesQuery && matchesDepartment && matchesRole && matchesActive;
       }),
-    [departmentFilter, peopleState, query],
+    [activeFilter, departmentFilter, peopleState, query, roleFilter],
   );
+
+  const selectedPerson = useMemo(
+    () => peopleState.find((person) => person.id === selectedPersonId) ?? null,
+    [peopleState, selectedPersonId],
+  );
+
+  const setActive = async (person: AdminEmployee, active: boolean) => {
+    setSaving(person.id);
+    onError("");
+    try {
+      const endpoint = active
+        ? "/api/admin/employees/reactivate"
+        : "/api/admin/employees/deactivate";
+      const response = await fetch(endpoint, {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ employeeId: person.id }),
+      });
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: string };
+        throw new Error(body.error ?? "unknown");
+      }
+      setPeopleState((current) =>
+        current.map((item) => (item.id === person.id ? { ...item, active } : item)),
+      );
+      onMessage(active ? `${person.name} reactivated.` : `${person.name} deactivated.`);
+    } catch (caught) {
+      onError(
+        caught instanceof Error && caught.message === "conflict"
+          ? "This person cannot be deactivated: either it is your own account or they are the last active Superadmin."
+          : active
+            ? "The reactivation could not be saved. Please try again."
+            : "The deactivation could not be saved. Please try again.",
+      );
+    } finally {
+      setSaving(null);
+    }
+  };
 
   const assignRole = async (person: AdminEmployee, role: AdminRole) => {
     setSaving(person.id);
@@ -70,7 +136,7 @@ export function PeopleSection({
     } catch (caught) {
       onError(
         caught instanceof Error && caught.message === "unauthorized"
-          ? "Only Superadmin and HR administrators can change roles."
+          ? "Only Superadmin can change roles."
           : "The role change could not be saved. Please try again.",
       );
     } finally {
@@ -102,8 +168,45 @@ export function PeopleSection({
     } catch (caught) {
       onError(
         caught instanceof Error && caught.message === "unauthorized"
-          ? "Only Superadmin and HR administrators can change departments."
+          ? "Only Superadmin can change departments."
           : "The department change could not be saved. Please try again.",
+      );
+    } finally {
+      setSaving(null);
+    }
+  };
+
+  const assignManager = async (person: AdminEmployee, managerId: string | null) => {
+    setSaving(person.id);
+    onError("");
+    try {
+      const response = await fetch("/api/admin/employees/manager", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ employeeId: person.id, managerId }),
+      });
+      if (!response.ok) {
+        const body = (await response.json()) as { error?: string };
+        throw new Error(body.error ?? "unknown");
+      }
+      const manager = managerId
+        ? peopleState.find((candidate) => candidate.id === managerId)
+        : null;
+      setPeopleState((current) =>
+        current.map((item) =>
+          item.id === person.id ? { ...item, managerId } : item,
+        ),
+      );
+      onMessage(
+        manager
+          ? `${person.name} now reports to ${manager.name}.`
+          : `Manager assignment cleared for ${person.name}.`,
+      );
+    } catch (caught) {
+      onError(
+        caught instanceof Error && caught.message === "unauthorized"
+          ? "Only Superadmin can change manager assignments."
+          : "The manager change could not be saved. Please try again.",
       );
     } finally {
       setSaving(null);
@@ -115,8 +218,8 @@ export function PeopleSection({
       <SectionHeading
         number="1"
         icon={Users}
-        title="Assign people to departments & roles"
-        description="Manage employee department allocations and assign administrative or approval roles."
+        title="People management"
+        description="Search and filter people, assign roles, departments and managers, and deactivate or reactivate access."
       />
       <div className="mt-5 rounded-[18px] border border-[#e0e7ee] bg-white shadow-[0_18px_38px_rgba(31,50,71,0.05)]">
         <div className="flex flex-wrap items-center gap-3 border-b border-[#eef2f6] p-5">
@@ -131,123 +234,360 @@ export function PeopleSection({
               <option key={option}>{option}</option>
             ))}
           </select>
+          <label className="sr-only" htmlFor="people-role">Filter by role</label>
+          <select id="people-role" className="h-10 rounded-lg border border-[#d6dfe8] bg-white px-3 text-xs font-semibold text-[#526278] outline-none focus:ring-2 focus:ring-[#b7d8e5]" value={roleFilter} onChange={(event) => setRoleFilter(event.target.value)}>
+            {roleOptions.map((option) => (
+              <option key={option}>{option}</option>
+            ))}
+          </select>
+          <label className="sr-only" htmlFor="people-active">Filter by active state</label>
+          <select id="people-active" className="h-10 rounded-lg border border-[#d6dfe8] bg-white px-3 text-xs font-semibold text-[#526278] outline-none focus:ring-2 focus:ring-[#b7d8e5]" value={activeFilter} onChange={(event) => setActiveFilter(event.target.value as ActiveFilter)}>
+            <option value="all">All</option>
+            <option value="active">Active</option>
+            <option value="deactivated">Deactivated</option>
+          </select>
+          <div className="flex items-center gap-1 rounded-lg border border-[#d6dfe8] bg-[#fbfcfd] p-1" role="group" aria-label="People view">
+            <button
+              type="button"
+              aria-pressed={view === "list"}
+              onClick={() => setView("list")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[#8ab5c6] ${
+                view === "list" ? "bg-white text-[#175d75] shadow-sm" : "text-[#7d8a9b] hover:text-[#26364b]"
+              }`}
+            >
+              <List className="size-3.5" />
+              List
+            </button>
+            <button
+              type="button"
+              aria-pressed={view === "tree"}
+              onClick={() => setView("tree")}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 text-xs font-semibold transition-colors focus-visible:outline-2 focus-visible:outline-[#8ab5c6] ${
+                view === "tree" ? "bg-white text-[#175d75] shadow-sm" : "text-[#7d8a9b] hover:text-[#26364b]"
+              }`}
+            >
+              <Network className="size-3.5" />
+              Tree
+            </button>
+          </div>
         </div>
-        <div className="hidden grid-cols-[1.3fr_1fr_1fr_auto] gap-4 border-b border-[#eef2f6] bg-[#fbfcfd] px-5 py-3 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-[#8a96a8] sm:grid">
-          <span>Person</span>
-          <span>Allocated Department</span>
-          <span>Designated Role</span>
-          <span />
-        </div>
-        {filteredPeople.map((person) => (
-          <PersonRow
-            key={person.id}
-            person={person}
-            roles={roles}
+        {view === "list" ? (
+          <>
+            <div className="hidden grid-cols-[1.3fr_1fr_1fr_auto_auto] gap-4 border-b border-[#eef2f6] bg-[#fbfcfd] px-5 py-3 text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-[#8a96a8] sm:grid">
+              <span>Person</span>
+              <span>Department</span>
+              <span>Role</span>
+              <span>Status</span>
+              <span />
+            </div>
+            {filteredPeople.map((person) => (
+              <PersonRow
+                key={person.id}
+                person={person}
+                onOpen={() => setSelectedPersonId(person.id)}
+              />
+            ))}
+          </>
+        ) : (
+          <OrgTree
+            people={filteredPeople}
             departments={activeDepartments}
-            saving={saving === person.id}
-            onRoleChange={(role) => assignRole(person, role)}
-            onDepartmentChange={(dept) => assignDepartment(person, dept)}
+            onSelectPerson={(person) => setSelectedPersonId(person.id)}
           />
-        ))}
+        )}
         {filteredPeople.length === 0 ? (
           <p className="p-8 text-center text-sm text-[#7d8a9b]">No people match this search.</p>
         ) : null}
       </div>
+
+      {selectedPerson ? (
+        <PersonDrawer
+          person={selectedPerson}
+          people={peopleState}
+          roles={activeRoles}
+          departments={activeDepartments}
+          currentEmployeeId={currentEmployeeId}
+          saving={saving === selectedPerson.id}
+          onClose={() => setSelectedPersonId(null)}
+          onRoleChange={(role) => assignRole(selectedPerson, role)}
+          onDepartmentChange={(dept) => assignDepartment(selectedPerson, dept)}
+          onManagerChange={(managerId) => assignManager(selectedPerson, managerId)}
+          onSetActive={(active) => setActive(selectedPerson, active)}
+        />
+      ) : null}
     </section>
   );
 }
 
 function PersonRow({
   person,
-  roles,
-  departments,
-  saving,
-  onRoleChange,
-  onDepartmentChange,
+  onOpen,
 }: {
   person: AdminEmployee;
-  roles: AdminRole[];
-  departments: AdminDepartment[];
-  saving: boolean;
-  onRoleChange: (role: AdminRole) => void;
-  onDepartmentChange: (dept: AdminDepartment) => void;
+  onOpen: () => void;
 }) {
-  const activeRoles = roles.filter((role) => role.active);
-
   return (
-    <div className="grid grid-cols-1 gap-3 border-b border-[#eef2f6] px-5 py-4 last:border-0 sm:grid-cols-[1.3fr_1fr_1fr_auto] sm:items-center sm:gap-4">
-      <div className="flex items-center gap-3">
-        <span className="grid size-9 place-items-center rounded-full bg-[#eaf3f6] text-xs font-bold text-[#196d86]">{initials(person.name)}</span>
+    <button
+      type="button"
+      onClick={onOpen}
+      className="grid w-full grid-cols-1 gap-3 border-b border-[#eef2f6] px-5 py-4 text-left transition-colors last:border-0 hover:bg-[#fbfcfd] focus-visible:bg-[#fbfcfd] focus-visible:outline-2 focus-visible:outline-offset--2 focus-visible:outline-[#8ab5c6] sm:grid-cols-[1.3fr_1fr_1fr_auto_auto] sm:items-center sm:gap-4"
+      aria-label={`Open details for ${person.name}`}
+    >
+      <span className="flex items-center gap-3">
+        <span className="grid size-9 shrink-0 place-items-center rounded-full bg-[#eaf3f6] text-xs font-bold text-[#196d86]">{initials(person.name)}</span>
         <span className="min-w-0">
           <strong className="block truncate text-sm text-[#33445c]">{person.name}</strong>
           <span className="block truncate text-xs text-[#9aa6b5]">{person.email}</span>
         </span>
-      </div>
-
-      <label className="text-xs text-[#526278]">
-        <span className="mb-1 block text-[0.62rem] uppercase tracking-wide text-[#a2adba] sm:hidden">Department</span>
-        <span className="relative block">
-          <select
-            aria-label={`Department for ${person.name}`}
-            className="h-9 w-full appearance-none rounded-lg border border-[#d6dfe8] bg-white px-3 pr-8 text-xs font-semibold text-[#526278] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5] disabled:opacity-60"
-            value={departments.find((d) => d.name === person.department || d.id === person.departmentId)?.id ?? ""}
-            disabled={saving}
-            onChange={(event) => {
-              const dept = departments.find((candidate) => candidate.id === event.target.value);
-              if (dept) onDepartmentChange(dept);
-            }}
-          >
-            <option value="" disabled>
-              Unallocated
-            </option>
-            {departments.map((dept) => (
-              <option key={dept.id} value={dept.id}>
-                {dept.name}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#8a96a8]" />
-        </span>
-      </label>
-
-      <label className="text-xs text-[#526278]">
-        <span className="mb-1 block text-[0.62rem] uppercase tracking-wide text-[#a2adba] sm:hidden">Assigned role</span>
-        <span className="relative block">
-          <select
-            aria-label={`Role for ${person.name}`}
-            className="h-9 w-full appearance-none rounded-lg border border-[#d6dfe8] bg-white px-3 pr-8 text-xs font-semibold text-[#526278] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5] disabled:opacity-60"
-            value={person.role?.id ?? ""}
-            disabled={saving}
-            onChange={(event) => {
-              const role = activeRoles.find((candidate) => candidate.id === event.target.value);
-              if (role) onRoleChange(role);
-            }}
-          >
-            <option value="" disabled>
-              No role assigned
-            </option>
-            {activeRoles.map((role) => (
-              <option key={role.id} value={role.id}>
-                {role.displayName}
-              </option>
-            ))}
-          </select>
-          <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#8a96a8]" />
-        </span>
-      </label>
-
-      <span className="hidden size-7 place-items-center rounded-full bg-[#eaf6f4] text-[#23706b] sm:grid">
-        <CheckCircle2 className="size-4" />
       </span>
+
+      <span className="text-xs font-medium text-[#526278]">
+        <span className="mb-0.5 block text-[0.62rem] uppercase tracking-wide text-[#a2adba] sm:hidden">Department</span>
+        <span className="truncate">{person.department || "Unallocated"}</span>
+      </span>
+
+      <span className="text-xs font-medium text-[#526278]">
+        <span className="mb-0.5 block text-[0.62rem] uppercase tracking-wide text-[#a2adba] sm:hidden">Role</span>
+        <span className="truncate">{person.role?.displayName ?? "No role assigned"}</span>
+      </span>
+
+      <span className="text-xs">
+        <span className="sr-only">Status</span>
+        <StatusBadge active={person.active} />
+      </span>
+
+      <ChevronDown className="hidden size-4 -rotate-90 text-[#8a96a8] sm:block" />
+    </button>
+  );
+}
+
+function PersonDrawer({
+  person,
+  people,
+  roles,
+  departments,
+  currentEmployeeId,
+  saving,
+  onClose,
+  onRoleChange,
+  onDepartmentChange,
+  onManagerChange,
+  onSetActive,
+}: {
+  person: AdminEmployee;
+  people: AdminEmployee[];
+  roles: AdminRole[];
+  departments: AdminDepartment[];
+  currentEmployeeId: string;
+  saving: boolean;
+  onClose: () => void;
+  onRoleChange: (role: AdminRole) => void;
+  onDepartmentChange: (dept: AdminDepartment) => void;
+  onManagerChange: (managerId: string | null) => void;
+  onSetActive: (active: boolean) => void;
+}) {
+  const closeButtonRef = useRef<HTMLButtonElement>(null);
+  const setActiveButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    closeButtonRef.current?.focus();
+  }, []);
+
+  // Escape closes the drawer even when focus has fallen back to the page
+  // (e.g. after the Deactivate/Reactivate button is replaced on toggle).
+  useEffect(() => {
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [onClose]);
+
+  // Keep keyboard focus inside the drawer when the action button toggles.
+  useEffect(() => {
+    setActiveButtonRef.current?.focus();
+  }, [person.active]);
+
+  const isSelf = person.id === currentEmployeeId;
+  const activeSuperadminCount = people.filter(
+    (candidate) => candidate.active && candidate.role?.code === "superadmin",
+  ).length;
+  const isLastActiveSuperadmin =
+    person.active && person.role?.code === "superadmin" && activeSuperadminCount === 1;
+  const deactivationBlocked = isSelf || isLastActiveSuperadmin;
+  const blockReason = isSelf
+    ? "You cannot deactivate your own account."
+    : isLastActiveSuperadmin
+      ? "The last active Superadmin cannot be deactivated."
+      : null;
+
+  const managerOptions = people.filter((candidate) => candidate.id !== person.id);
+
+  return (
+    <div className="fixed inset-0 z-40">
+      <button
+        type="button"
+        aria-label="Close person details"
+        tabIndex={-1}
+        className="absolute inset-0 cursor-default bg-[#17273d]/40"
+        onClick={onClose}
+      />
+      <aside
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="person-detail-title"
+        className="absolute right-0 top-0 flex h-full w-full max-w-md flex-col bg-white shadow-[0_18px_50px_rgba(23,39,61,0.28)]"
+      >
+        <div className="flex items-start justify-between gap-3 border-b border-[#eef2f6] p-6 pb-5">
+          <div className="flex items-center gap-3">
+            <span className="grid size-11 shrink-0 place-items-center rounded-full bg-[#eaf3f6] text-sm font-bold text-[#196d86]">{initials(person.name)}</span>
+            <span className="min-w-0">
+              <h2 id="person-detail-title" className="truncate text-base font-bold text-[#17273d]">{person.name}</h2>
+              <p className="truncate text-xs text-[#9aa6b5]">{person.email}</p>
+            </span>
+          </div>
+          <button
+            ref={closeButtonRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close person details"
+            className="grid size-8 shrink-0 place-items-center rounded-lg text-[#8a96a8] transition-colors hover:bg-[#f4f7fa] hover:text-[#33445c] focus-visible:outline-2 focus-visible:outline-[#8ab5c6]"
+          >
+            <X className="size-4" />
+          </button>
+        </div>
+
+        <div className="flex-1 space-y-5 overflow-y-auto p-6">
+          <div>
+            <span className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-[#8a96a8]">Status</span>
+            <div className="mt-1.5">
+              <StatusBadge active={person.active} />
+            </div>
+          </div>
+
+          <div>
+            <span className="text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-[#8a96a8]">Current role</span>
+            <p className="mt-1 text-sm font-semibold text-[#33445c]">
+              {person.role?.displayName ?? "No role assigned"}
+            </p>
+          </div>
+
+          <FieldLabel htmlFor="drawer-role">Assign role</FieldLabel>
+          <div className="relative">
+            <select
+              id="drawer-role"
+              aria-label={`Role for ${person.name}`}
+              className="h-10 w-full appearance-none rounded-lg border border-[#d6dfe8] bg-white px-3 pr-8 text-xs font-semibold text-[#526278] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5] disabled:opacity-60"
+              value={person.role?.id ?? ""}
+              disabled={saving}
+              onChange={(event) => {
+                const role = roles.find((candidate) => candidate.id === event.target.value);
+                if (role) onRoleChange(role);
+              }}
+            >
+              <option value="" disabled>
+                No role assigned
+              </option>
+              {roles.map((role) => (
+                <option key={role.id} value={role.id}>
+                  {role.displayName}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#8a96a8]" />
+          </div>
+
+          <FieldLabel htmlFor="drawer-department">Assign department</FieldLabel>
+          <div className="relative">
+            <select
+              id="drawer-department"
+              aria-label={`Department for ${person.name}`}
+              className="h-10 w-full appearance-none rounded-lg border border-[#d6dfe8] bg-white px-3 pr-8 text-xs font-semibold text-[#526278] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5] disabled:opacity-60"
+              value={departments.find((d) => d.name === person.department || d.id === person.departmentId)?.id ?? ""}
+              disabled={saving}
+              onChange={(event) => {
+                const dept = departments.find((candidate) => candidate.id === event.target.value);
+                if (dept) onDepartmentChange(dept);
+              }}
+            >
+              <option value="" disabled>
+                Unallocated
+              </option>
+              {departments.map((dept) => (
+                <option key={dept.id} value={dept.id}>
+                  {dept.name}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#8a96a8]" />
+          </div>
+
+          <FieldLabel htmlFor="drawer-manager">Manager / team lead</FieldLabel>
+          <div className="relative">
+            <select
+              id="drawer-manager"
+              aria-label={`Manager for ${person.name}`}
+              className="h-10 w-full appearance-none rounded-lg border border-[#d6dfe8] bg-white px-3 pr-8 text-xs font-semibold text-[#526278] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5] disabled:opacity-60"
+              value={person.managerId ?? ""}
+              disabled={saving}
+              onChange={(event) => onManagerChange(event.target.value || null)}
+            >
+              <option value="">No manager</option>
+              {managerOptions.map((candidate) => (
+                <option key={candidate.id} value={candidate.id} disabled={!candidate.active}>
+                  {candidate.name}
+                  {candidate.active ? "" : " (deactivated)"}
+                </option>
+              ))}
+            </select>
+            <ChevronDown className="pointer-events-none absolute right-2.5 top-1/2 size-3.5 -translate-y-1/2 text-[#8a96a8]" />
+          </div>
+          <p className="text-xs text-[#9aa6b5]">
+            {person.managerId
+              ? `Reports to ${managerOptions.find((candidate) => candidate.id === person.managerId)?.name ?? "a team lead"}.`
+              : "No reporting relationship assigned yet."}
+          </p>
+        </div>
+
+        <div className="border-t border-[#eef2f6] p-6">
+          {person.active ? (
+            <>
+              <button
+                ref={setActiveButtonRef}
+                type="button"
+                disabled={saving || deactivationBlocked}
+                onClick={() => onSetActive(false)}
+                className="h-10 w-full rounded-lg bg-[#a8384d] px-4 text-xs font-bold text-white transition-colors hover:bg-[#8f2f42] disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Deactivate account
+              </button>
+              {blockReason ? (
+                <p className="mt-2 text-xs font-medium text-[#a8384d]" role="note">
+                  {blockReason}
+                </p>
+              ) : null}
+            </>
+          ) : (
+            <button
+              ref={setActiveButtonRef}
+              type="button"
+              disabled={saving}
+              onClick={() => onSetActive(true)}
+              className="h-10 w-full rounded-lg bg-[#23706b] px-4 text-xs font-bold text-white transition-colors hover:bg-[#1c5a56] disabled:cursor-not-allowed disabled:opacity-50"
+            >
+              Reactivate account
+            </button>
+          )}
+        </div>
+      </aside>
     </div>
   );
 }
 
-function initials(name: string): string {
-  return name
-    .split(/\s+/)
-    .map((part) => part.charAt(0))
-    .slice(0, 2)
-    .join("")
-    .toUpperCase();
+function FieldLabel({ htmlFor, children }: { htmlFor: string; children: string }) {
+  return (
+    <label htmlFor={htmlFor} className="block text-[0.62rem] font-extrabold uppercase tracking-[0.12em] text-[#8a96a8]">
+      {children}
+    </label>
+  );
 }

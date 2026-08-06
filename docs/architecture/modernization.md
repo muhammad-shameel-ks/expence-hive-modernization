@@ -14,7 +14,9 @@ It is intentionally separate from the approval-workflow domain model.
 - The new application will use a new normalized database structure.
 - The first usable prototype will use new test data rather than importing production history.
 - The first vertical slice is reimbursement end to end.
-- The first vertical slice includes workflow, CEO override, Finance payment, audit history, receipts, and email.
+- The first vertical slice includes workflow, Finance Head apex takeover, Finance payment, audit history, receipts, and email.
+
+Superseded by issue #39 for the CEO override: takeover is exercised by any later-stage role, with the Finance Head as the apex of a flow.
 - Existing Microsoft Entra ID remains the intended production identity provider.
 - Every employee in the company tenant may sign in once production identity integration is available.
 - A first sign-in creates a basic employee record that an administrator can complete later.
@@ -34,12 +36,16 @@ It is intentionally separate from the approval-workflow domain model.
 - The approval inbox is action-focused and separates work requiring action from waiting and completed records.
 - Local development will use seeded local users, Docker PostgreSQL, Azurite, and Mailpit.
 - The new schema includes an organization identifier from the beginning.
-- System administrators and HR maintain hierarchy assignments.
-- System administrators publish workflow versions.
+- Superadmin maintains hierarchy assignments (manager and team-lead) and the roles, departments, and flows behind them.
+
+Superseded by issue #39 for the role and user model: HR is removed, and Superadmin is the only administrative identity.
+- Superadmin publishes workflow versions.
 - Employees and authorized approvers can see complete request history.
 - A higher approval stage may take over a submitted request and skip earlier stages.
-- One eligible member of an approval pool completes its stage.
-- Missing hierarchy assignments notify HR and system administrators after the request continues.
+- One eligible member of an implicit approval pool completes its stage.
+
+Superseded by issue #39: pools are not separate entities; the Manager step is an implicit same-department pool with quorum one.
+- Missing hierarchy assignments notify Superadmin after the request continues.
 - Paid records are corrected through new adjustment claims rather than direct edits.
 - The final employee-facing status is `Approved and paid`.
 - Azure App Service is the intended production host for the Next.js application.
@@ -71,7 +77,9 @@ The browser should not directly mutate workflow, approval, payment, or audit tab
 
 The server should validate the current actor, the request version, the active workflow version, and the allowed transition in one transaction.
 
-Post-payment corrections should create a new CEO-authorized adjustment claim rather than edit the paid request.
+Post-payment corrections should create a new adjustment claim rather than edit the paid request.
+
+Superseded by issue #39 for the CEO authorization reference: post-payment adjustment claims remain out of scope (issue #21).
 
 The MVP should use normal refreshes and email notifications instead of adding realtime infrastructure.
 
@@ -125,7 +133,7 @@ The development identity provider must be enabled only in a local development en
 
 It must never be an available authentication path in QA or production.
 
-Seeded users should cover an employee, ordinary approvers, Finance, the CEO, and CEO delegates.
+Seeded users should cover an employee, ordinary approvers, Finance Head, Finance Executive, and Superadmin.
 
 Local development should also exercise loading, empty, upload-failure, stale-record, permission-denied, server-error, and interrupted-session states.
 

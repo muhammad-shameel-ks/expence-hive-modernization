@@ -1,28 +1,30 @@
+import { FINANCE_HEAD_ROLE_CODE, MANAGER_ROLE_CODE, resolveRoleCapabilities } from "../shared/authorization";
 import {
   ACTIVITY_EVENT_KINDS,
-  FINANCE_OR_HR_ROLE_CODES,
-  ORGANIZATION_ACTIVITY_ROLE_CODES,
   type ActivityEntry,
   type CreateExpenseDraftInput,
   type ExpenseClaim,
   type ExpenseEmployee,
   type ExpenseStore,
+  type FlowStepTarget,
 } from "./ports";
 
 const ABSENCE_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_REASON_CODE_LENGTH = 200;
 
-function isFinanceOrHr(employee: ExpenseEmployee): boolean {
-  return employee.role !== null && FINANCE_OR_HR_ROLE_CODES.includes(employee.role.code);
+function canAccessFinance(employee: ExpenseEmployee): boolean {
+  return employee.role !== null && resolveRoleCapabilities(employee.role.code).canAccessFinance;
 }
 
 function canViewOrganizationActivity(employee: ExpenseEmployee): boolean {
-  return employee.role !== null && ORGANIZATION_ACTIVITY_ROLE_CODES.includes(employee.role.code);
+  return (
+    employee.role !== null && resolveRoleCapabilities(employee.role.code).canViewOrganizationActivity
+  );
 }
 
 function canSeePayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
   if (claim.requesterId === viewer.id) return true;
-  return isFinanceOrHr(viewer);
+  return canAccessFinance(viewer);
 }
 
 function maskPayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): ExpenseClaim {
@@ -39,6 +41,65 @@ function terminalIndex(claim: ExpenseClaim): number {
 
 function isTerminalIndex(claim: ExpenseClaim, index: number): boolean {
   return index === terminalIndex(claim);
+}
+
+// Routing eligibility for one flow step target. The requester can never be
+// their own approver, deactivated employees are never eligible, a
+// 'team-lead' step resolves to the requester's assigned named person from
+// hierarchy_assignments (their own role is irrelevant - story 17), and a
+// 'role' step resolves to active holders of the role - org-wide, except
+// Manager steps which are limited to holders in the requester's department
+// (stories 11-13). A requester with no department has no eligible manager,
+// so a Manager step for them is vacant and auto-skips.
+function isEligible(
+  requester: ExpenseEmployee,
+  candidate: ExpenseEmployee,
+  target: FlowStepTarget,
+): boolean {
+  if (candidate.id === requester.id) return false;
+  if (!candidate.active) return false;
+  if (target.kind === "team-lead") {
+    return candidate.id === requester.managerId;
+  }
+  if (candidate.role?.id !== target.roleId) return false;
+  if (candidate.role.code === MANAGER_ROLE_CODE) {
+    return candidate.departmentId !== null && candidate.departmentId === requester.departmentId;
+  }
+  return true;
+}
+
+function stepTarget(step: ExpenseClaim["steps"][number]): FlowStepTarget {
+  return step.roleId === null ? { kind: "team-lead" } : { kind: "role", roleId: step.roleId };
+}
+
+function stepLabel(step: ExpenseClaim["steps"][number]): string {
+  return step.roleId === null ? "team lead" : step.roleId;
+}
+
+// A pool-stage label for the takeover history detail: team-lead steps are
+// recorded by their named target kind, role steps by their role id.
+function skippedStepLabels(claim: ExpenseClaim, start: number, end: number): string[] {
+  const labels: string[] = [];
+  for (let index = start; index < end; index += 1) {
+    labels.push(stepLabel(claim.steps[index]));
+  }
+  return labels;
+}
+
+function activeIds(employees: ExpenseEmployee[]): string[] {
+  return employees.filter((employee) => employee.active).map((employee) => employee.id);
+}
+
+// The takeover history detail names the skipped stages: team-lead steps are
+// recorded under their "team lead" label (they have no role id), role steps
+// under their role id.
+function takeoverDetail(
+  actor: ExpenseEmployee,
+  reason: string,
+  skippedLabels: string[],
+): string {
+  const skipped = skippedLabels.length > 0 ? `: ${skippedLabels.join(", ")}` : "";
+  return `Took over as ${actor.role!.displayName} (reason: ${reason}); skipped ${skippedLabels.length} earlier stage(s)${skipped}`;
 }
 
 export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict";
@@ -85,25 +146,26 @@ export function createExpenseCommands({
 }): ExpenseCommands {
   async function requireEmployee(actorId: string): Promise<ExpenseEmployee> {
     const employee = await store.getEmployee(actorId);
-    if (!employee) {
+    if (!employee || !employee.active) {
       throw new ExpenseError("unauthorized", "The current user is not an active employee.");
     }
     return employee;
   }
 
-  // A pending stage is absent when its role is vacant (no assigned actor) or
-  // the assigned actor has not decided within 3 days of the stage becoming
-  // current. Either condition auto-skips the stage to the next one. The
-  // terminal stage is never auto-skipped: there is nowhere to advance it to,
-  // and payment completion must not be silently bypassed.
-  function catchUpAbsentStages(claim: ExpenseClaim, employeeIds: Set<string>): boolean {
+  // A pending stage is absent when its role is vacant (no assigned actor,
+  // or the assigned actor is not an active employee) or the assigned actor
+  // has not decided within 3 days of the stage becoming current. Either
+  // condition auto-skips the stage to the next one. The terminal stage is
+  // never auto-skipped: there is nowhere to advance it to, and payment
+  // completion must not be silently bypassed.
+  function catchUpAbsentStages(claim: ExpenseClaim, activeEmployeeIds: Set<string>): boolean {
     if (claim.status !== "in-approval" && claim.status !== "in-finance") return false;
     let changed = false;
     for (;;) {
       const index = claim.steps.findIndex((step) => step.status === "pending");
       if (index === -1 || isTerminalIndex(claim, index)) break;
       const step = claim.steps[index];
-      const vacant = !step.assignedActorId || !employeeIds.has(step.assignedActorId);
+      const vacant = !step.assignedActorId || !activeEmployeeIds.has(step.assignedActorId);
       const since = claim.currentStageSince ?? claim.submittedAt ?? claim.createdAt;
       const timedOut = now().getTime() - new Date(since).getTime() >= ABSENCE_TIMEOUT_MS;
       if (!vacant && !timedOut) break;
@@ -114,12 +176,12 @@ export function createExpenseCommands({
         id: idFactory("history"),
         kind: "skipped",
         detail: vacant
-          ? "Skipped: no employee currently holds this role"
+          ? "Skipped: no active employee holds this stage"
           : "Skipped: no response within 3 days",
         createdAt: decidedAt,
       });
       const next = claim.steps[index + 1];
-      claim.currentStage = next.roleId;
+      claim.currentStage = next.roleId ?? undefined;
       claim.currentActorId = next.assignedActorId;
       claim.currentStageSince = decidedAt;
       claim.status = isTerminalIndex(claim, index + 1) ? "in-finance" : "in-approval";
@@ -130,7 +192,7 @@ export function createExpenseCommands({
 
   async function catchUp(claim: ExpenseClaim): Promise<ExpenseClaim> {
     const employees = await store.listEmployees(claim.organizationId);
-    if (catchUpAbsentStages(claim, new Set(employees.map((employee) => employee.id)))) {
+    if (catchUpAbsentStages(claim, new Set(activeIds(employees)))) {
       claim.version += 1;
       await store.updateClaim(claim);
     }
@@ -140,7 +202,7 @@ export function createExpenseCommands({
   async function catchUpAll(claims: ExpenseClaim[], organizationId: string): Promise<ExpenseClaim[]> {
     if (claims.length === 0) return claims;
     const employees = await store.listEmployees(organizationId);
-    const employeeIds = new Set(employees.map((employee) => employee.id));
+    const employeeIds = new Set(activeIds(employees));
     for (const claim of claims) {
       if (catchUpAbsentStages(claim, employeeIds)) {
         claim.version += 1;
@@ -165,7 +227,7 @@ export function createExpenseCommands({
   // Broader than requireClaim: anyone who has ever acted on a claim (an
   // approver, even after it has moved past their stage) remains authorized
   // to look up its detail, alongside the requester, the currently assigned
-  // actor, and Finance/HR's standing oversight access. This is read-only.
+  // actor, and Finance's standing oversight access. This is read-only.
   // Mutation commands keep using the stricter requireClaim/requireAssignedClaim.
   async function requireViewableClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
     const employee = await requireEmployee(actorId);
@@ -177,7 +239,7 @@ export function createExpenseCommands({
     const isRequester = claim.requesterId === actorId;
     const isCurrentActor = claim.currentActorId === actorId;
     const actedBefore = claim.history.some((event) => event.actorId === actorId);
-    if (!isRequester && !isCurrentActor && !actedBefore && !isFinanceOrHr(employee)) {
+    if (!isRequester && !isCurrentActor && !actedBefore && !canAccessFinance(employee)) {
       throw new ExpenseError("unauthorized", "You cannot access this expense claim.");
     }
     return claim;
@@ -273,41 +335,49 @@ export function createExpenseCommands({
       }
       const employees = await store.listEmployees(requester.organizationId);
       const submittedAt = now().toISOString();
-      claim.steps = flow.steps.map((roleId) => {
-        const eligible = employees.find((candidate) => {
-          if (candidate.id === requester.id) return false;
-          if (candidate.role?.id !== roleId) return false;
-          if (candidate.role.departmentId !== null && candidate.role.departmentId !== undefined) {
-            if (requester.departmentId && candidate.departmentId && candidate.departmentId !== requester.departmentId) {
-              return false;
-            }
-          }
-          return true;
-        });
+      claim.steps = flow.steps.map((target) => {
+        const eligible = employees.find((candidate) => isEligible(requester, candidate, target));
         return {
           id: idFactory("step"),
-          roleId,
+          roleId: target.kind === "role" ? target.roleId : null,
           assignedActorId: eligible?.id,
           status: "pending" as const,
         };
       });
       claim.status = "in-approval";
-      claim.currentStage = claim.steps[0].roleId;
+      claim.currentStage = claim.steps[0].roleId ?? undefined;
       claim.currentActorId = claim.steps[0].assignedActorId;
       claim.currentStageSince = submittedAt;
       claim.submittedAt = submittedAt;
       claim.version += 1;
       claim.history.push({ id: idFactory("history"), kind: "submitted", actorId, createdAt: submittedAt });
-      catchUpAbsentStages(claim, new Set(employees.map((employee) => employee.id)));
+      catchUpAbsentStages(claim, new Set(activeIds(employees)));
       await store.updateClaim(claim);
       return claim;
     },
 
     async approveStage(actorId, claimId) {
-      const claim = await requireAssignedClaim(actorId, claimId);
+      const actor = await requireEmployee(actorId);
+      const claimRow = await store.getClaim(claimId);
+      if (!claimRow || claimRow.organizationId !== actor.organizationId) {
+        throw new ExpenseError("not-found", "Expense claim does not exist.");
+      }
+      const claim = await catchUp(claimRow);
+      if (claim.requesterId === actorId) {
+        throw new ExpenseError("unauthorized", "You cannot approve your own expense claim.");
+      }
       const index = claim.steps.findIndex((step) => step.status === "pending");
       if (index === -1 || isTerminalIndex(claim, index) || claim.status !== "in-approval") {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
+      }
+      // Pool semantics (stories 13/14): any eligible pool member may approve
+      // the current stage, not only the member it was assigned to. The
+      // assignment is the default actor; the pool is the authority.
+      const requester = (await store.listEmployees(claim.organizationId)).find(
+        (candidate) => candidate.id === claim.requesterId,
+      );
+      if (!requester || !isEligible(requester, actor, stepTarget(claim.steps[index]))) {
+        throw new ExpenseError("unauthorized", "You are not eligible to approve this claim's current stage.");
       }
       const step = claim.steps[index];
       const decidedAt = now().toISOString();
@@ -315,13 +385,13 @@ export function createExpenseCommands({
       step.decidedAt = decidedAt;
       claim.history.push({ id: idFactory("history"), kind: "approved", actorId, createdAt: decidedAt });
       const next = claim.steps[index + 1];
-      claim.currentStage = next.roleId;
+      claim.currentStage = next.roleId ?? undefined;
       claim.currentActorId = next.assignedActorId;
       claim.currentStageSince = decidedAt;
       claim.status = isTerminalIndex(claim, index + 1) ? "in-finance" : "in-approval";
       claim.version += 1;
       const employees = await store.listEmployees(claim.organizationId);
-      catchUpAbsentStages(claim, new Set(employees.map((employee) => employee.id)));
+      catchUpAbsentStages(claim, new Set(activeIds(employees)));
       await store.updateClaim(claim);
       return claim;
     },
@@ -383,28 +453,66 @@ export function createExpenseCommands({
       if (currentIndex === -1) {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
       }
+      const employees = await store.listEmployees(claim.organizationId);
+      const requester = employees.find((candidate) => candidate.id === claim.requesterId);
+      // Positional takeover: a later step targeting the actor's own role.
+      // Team-lead steps carry a null role id, so they can never be a
+      // takeover target.
       const targetIndex = claim.steps.findIndex(
         (step, index) => index > currentIndex && step.roleId === actor.role!.id,
       );
+      // Finance Head apex: when the actor holds Finance Head and no later
+      // step targets their role, they take over by skipping every pending
+      // stage up to the terminal stage and assigning the terminal stage to
+      // the first eligible holder of its role (a Finance Executive) rather
+      // than to themselves (story 19/20). The terminal stage itself is never
+      // skipped by any takeover.
+      const financeHeadApex = actor.role.code === FINANCE_HEAD_ROLE_CODE && targetIndex === -1;
+      const decidedAt = now().toISOString();
+      if (financeHeadApex) {
+        const terminalStepIndex = terminalIndex(claim);
+        const skippedLabels = skippedStepLabels(claim, currentIndex, terminalStepIndex);
+        for (let index = currentIndex; index < terminalStepIndex; index += 1) {
+          claim.steps[index].status = "skipped";
+          claim.steps[index].decidedAt = decidedAt;
+        }
+        const terminalTarget = stepTarget(claim.steps[terminalStepIndex]);
+        const eligible = requester
+          ? employees.find((candidate) => isEligible(requester, candidate, terminalTarget))
+          : undefined;
+        claim.steps[terminalStepIndex].assignedActorId = eligible?.id;
+        claim.history.push({
+          id: idFactory("history"),
+          kind: "takeover",
+          actorId,
+          detail: takeoverDetail(actor, reason, skippedLabels),
+          createdAt: decidedAt,
+        });
+        claim.currentStage = claim.steps[terminalStepIndex].roleId ?? undefined;
+        claim.currentActorId = eligible?.id;
+        claim.currentStageSince = decidedAt;
+        claim.status = "in-finance";
+        claim.version += 1;
+        await store.updateClaim(claim);
+        return claim;
+      }
       if (targetIndex === -1) {
         throw new ExpenseError("unauthorized", "You are not eligible to take over this claim.");
       }
-      const decidedAt = now().toISOString();
-      const skippedRoleIds: string[] = [];
+      const skippedLabels = skippedStepLabels(claim, currentIndex, targetIndex);
       for (let index = currentIndex; index < targetIndex; index += 1) {
         claim.steps[index].status = "skipped";
         claim.steps[index].decidedAt = decidedAt;
-        skippedRoleIds.push(claim.steps[index].roleId);
       }
       claim.steps[targetIndex].assignedActorId = actorId;
       claim.history.push({
         id: idFactory("history"),
         kind: "takeover",
         actorId,
-        detail: `Took over as ${actor.role.displayName} (reason: ${reason}); skipped ${skippedRoleIds.length} earlier stage(s)`,
+        detail: takeoverDetail(actor, reason, skippedLabels),
         createdAt: decidedAt,
       });
-      claim.currentStage = claim.steps[targetIndex].roleId;
+      claim.currentStage = claim.steps[targetIndex].roleId ?? undefined;
       claim.currentActorId = actorId;
       claim.currentStageSince = decidedAt;
       claim.status = isTerminalIndex(claim, targetIndex) ? "in-finance" : "in-approval";
@@ -451,8 +559,8 @@ export function createExpenseCommands({
 
     async listFinancePaymentQueue(actorId) {
       const employee = await requireEmployee(actorId);
-      if (!isFinanceOrHr(employee)) {
-        throw new ExpenseError("unauthorized", "Only Finance or HR can view the payment queue.");
+      if (!canAccessFinance(employee)) {
+        throw new ExpenseError("unauthorized", "Only Finance can view the payment queue.");
       }
       const claims = await catchUpAll(await store.listClaimsForOrganization(employee.organizationId), employee.organizationId);
       return claims.filter((claim) => claim.status === "in-finance" || claim.status === "paid");
@@ -460,8 +568,8 @@ export function createExpenseCommands({
 
     async updateComments(actorId, claimId, comments) {
       const employee = await requireEmployee(actorId);
-      if (!isFinanceOrHr(employee)) {
-        throw new ExpenseError("unauthorized", "Only Finance or HR can add comments.");
+      if (!canAccessFinance(employee)) {
+        throw new ExpenseError("unauthorized", "Only Finance can add comments.");
       }
       const claim = await store.getClaim(claimId);
       if (!claim || claim.organizationId !== employee.organizationId) {
@@ -483,8 +591,8 @@ export function createExpenseCommands({
     async listActivity(actorId, targetEmployeeId) {
       const actor = await requireEmployee(actorId);
       const target = targetEmployeeId ?? actorId;
-      if (target !== actorId && !isFinanceOrHr(actor)) {
-        throw new ExpenseError("unauthorized", "Only Finance or HR can view another employee's activity.");
+      if (target !== actorId && !canAccessFinance(actor)) {
+        throw new ExpenseError("unauthorized", "Only Finance can view another employee's activity.");
       }
       return store.listActivityForActor(actor.organizationId, target, ACTIVITY_EVENT_KINDS);
     },

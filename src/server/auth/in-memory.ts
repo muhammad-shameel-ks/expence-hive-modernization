@@ -24,6 +24,11 @@ export class InMemoryIdentityStore implements IdentityProvider {
   findById(id: string): Employee | null {
     return this.byId.get(id) ?? null;
   }
+
+  register(employee: Employee): void {
+    this.byEmail.set(employee.email.toLowerCase(), employee);
+    this.byId.set(employee.id, employee);
+  }
 }
 
 export class InMemoryTokenStore implements TokenStore {

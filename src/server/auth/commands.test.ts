@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createAuthCommands } from "./commands";
 import {
   InMemoryIdentityStore,
@@ -6,7 +6,7 @@ import {
   InMemoryTokenStore,
 } from "./in-memory";
 import { RecordingEmailProvider } from "./fakes";
-import type { Employee } from "./ports";
+import type { Employee, Provisioner } from "./ports";
 
 const ada: Employee = {
   id: "emp-ada",
@@ -16,12 +16,15 @@ const ada: Employee = {
 
 const fixedNow = new Date("2026-08-03T12:00:00.000Z");
 
-function buildAuth() {
+function buildAuth(
+  provision: (email: string) => Promise<Employee | null> = async () => null,
+) {
   let clock = fixedNow;
   const identityProvider = new InMemoryIdentityStore([ada]);
   const tokenStore = new InMemoryTokenStore();
   const sessionStore = new InMemorySessionStore();
   const emailProvider = new RecordingEmailProvider();
+  const provisioner: Provisioner = { provision };
   const auth = createAuthCommands({
     baseUrl: "http://localhost:3000",
     now: () => clock,
@@ -29,10 +32,12 @@ function buildAuth() {
     tokenStore,
     sessionStore,
     emailProvider,
+    provisioner,
   });
   return {
     auth,
     emailProvider,
+    identityProvider,
     sessionStore,
     advance(seconds: number) {
       clock = new Date(clock.getTime() + seconds * 1000);
@@ -52,13 +57,78 @@ describe("requestLogin", () => {
     expect(emailProvider.sent[0].url).toMatch(/^http:\/\/localhost:3000\/verify\?token=/);
   });
 
-  it("does not reveal whether an email is known", async () => {
+  it("does not reveal whether an email is known when provisioning is unavailable", async () => {
     const { auth, emailProvider } = buildAuth();
 
     const result = await auth.requestLogin({ email: "stranger@hive.local" });
 
     expect(result).toEqual({ accepted: true });
     expect(emailProvider.sent).toHaveLength(0);
+  });
+
+  it("provisions an unknown email and completes the magic link flow for it", async () => {
+    const provisioned: string[] = [];
+    const { auth, emailProvider, identityProvider } = buildAuth(async (email) => {
+      provisioned.push(email);
+      const employee: Employee = { id: "emp-provisioned", email, name: "John Doe" };
+      identityProvider.register(employee);
+      return employee;
+    });
+
+    const result = await auth.requestLogin({ email: "  John.Doe@Hive.Local " });
+
+    expect(result).toEqual({ accepted: true });
+    expect(provisioned).toEqual(["john.doe@hive.local"]);
+    expect(emailProvider.sent).toHaveLength(1);
+    expect(emailProvider.sent[0].to).toBe("john.doe@hive.local");
+    expect(identityProvider.findByEmail("john.doe@hive.local")).toMatchObject({
+      id: "emp-provisioned",
+      name: "John Doe",
+    });
+
+    const session = await auth.completeLogin({
+      token: tokenFrom(emailProvider.sent[0].url),
+    });
+    expect(session.employee).toMatchObject({ id: "emp-provisioned", email: "john.doe@hive.local" });
+  });
+
+  it("does not call the provisioner for a known email", async () => {
+    const provision = vi.fn(async () => null);
+    const { auth } = buildAuth(provision);
+
+    await auth.requestLogin({ email: ada.email });
+
+    expect(provision).not.toHaveBeenCalled();
+  });
+
+  it("stays silent when provisioning returns null", async () => {
+    const provision = vi.fn(async () => null);
+    const { auth, emailProvider } = buildAuth(provision);
+
+    const result = await auth.requestLogin({ email: "stranger@hive.local" });
+
+    expect(result).toEqual({ accepted: true });
+    expect(provision).toHaveBeenCalledWith("stranger@hive.local");
+    expect(emailProvider.sent).toHaveLength(0);
+  });
+
+  it("does not re-provision an email that is already known", async () => {
+    const provision = vi.fn(async (email: string) => {
+      const employee: Employee = { id: "emp-provisioned", email, name: "John Doe" };
+      return employee;
+    });
+    const { auth, emailProvider, identityProvider } = buildAuth(provision);
+    identityProvider.register({
+      id: "emp-provisioned",
+      email: "john.doe@hive.local",
+      name: "John Doe",
+    });
+
+    await auth.requestLogin({ email: "john.doe@hive.local" });
+    await auth.requestLogin({ email: "john.doe@hive.local" });
+
+    expect(provision).not.toHaveBeenCalled();
+    expect(emailProvider.sent).toHaveLength(2);
   });
 });
 

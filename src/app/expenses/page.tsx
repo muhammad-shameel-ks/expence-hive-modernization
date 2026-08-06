@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { Plus, LayoutList } from "lucide-react";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
+import { isExpenseError } from "@/server/expenses/commands";
 import { Button } from "@/components/ui/button";
 import styles from "./expenses.module.css";
 import { AppHeader } from "@/components/layout/app-header";
@@ -15,10 +16,21 @@ export default async function ExpensesPage() {
   if (!employee) {
     redirect("/login");
   }
-  const [workspace, activityEntries] = await Promise.all([
-    expenseCommands().getWorkspace(employee.id),
-    expenseCommands().listActivity(employee.id),
-  ]);
+  let workspace;
+  let activityEntries;
+  try {
+    [workspace, activityEntries] = await Promise.all([
+      expenseCommands().getWorkspace(employee.id),
+      expenseCommands().listActivity(employee.id),
+    ]);
+  } catch (error) {
+    // A deactivated employee still holds a session but is rejected by the
+    // expense domain; send them back to sign-in instead of crashing.
+    if (isExpenseError(error) && error.code === "unauthorized") {
+      redirect("/login");
+    }
+    throw error;
+  }
   const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
   const activity = activityEntries.map(activityEntryToItem);
 
