@@ -23,6 +23,18 @@ const CATEGORY_SUB_CATEGORIES: Record<string, string[]> = {
   Training: ["Course Fee", "Certification", "Conference"],
 };
 
+// Mirrors the server's default cap so an oversized file fails fast without
+// a round trip. The server stays authoritative (the cap is configurable
+// there); this is a convenience check, not a security boundary.
+const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024;
+
+function receiptValidationError(file: File): string | null {
+  const acceptedType = file.type === "" || file.type.startsWith("image/") || file.type === "application/pdf";
+  if (!acceptedType) return "Receipts must be a JPEG, PNG, or PDF file.";
+  if (file.size > MAX_RECEIPT_SIZE_BYTES) return "The receipt is larger than 10 MB.";
+  return null;
+}
+
 // Pre-filled state when continuing an existing draft; receiptFileName is the
 // name of the receipt already stored with the draft (it cannot be replaced).
 export type ExpenseDraftInitial = {
@@ -65,7 +77,17 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
 
   function chooseReceipt(event: ChangeEvent<HTMLInputElement>) {
     const file = event.target.files?.[0];
-    if (file) setReceipt(file);
+    if (!file) return;
+    const validationError = receiptValidationError(file);
+    if (validationError) {
+      // Clear the input so picking the same file again re-triggers change.
+      event.target.value = "";
+      setReceipt(null);
+      setError(validationError);
+      return;
+    }
+    setReceipt(file);
+    setError(null);
   }
 
   async function saveDraft(event?: FormEvent) {
@@ -87,7 +109,14 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
         method: claimId ? "PATCH" : "POST",
         body,
       });
-      const payload = (await response.json()) as { claim?: { id: string }; message?: string };
+      // A non-JSON response (for example a platform-level error page) must
+      // not escape as an unhandled exception; fall back to a generic message.
+      let payload: { claim?: { id: string }; message?: string } = {};
+      try {
+        payload = (await response.json()) as { claim?: { id: string }; message?: string };
+      } catch {
+        payload = {};
+      }
       if (!response.ok || !payload.claim) throw new Error(payload.message ?? "We could not save this draft.");
       setClaimId(payload.claim.id);
       setStep(3);
@@ -130,6 +159,7 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
           receipt={receipt}
           existingReceiptName={initial?.receiptFileName}
           chooseReceipt={chooseReceipt}
+          error={error}
           onSkip={() => setStep(2)}
           onContinue={() => setStep(2)}
         />
@@ -165,12 +195,14 @@ function ReceiptStep({
   receipt,
   existingReceiptName,
   chooseReceipt,
+  error,
   onSkip,
   onContinue,
 }: {
   receipt: File | null;
   existingReceiptName?: string;
   chooseReceipt: (event: ChangeEvent<HTMLInputElement>) => void;
+  error: string | null;
   onSkip: () => void;
   onContinue: () => void;
 }) {
@@ -196,6 +228,7 @@ function ReceiptStep({
               <button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onSkip}>Skip for now</button>
             </div>
           ) : null}
+          {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
           {attachedName ? (
             <div className={styles.receiptPreview}>
               {existingReceiptName && !receipt ? `Receipt already attached: ${attachedName}` : `Receipt ready: ${attachedName}`}

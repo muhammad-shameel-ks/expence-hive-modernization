@@ -298,6 +298,31 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(422);
   });
 
+  it("rejects an oversized request body from content-length before buffering it", async () => {
+    const { commands, blobStore } = build();
+    // Browsers always send content-length for multipart form posts; the
+    // handler must reject an oversized body from that header without
+    // buffering it. (undici omits the header on synthetic Requests, so the
+    // test sets it explicitly, like a browser would.)
+    const form = multipartBody(BASE_FIELDS, { name: "huge.pdf", type: "application/pdf", data: PDF_RECEIPT });
+    const response = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: form,
+        headers: { "content-length": String(MAX_RECEIPT_SIZE_BYTES + 2 * 1024 * 1024) },
+      }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "too-large",
+      message: "The receipt is larger than 10 MB.",
+    });
+    expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
   it("serves the receipt bytes to the requester with the right headers", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
@@ -318,6 +343,7 @@ describe("expense HTTP boundary", () => {
     expect(response.headers.get("content-type")).toBe("image/jpeg");
     expect(response.headers.get("content-length")).toBe(String(JPEG_RECEIPT.byteLength));
     expect(response.headers.get("content-disposition")).toBe('inline; filename="boarding-pass.jpg"');
+    expect(response.headers.get("cache-control")).toContain("no-store");
     await expect(response.arrayBuffer()).resolves.toEqual(JPEG_RECEIPT.buffer);
   });
 

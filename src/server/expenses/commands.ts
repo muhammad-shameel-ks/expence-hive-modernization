@@ -15,7 +15,7 @@ import {
   type ReceiptUploadInput,
   type UpdateExpenseDraftInput,
 } from "./ports";
-import { MAX_RECEIPT_SIZE_BYTES, resolveReceiptContentType } from "./receipt-validation";
+import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel, resolveReceiptContentType } from "./receipt-validation";
 
 const ABSENCE_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_REASON_CODE_LENGTH = 200;
@@ -110,7 +110,7 @@ function takeoverDetail(
   return `Took over as ${actor.role!.displayName} (reason: ${reason}); skipped ${skippedLabels.length} earlier stage(s)${skipped}`;
 }
 
-export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict";
+export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict" | "too-large";
 
 export class ExpenseError extends Error {
   constructor(readonly code: ExpenseErrorCode, message: string) {
@@ -290,7 +290,7 @@ export function createExpenseCommands({
       throw new ExpenseError("validation", "Receipts must be a JPEG, PNG, or PDF file.");
     }
     if (input.data.byteLength > MAX_RECEIPT_SIZE_BYTES) {
-      throw new ExpenseError("validation", "The receipt is larger than 10 MB.");
+      throw new ExpenseError("validation", `The receipt is larger than ${receiptSizeLimitLabel()}.`);
     }
     const contentSha256 = createHash("sha256").update(input.data).digest("hex");
     const attachmentId = idFactory("attachment");

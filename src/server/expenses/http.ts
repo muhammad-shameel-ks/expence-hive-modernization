@@ -1,10 +1,29 @@
-import { isExpenseError, type ExpenseCommands } from "./commands";
+import { ExpenseError, isExpenseError, type ExpenseCommands } from "./commands";
 import type { CreateExpenseDraftInput, ReceiptUploadInput } from "./ports";
+import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel } from "./receipt-validation";
+
+// The receipt cap applies to the file's own bytes; the whole multipart body
+// additionally carries the envelope (boundaries, part headers, and the eight
+// text fields). The content-length pre-check allows that much headroom so a
+// file exactly at the cap is not falsely rejected.
+const MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 1024 * 1024;
 
 // Parses the receipt-first form's multipart body: eight text fields plus an
 // optional file part named "receipt". Returns null on any malformed part;
 // the size cap and content-type authority live in the command layer.
 async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput | null> {
+  // Reject oversized bodies before formData() buffers them: the command
+  // layer's cap can only run after the whole body is in memory, so the
+  // content-length header is checked first and returns 413 without reading
+  // the bytes. Bodies without a content-length header (chunked encoding)
+  // fall through to the command-layer check.
+  const contentLength = Number(request.headers.get("content-length"));
+  if (
+    Number.isFinite(contentLength) &&
+    contentLength > MAX_RECEIPT_SIZE_BYTES + MULTIPART_ENVELOPE_ALLOWANCE_BYTES
+  ) {
+    throw new ExpenseError("too-large", `The receipt is larger than ${receiptSizeLimitLabel()}.`);
+  }
   const form = await request.formData();
   const title = form.get("title");
   const category = form.get("category");
@@ -108,6 +127,9 @@ export async function handleGetReceiptRequest(
         "content-type": receipt.contentType,
         "content-length": String(receipt.sizeBytes),
         "content-disposition": `inline; filename="${sanitizeFileName(receipt.fileName)}"`,
+        // Receipt bytes are sensitive, authorization-checked data: never let
+        // a shared or on-disk cache serve them without a fresh access check.
+        "cache-control": "private, no-store",
       },
     });
   } catch (error) {
@@ -264,7 +286,16 @@ function expenseErrorResponse(error: unknown): Response {
     console.error("expense command failed", error instanceof Error ? error : String(error));
     return Response.json({ error: "internal" }, { status: 500 });
   }
-  const status = error.code === "unauthorized" ? 403 : error.code === "not-found" ? 404 : error.code === "conflict" ? 409 : 422;
+  const status =
+    error.code === "unauthorized"
+      ? 403
+      : error.code === "not-found"
+        ? 404
+        : error.code === "conflict"
+          ? 409
+          : error.code === "too-large"
+            ? 413
+            : 422;
   return Response.json({ error: error.code, message: error.message }, { status });
 }
 
