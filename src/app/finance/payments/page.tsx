@@ -12,7 +12,17 @@ export default async function FinancePaymentsPage() {
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) redirect("/login");
 
-  const workspace = await expenseCommands().getWorkspace(employee.id);
+  let workspace;
+  try {
+    workspace = await expenseCommands().getWorkspace(employee.id);
+  } catch (error) {
+    // A deactivated employee still holds a session but is rejected by the
+    // expense domain; send them back to sign-in instead of crashing.
+    if (isExpenseError(error) && error.code === "unauthorized") {
+      redirect("/login");
+    }
+    throw error;
+  }
 
   let claims;
   try {
@@ -25,7 +35,7 @@ export default async function FinancePaymentsPage() {
           <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-10">
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Payment queue</h1>
             <p className="mt-4 text-sm text-muted-foreground">
-              Only Finance and HR can view this page.
+              Only Finance can view this page.
             </p>
           </div>
         </main>

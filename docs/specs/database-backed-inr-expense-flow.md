@@ -8,11 +8,13 @@ It extends `docs/specs/expensehive-modernization.md` and `docs/specs/hr-administ
 
 It does not replace the broader domain decisions for permission requests, multi-line claims, delegates, attachments, or workflow administration.
 
+> Note: the role and user vocabulary in this specification (HR, CEO, IT reviewer, Finance reviewer, approval pools) is superseded by the role and user management spec, issue #39 (https://github.com/muhammad-shameel-ks/expence-hive-modernization/issues/39). The locked predefined roles are Intern, Executive, Manager, Finance Head, and Finance Executive, plus custom roles; HR and CEO are retired; and flow steps target a role or the requester's assigned named team lead.
+
 ## Problem Statement
 
 The employee expense dashboard currently renders a hard-coded in-memory list of expenses and history events.
 
-The dashboard cannot yet prove that an employee, an approver, the CEO, and Finance can use separate identities to move a real claim through an auditable approval process.
+The dashboard cannot yet prove that an employee, an approver, a Finance Head, and a Finance Executive can use separate identities to move a real claim through an auditable approval process.
 
 The current development authentication adapter also stores employees and sessions in memory, which prevents the first vertical slice from being fully backed by the local PostgreSQL application boundary.
 
@@ -27,11 +29,10 @@ Build a PostgreSQL-backed reimbursement flow for a single-line expense claim.
 The standard local demonstration path will be:
 
 1. An employee creates and submits an INR claim.
-2. The employee's application-managed manager approves it.
-3. An IT reviewer approves it.
-4. The CEO approves it.
-5. Finance verifies the claim and marks it paid.
-6. The employee sees `Approved and paid` and the complete history.
+2. A Manager-role holder in the employee's department approves it.
+3. The Finance Head approves it.
+4. The Finance Executive verifies the claim and marks it paid.
+5. The employee sees `Approved and paid` and the complete history.
 
 The employee dashboard will consume server-side read models rather than importing hard-coded expense data.
 
@@ -93,9 +94,9 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 20. As an IT reviewer, I want my decision to advance or stop only the claim assigned to my stage, so that I cannot act outside my authority.
 
-21. As the CEO, I want to review claims at the CEO stage, so that the standard reimbursement path includes executive approval.
+21. As a Finance Head, I want to review claims at the Finance Head stage, so that the standard reimbursement path includes the apex financial review.
 
-22. As Finance, I want to see claims after CEO approval, so that I can verify the payment prerequisites.
+22. As a Finance Executive, I want to see claims after the Finance Head stage, so that I can verify the payment prerequisites.
 
 23. As Finance, I want to mark a verified claim as paid, so that the employee receives a completed reimbursement status.
 
@@ -109,7 +110,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 28. As an authorized actor, I want concurrent decisions on one exclusive stage to allow only one successful transition, so that the approval history remains consistent.
 
-29. As a local developer, I want seeded manager, IT, CEO, Finance, and employee identities, so that every stage of the standard path can be exercised.
+29. As a local developer, I want seeded Manager, Finance Head, Finance Executive, and employee identities, so that every stage of the standard path can be exercised.
 
 30. As a local developer, I want seeded claim fixtures to be stored in PostgreSQL, so that the dashboard has useful data without importing a mock-data module.
 
@@ -119,13 +120,13 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 33. As an employee, I want a "My activity" feed of every decision and comment I have made on any claim, so that my actions stay visible after the claim moves past my stage and drops out of my workspace list.
 
-34. As a Finance user or HR, I want to view any employee's individual activity feed, so that I can audit a single person's decisions and comments.
+34. As a Finance user, I want to view any employee's individual activity feed, so that I can audit a single person's decisions and comments.
 
 35. As a Finance Head, I want an organization-wide activity feed of every employee's decisions and comments, so that the apex financial role can audit the whole organization from one place.
 
 36. As a user who has ever acted on a claim, I want to reopen its detail view even after it has moved past my stage, so that a decision I made remains traceable.
 
-37. As a Finance Head, I want the same standing oversight as Finance and HR: payout details, comments, the finance payment queue, and any employee's activity feed, so that the apex financial role can audit and process everything without extra assignments.
+37. As a Finance Head, I want the same standing oversight as Finance: payout details, comments, the finance payment queue, and any employee's activity feed, so that the apex financial role can audit and process everything without extra assignments.
 
 ## Implementation Decisions
 
@@ -150,12 +151,10 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Seed one organization boundary for local development.
 - Seed Muhammad Shameel as the employee used for the standard demonstration claim.
 - Assign Ada Lovelace as Muhammad Shameel's application-managed manager.
-- Add a real CEO role and assign it to the seeded CEO identity.
-- Assign the IT reviewer role to IT Head.
-- Assign the Finance reviewer role to Finance Officer.
-- Retain CEO delegate as a separate role for the later safe-list and delegated-authority slice.
-- Seed the Employee, Manager, IT reviewer, Finance reviewer, Finance Head, CEO, HR administrator, System administrator, and CEO delegate role vocabulary as needed by the current application.
-- Seed the Finance Head role as the apex financial role: it bypasses every earlier stage in its flow and shares Finance/HR standing oversight over payout details, comments, the payment queue, and individual activity feeds.
+- Retired by issue #39: add a real CEO role and assign it to the seeded CEO identity.
+- Retired by issue #39: retain CEO delegate as a separate role for the later safe-list and delegated-authority slice.
+- Seed the Intern, Executive, Manager, Finance Head, Finance Executive, Superadmin, and at least one custom role (e.g. Team Lead) vocabulary required by the current application. Superseded by issue #39 for the role catalog: HR, CEO, IT reviewer, and Finance reviewer role codes are removed.
+- Seed the Finance Head role as the apex financial role: it bypasses every earlier stage in its flow and shares Finance standing oversight over payout details, comments, the payment queue, and individual activity feeds.
 - Keep directory suggestions separate from application-managed manager and approval assignments.
 
 ### Reimbursement Model
@@ -172,28 +171,26 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 ### Workflow and Approval Steps
 
 - Assign the standard reimbursement workflow to the seeded organization.
-- The ordered executable path will contain Manager approval, IT approval, CEO approval, Finance verification, and payment completion.
-- Resolve the Manager stage through the employee's application-managed manager assignment.
-- Resolve the IT stage through the IT reviewer role or pool.
-- Resolve the CEO stage through the CEO role.
-- Resolve the Finance stage through the Finance reviewer role or pool.
+- The ordered executable path will contain Manager approval, Finance Head approval, Finance Executive verification, and payment completion. Superseded by issue #39 for the stage vocabulary: the IT review and CEO stages are retired.
+- Resolve the Manager stage through the active Manager-role holders in the requester's department (any one of them approves).
+- Resolve the Finance Head and Finance Executive stages org-wide through their role holders.
 - Capture the workflow version or equivalent immutable workflow reference on each submitted claim.
 - Create request-specific approval steps when a claim is submitted rather than resolving authority only at display time.
 - An approval step can be pending, approved, rejected, skipped, or completed according to its node type.
 - A normal approver can act only on the currently assigned pending stage.
-- One eligible person completes an ordinary role or pool stage.
-- Missing assignment behavior will follow the broader specification by recording a skipped stage and notifying administrators, but the seeded happy path must have all assignments present.
-- CEO takeover, delegate authority, higher-stage override, amount overrun approval, and arbitrary workflow branching remain later slices.
+- One eligible person completes an ordinary role stage. Superseded by issue #39: pools are not separate entities; the Manager step is an implicit same-department pool with quorum one.
+- Missing assignment behavior will follow the broader specification by recording a skipped stage and notifying Superadmin, but the seeded happy path must have all assignments present.
+- Retired by issue #39: CEO takeover and delegate authority. Higher-stage override and amount overrun approval remain later slices; arbitrary workflow branching remains out of scope.
 
 ### Claim Lifecycle
 
 - A claim may be saved as `draft` without creating approval steps.
 - Submission changes the claim to an active approval state and creates its ordered approval steps in one transaction.
-- Successful Manager, IT, and CEO decisions advance the claim to the next stage.
+- Successful Manager and Finance Head decisions advance the claim to the next stage.
 - A rejection at any stage, including Finance, changes the claim to `rejected` immediately and records the reason.
 - A rejected claim is terminal: it is never edited or resubmitted, and there is no correction or send-back cycle.
 - An employee may submit a new, distinct claim for the same expense after a rejection; the new claim restarts at the first approval stage and preserves the rejected claim's history unchanged.
-- CEO approval advances the claim to Finance verification.
+- Finance Head approval advances the claim to Finance Executive verification.
 - Finance verification records a distinct verification action and advances the claim to payment completion.
 - Finance payment marking records a distinct payment action and changes the final employee-facing status to `Approved and paid`.
 - Paid claims are immutable through ordinary employee editing.
@@ -204,7 +201,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Every history event records the organization, claim, actor, authority or role exercised, action, reason where required, workflow reference, and timestamp.
 - Store Finance verification and payment information in a payment record or equivalent normalized records.
 - Record verifier, payment actor, verification timestamp, payment timestamp, and payment status separately.
-- History visibility will be restricted to the requester, Finance/HR (including Finance Head), the currently assigned actor, and anyone who has ever acted on the claim such as an earlier-stage approver or a commenter.
+- History visibility will be restricted to the requester, Finance role holders (including Finance Head), the currently assigned actor, and anyone who has ever acted on the claim such as an earlier-stage approver or a commenter.
 
 ### Role-Aware Workspace
 
@@ -220,9 +217,9 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 - The personal "My activity" feed will list every decision and comment the current user made on any claim in the organization, including claims no longer assigned to them.
 - The personal feed derives from append-only history events, so an action stays visible even after the claim moves past the actor's stage.
-- Finance, HR, and Finance Head may view any employee's individual activity feed; other employees can only view their own.
+- Finance role holders (Finance Head and Finance Executive) may view any employee's individual activity feed; other employees can only view their own.
 - The organization-wide activity feed will list every employee's decisions and comments and is restricted to Finance Head alone.
-- Comment events authored by Finance or HR will appear in the commenter's personal feed and in the organization feed, matching how approval and rejection events appear.
+- Comment events authored by Finance will appear in the commenter's personal feed and in the organization feed, matching how approval and rejection events appear.
 
 ### INR Localization
 
@@ -257,7 +254,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Add protected route coverage for unauthenticated access, unauthorized access, current-user filtering, role-aware inbox results, and claim detail visibility.
 - Add read-model coverage for dashboard statistics, INR formatting inputs, empty states, current stage, next action, blocking reason, and final paid status.
 - Add read-model and command coverage for the personal and organization-wide activity feeds, including role restrictions, actor attribution, and the claim-detail visibility rule for anyone who has ever acted on the claim.
-- Add end-to-end browser coverage for switching from the employee identity to Manager, IT, CEO, and Finance identities and completing the claim-to-paid path.
+- Add end-to-end browser coverage for switching from the employee identity to Manager, Finance Head, and Finance Executive identities and completing the claim-to-paid path.
 - Add end-to-end coverage that a rejected claim is terminal and that the employee can submit a new claim for the same expense afterward.
 - Add end-to-end coverage that a paid claim cannot be edited through the normal employee interface.
 - Add responsive and keyboard checks for claim creation, review, approval actions, payment actions, and the role-aware workspace.
@@ -269,7 +266,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Microsoft Graph synchronization.
 - Permission requests and linked pre-approvals.
 - Multi-line claims in the employee UI.
-- CEO safe lists, CEO delegates, takeover, hierarchy override, and override reason codes.
+- Retired by issue #39: CEO safe lists and CEO delegates. Higher-stage takeover and override reason codes were later implemented as takeover behavior.
 - Amount-overrun approval behavior.
 - Arbitrary workflow branches, loops, parallel approvals, or general BPM behavior.
 - Production payment execution or bank and accounting integrations.
@@ -284,8 +281,10 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 This slice is intentionally narrower than the full modernization specification but must be executable from creation through payment using real persisted state.
 
-The standard seeded flow is a demonstration path and does not imply that every future department must use Manager, IT, CEO, and Finance in exactly that order.
+The standard seeded flow is a demonstration path and does not imply that every future department must use Manager, Finance Head, and Finance Executive in exactly that order.
 
 Workflow configuration should remain behind an application boundary so the initial ordered path can later be replaced by published workflow versions without moving authority into client components.
 
-The next domain slice should add permission requests, multi-line claims, attachment storage, CEO delegates, takeover behavior, and expanded workflow configuration on top of the persisted claim and history model established here.
+The next domain slice should add permission requests, multi-line claims, attachment storage, and expanded workflow configuration on top of the persisted claim and history model established here.
+
+CEO delegates were retired by issue #39, and takeover behavior is implemented rather than remaining a later slice.

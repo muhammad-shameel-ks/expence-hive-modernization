@@ -1,8 +1,6 @@
-import { FINANCE_OR_HR_ROLE_CODES, ORGANIZATION_ACTIVITY_ROLE_CODES, type ExpenseRole } from "@/server/expenses/ports";
+import { resolveRoleCapabilities } from "@/server/shared/authorization";
+import type { ExpenseRole } from "@/server/expenses/ports";
 import styles from "@/app/expenses/expenses.module.css";
-
-const EMPLOYEE_ROLE_CODE = "employee";
-const ADMIN_CONSOLE_ROLE_CODES = ["superadmin", "hr-administrator"];
 
 export function AppHeader({
   employeeName,
@@ -13,11 +11,11 @@ export function AppHeader({
   role?: ExpenseRole | null;
   activePath?: "/expenses" | "/expenses/all" | "/finance/payments" | "/finance/activity" | "/admin";
 }) {
-  const isApprover = role !== null && role.code !== EMPLOYEE_ROLE_CODE && !FINANCE_OR_HR_ROLE_CODES.includes(role.code);
-  const canViewPaymentQueue = role !== null && FINANCE_OR_HR_ROLE_CODES.includes(role.code);
-  const canViewOrganizationActivity = role !== null && ORGANIZATION_ACTIVITY_ROLE_CODES.includes(role.code);
-  const canViewAdminConsole =
-    (role !== null && ADMIN_CONSOLE_ROLE_CODES.includes(role.code)) || activePath === "/admin";
+  const capabilities = resolveRoleCapabilities(role?.code);
+  const isApprover = capabilities.canApprove;
+  const canViewPaymentQueue = capabilities.canAccessFinance;
+  const canViewOrganizationActivity = capabilities.canViewOrganizationActivity;
+  const canViewAdminConsole = capabilities.canAccessAdminConsole || activePath === "/admin";
 
   return (
     <header className={styles.topBar}>

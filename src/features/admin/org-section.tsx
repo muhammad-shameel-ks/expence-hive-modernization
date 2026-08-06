@@ -24,7 +24,6 @@ export function OrgSection({
   const [departmentName, setDepartmentName] = useState("");
   const [roleCode, setRoleCode] = useState("");
   const [roleDisplayName, setRoleDisplayName] = useState("");
-  const [roleDepartmentId, setRoleDepartmentId] = useState("");
   const [savingDepartment, setSavingDepartment] = useState(false);
   const [savingRole, setSavingRole] = useState(false);
 
@@ -62,7 +61,6 @@ export function OrgSection({
         body: JSON.stringify({
           code: roleCode,
           displayName: roleDisplayName,
-          departmentId: roleDepartmentId || null,
         }),
       });
       if (!response.ok) {
@@ -74,7 +72,6 @@ export function OrgSection({
       onMessage(`${body.role.displayName} role created.`);
       setRoleCode("");
       setRoleDisplayName("");
-      setRoleDepartmentId("");
     } catch {
       onError("The role could not be saved. Please try again.");
     } finally {
@@ -137,22 +134,6 @@ export function OrgSection({
             onChange={(event) => setRoleDisplayName(event.target.value)}
             placeholder="Team Lead"
           />
-          <label className="mt-3 block text-xs font-bold uppercase tracking-[0.08em] text-[#8a96a8]" htmlFor="role-department">
-            Department (optional)
-          </label>
-          <select
-            id="role-department"
-            className="mt-2 h-10 w-full rounded-lg border border-[#d6dfe8] bg-white px-3 text-sm text-[#526278] outline-none focus:ring-2 focus:ring-[#b7d8e5]"
-            value={roleDepartmentId}
-            onChange={(event) => setRoleDepartmentId(event.target.value)}
-          >
-            <option value="">Organization-wide</option>
-            {departments.filter((department) => department.active).map((department) => (
-              <option key={department.id} value={department.id}>
-                {department.name}
-              </option>
-            ))}
-          </select>
           <Button
             className="mt-4"
             disabled={savingRole || !roleCode.trim() || !roleDisplayName.trim()}
@@ -162,9 +143,14 @@ export function OrgSection({
           </Button>
           <ul className="mt-4 space-y-1 text-xs text-[#526278]">
             {roles.map((role) => (
-              <li key={role.id}>
-                {role.displayName}
-                {role.active ? "" : " (inactive)"}
+              <li key={role.id} className="flex items-center gap-2">
+                <span>{role.displayName}</span>
+                {role.locked ? (
+                  <span className="rounded-full bg-[#f1f3f4] px-2 py-0.5 text-[0.6rem] font-bold uppercase tracking-wider text-[#5f6368]">
+                    Locked
+                  </span>
+                ) : null}
+                {role.active ? "" : <span className="text-[#a8384d]">(inactive)</span>}
               </li>
             ))}
           </ul>

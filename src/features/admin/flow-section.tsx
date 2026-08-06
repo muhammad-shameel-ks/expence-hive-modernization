@@ -24,8 +24,15 @@ import { SectionHeading } from "./section-heading";
 
 type FlowStep = {
   id: number;
-  roleId: string;
+  kind: "role" | "team-lead";
+  roleId: string | null;
 };
+
+const TEAM_LEAD_LABEL = "Team lead";
+
+function stepFromInput(input: { kind: "role"; roleId: string } | { kind: "team-lead" }, id: number): FlowStep {
+  return input.kind === "role" ? { id, kind: "role", roleId: input.roleId } : { id, kind: "team-lead", roleId: null };
+}
 
 export function FlowSection({
   flows,
@@ -54,7 +61,7 @@ export function FlowSection({
   const [flowName, setFlowName] = useState(flows[0]?.name ?? "Standard reimbursement");
   const [targetRoleId, setTargetRoleId] = useState(flows[0]?.roleId ?? firstRoleId);
   const [steps, setSteps] = useState<FlowStep[]>(
-    flows[0]?.steps.map((roleId, index) => ({ id: index, roleId })) ?? [],
+    flows[0]?.steps.map((step, index) => stepFromInput(step, index)) ?? [],
   );
   const [saving, setSaving] = useState(false);
   const [publishing, setPublishing] = useState<string | null>(null);
@@ -110,7 +117,7 @@ export function FlowSection({
     setEditingFlowStatus(flow.status);
     setFlowName(flow.name);
     setTargetRoleId(flow.roleId);
-    setSteps(flow.steps.map((roleId, index) => ({ id: index, roleId })));
+    setSteps(flow.steps.map((step, index) => stepFromInput(step, index)));
     nextStepId.current = flow.steps.length;
     onMessage(`Loaded flow "${flow.name}" into editor.`);
     if (typeof window !== "undefined") {
@@ -142,7 +149,9 @@ export function FlowSection({
             flowId: editingFlowId,
             name: flowName,
             roleId: targetRoleId,
-            steps: steps.map((step) => step.roleId),
+            steps: steps.map((step) =>
+              step.kind === "role" ? { kind: "role", roleId: step.roleId } : { kind: "team-lead" },
+            ),
           }),
         });
         if (!response.ok) {
@@ -160,7 +169,9 @@ export function FlowSection({
           body: JSON.stringify({
             name: flowName,
             roleId: targetRoleId,
-            steps: steps.map((step) => step.roleId),
+            steps: steps.map((step) =>
+              step.kind === "role" ? { kind: "role", roleId: step.roleId } : { kind: "team-lead" },
+            ),
           }),
         });
         if (!response.ok) {
@@ -182,7 +193,7 @@ export function FlowSection({
     } catch (caught) {
       onError(
         caught instanceof Error && caught.message === "unauthorized"
-          ? "Only Superadmin and HR administrators can configure flows."
+          ? "Only Superadmin can configure flows."
           : "The flow could not be saved. Please try again.",
       );
     } finally {
@@ -221,8 +232,15 @@ export function FlowSection({
   const addStep = (roleIdToAdd: string) => {
     const id = nextStepId.current;
     nextStepId.current += 1;
-    setSteps((current) => [...current, { id, roleId: roleIdToAdd }]);
+    setSteps((current) => [...current, { id, kind: "role", roleId: roleIdToAdd }]);
     onMessage(`${roleName(roleIdToAdd)} added to the flow.`);
+  };
+
+  const addTeamLeadStep = () => {
+    const id = nextStepId.current;
+    nextStepId.current += 1;
+    setSteps((current) => [...current, { id, kind: "team-lead", roleId: null }]);
+    onMessage(`${TEAM_LEAD_LABEL} added to the flow.`);
   };
 
   const insertStepAt = (position: number, roleIdToAdd: string) => {
@@ -230,10 +248,15 @@ export function FlowSection({
     nextStepId.current += 1;
     setSteps((current) => {
       const next = [...current];
-      next.splice(position, 0, { id, roleId: roleIdToAdd });
+      next.splice(position, 0, { id, kind: "role", roleId: roleIdToAdd });
       return next;
     });
     onMessage(`${roleName(roleIdToAdd)} inserted at position ${position + 1}.`);
+  };
+
+  const stepLabel = (step: FlowStep) => {
+    if (step.kind === "team-lead") return TEAM_LEAD_LABEL;
+    return roleName(step.roleId ?? "");
   };
 
   const moveStep = (index: number, direction: -1 | 1) => {
@@ -254,8 +277,8 @@ export function FlowSection({
       next.splice(targetIndex, 0, movedItem);
       return next;
     });
-    const movedRole = steps[draggedIndex]?.roleId;
-    onMessage(`Moved ${roleName(movedRole ?? "")} to step ${targetIndex + 1}.`);
+    const moved = steps[draggedIndex];
+    onMessage(`Moved ${moved ? stepLabel(moved) : "step"} to step ${targetIndex + 1}.`);
     setDraggedIndex(null);
     setDragOverIndex(null);
   };
@@ -470,20 +493,31 @@ export function FlowSection({
                       </div>
 
                       <div className="mt-2.5">
-                        <label className="sr-only" htmlFor={`node-role-${step.id}`}>Role for step {index + 1}</label>
-                        <select
-                          id={`node-role-${step.id}`}
-                          className="h-8 w-full rounded-lg border border-[#cbd5e1] bg-[#f8fafc] px-2 text-xs font-semibold text-[#1e293b] outline-none focus:border-[#196d86]"
-                          value={step.roleId}
-                          onChange={(e) => {
-                            const newRole = e.target.value;
-                            setSteps((current) => current.map((item) => item.id === step.id ? { ...item, roleId: newRole } : item));
-                          }}
-                        >
-                          {activeRoles.map((role) => (
-                            <option key={role.id} value={role.id}>{role.displayName}</option>
-                          ))}
-                        </select>
+                        {step.kind === "team-lead" ? (
+                          <div className="flex h-8 w-full items-center justify-between gap-2 rounded-lg border border-[#cbd5e1] bg-[#f8fafc] px-2 text-xs font-semibold text-[#1e293b]">
+                            <span>{TEAM_LEAD_LABEL}</span>
+                            <span className="rounded-full bg-[#e8f2f6] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-[#196d86]">
+                              Named person
+                            </span>
+                          </div>
+                        ) : (
+                          <>
+                            <label className="sr-only" htmlFor={`node-role-${step.id}`}>Role for step {index + 1}</label>
+                            <select
+                              id={`node-role-${step.id}`}
+                              className="h-8 w-full rounded-lg border border-[#cbd5e1] bg-[#f8fafc] px-2 text-xs font-semibold text-[#1e293b] outline-none focus:border-[#196d86]"
+                              value={step.roleId ?? ""}
+                              onChange={(e) => {
+                                const newRole = e.target.value;
+                                setSteps((current) => current.map((item) => item.id === step.id ? { ...item, kind: "role", roleId: newRole } : item));
+                              }}
+                            >
+                              {activeRoles.map((role) => (
+                                <option key={role.id} value={role.id}>{role.displayName}</option>
+                              ))}
+                            </select>
+                          </>
+                        )}
                       </div>
 
                       <div className="mt-3 flex items-center justify-between text-[0.62rem] text-[#64748b]">
@@ -535,6 +569,16 @@ export function FlowSection({
             <div className="mt-4 flex flex-wrap items-center justify-between gap-3 border-t border-[#e2e8f0] pt-4 text-xs">
               <span className="font-semibold text-[#475569]">Quick Add Stage Node:</span>
               <div className="flex flex-wrap gap-2">
+                <button
+                  onClick={addTeamLeadStep}
+                  className="flex items-center gap-1.5 rounded-lg border border-[#cbd5e1] bg-white px-2.5 py-1 font-semibold text-[#334155] shadow-2xs hover:border-[#196d86] hover:bg-[#e8f2f6] hover:text-[#175d75] transition-all"
+                >
+                  <Plus className="size-3" />
+                  {TEAM_LEAD_LABEL}
+                  <span className="rounded-full bg-[#e8f2f6] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-[#196d86]">
+                    Named person
+                  </span>
+                </button>
                 {activeRoles.map((role) => (
                   <button
                     key={role.id}
@@ -543,6 +587,11 @@ export function FlowSection({
                   >
                     <Plus className="size-3" />
                     {role.displayName}
+                    {role.locked ? (
+                      <span className="rounded-full bg-[#f1f3f4] px-1.5 py-0.5 text-[0.55rem] font-bold uppercase tracking-wider text-[#5f6368]">
+                        Locked
+                      </span>
+                    ) : null}
                   </button>
                 ))}
               </div>
@@ -623,13 +672,13 @@ export function FlowSection({
                       </div>
                       <div className="flex flex-wrap items-center gap-2">
                         {flow.steps.length > 0 ? (
-                          flow.steps.map((stepRoleId, idx) => (
+                          flow.steps.map((step, idx) => (
                             <div key={idx} className="flex items-center gap-2">
                               <span className="flex items-center gap-1.5 rounded-lg border border-[#d6dfe8] bg-white px-3 py-1.5 font-medium text-[#33445c] shadow-2xs">
                                 <span className="grid size-5 place-items-center rounded-full bg-[#e8f2f6] text-[0.65rem] font-bold text-[#196d86]">
                                   {idx + 1}
                                 </span>
-                                {roleName(stepRoleId)}
+                                {step.kind === "role" ? roleName(step.roleId) : TEAM_LEAD_LABEL}
                               </span>
                               {idx < flow.steps.length - 1 ? (
                                 <ArrowRight className="size-3.5 text-[#9aa6b5]" />

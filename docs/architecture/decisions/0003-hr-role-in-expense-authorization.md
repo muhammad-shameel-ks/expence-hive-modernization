@@ -1,5 +1,9 @@
 # ADR-0003: Add HR as an Explicit Expense Role
 
+> Status: **Superseded** (2026-08-06).
+> Superseded by the role and user management spec, issue #39 (https://github.com/muhammad-shameel-ks/expence-hive-modernization/issues/39). HR is not a domain for this product: the hr-administrator and hr roles are removed, Superadmin is the only administrative identity, and the role model is the locked predefined catalog (Intern, Executive, Manager, Finance Head, Finance Executive) plus custom roles.
+> The original content below is retained as a historical record.
+
 Status: accepted.
 
 ## Context

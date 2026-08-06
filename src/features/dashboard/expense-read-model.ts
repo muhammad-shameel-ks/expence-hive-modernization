@@ -20,6 +20,13 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
   );
   const submittedAt = claim.submittedAt ?? claim.createdAt;
   const rejection = claim.status === "rejected" ? lastRejection(claim) : undefined;
+  // A team-lead stage has no role id: its current stage is null in the
+  // claim, so surface the stage under its named-person label.
+  const currentTeamLeadStage = claim.currentStage
+    ? undefined
+    : claim.steps.find((step) => step.status === "pending")?.roleId === null
+      ? "Team lead"
+      : undefined;
   return {
     id: claim.id,
     ref: claim.ref,
@@ -31,7 +38,9 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
     submittedAt,
     status: claim.status,
     requesterId: claim.requesterId,
-    nextStage: claim.currentStage ? roleNames.get(claim.currentStage) ?? claim.currentStage : undefined,
+    nextStage: claim.currentStage
+      ? roleNames.get(claim.currentStage) ?? claim.currentStage
+      : currentTeamLeadStage,
     nextActor: claim.currentActorId ? names.get(claim.currentActorId) : undefined,
     nextActorId: claim.currentActorId,
     attachments: claim.attachment ? [claim.attachment.fileName] : [],
@@ -46,7 +55,10 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
     steps: claim.steps.map((step) => ({
       id: step.id,
       roleId: step.roleId,
-      roleName: roleNames.get(step.roleId) ?? (step.roleId.startsWith("role-") ? step.roleId.replace(/^role-/, "").replace(/-/g, " ") : step.roleId),
+      roleName:
+        step.roleId === null
+          ? "Team lead"
+          : roleNames.get(step.roleId) ?? (step.roleId.startsWith("role-") ? step.roleId.replace(/^role-/, "").replace(/-/g, " ") : step.roleId),
       assignedActorId: step.assignedActorId,
       assignedActorName: step.assignedActorId ? names.get(step.assignedActorId) : undefined,
       status: step.status,
@@ -98,5 +110,7 @@ function formatDate(value: string): string {
 
 export function formatHistoryDate(value: string): string {
   const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleDateString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit", timeZone: "UTC" });
+  return Number.isNaN(date.getTime())
+    ? value
+    : date.toLocaleDateString("en-IN", { month: "short", day: "numeric", hour: "2-digit", minute: "2-digit" });
 }

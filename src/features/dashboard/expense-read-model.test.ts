@@ -3,8 +3,8 @@ import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 import { claimToExpense } from "./expense-read-model";
 
 const employees: ExpenseEmployee[] = [
-  { id: "emp-shameel", organizationId: "org-1", name: "Muhammad Shameel", role: { id: "role-employee", code: "employee", displayName: "Employee" } },
-  { id: "emp-ada", organizationId: "org-1", name: "Ada Lovelace", role: { id: "role-manager", code: "manager", displayName: "Manager" } },
+  { id: "emp-shameel", organizationId: "org-1", name: "Muhammad Shameel", role: { id: "role-executive", code: "executive", displayName: "Executive" }, active: true, managerId: null },
+  { id: "emp-ada", organizationId: "org-1", name: "Ada Lovelace", role: { id: "role-manager", code: "manager", displayName: "Manager" }, active: true, managerId: null },
 ];
 
 function rejectedClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
@@ -98,5 +98,27 @@ describe("claimToExpense", () => {
     const expense = claimToExpense(claim, employees);
 
     expect(expense.blockingReason).toBeUndefined();
+  });
+
+  it("labels a team-lead step with the Team lead name and surfaces it as the next stage", () => {
+    const claim = rejectedClaim({
+      status: "in-approval",
+      currentStage: undefined,
+      currentActorId: "emp-ada",
+      steps: [
+        { id: "step-1", roleId: null, assignedActorId: "emp-ada", status: "pending" },
+        { id: "step-2", roleId: "role-finance-executive", assignedActorId: "emp-finance", status: "pending" },
+      ],
+      history: [
+        { id: "h1", kind: "draft", actorId: "emp-shameel", createdAt: "2026-08-04T09:00:00.000Z" },
+        { id: "h2", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" },
+      ],
+    });
+
+    const expense = claimToExpense(claim, employees);
+
+    expect(expense.nextStage).toBe("Team lead");
+    expect(expense.steps?.[0]).toMatchObject({ roleId: null, roleName: "Team lead" });
+    expect(expense.steps?.[1]).toMatchObject({ roleId: "role-finance-executive" });
   });
 });

@@ -1,4 +1,11 @@
-import type { Employee, EmailProvider, IdentityProvider, SessionStore, TokenStore } from "./ports";
+import type {
+  Employee,
+  EmailProvider,
+  IdentityProvider,
+  Provisioner,
+  SessionStore,
+  TokenStore,
+} from "./ports";
 import { magicLinkUrl } from "./ports";
 
 export class AuthenticationError extends Error {
@@ -16,6 +23,7 @@ export type AuthPorts = {
   now?: () => Date;
   tokenFactory?: () => string;
   identityProvider: IdentityProvider;
+  provisioner: Provisioner;
   tokenStore: TokenStore;
   sessionStore: SessionStore;
   emailProvider: EmailProvider;
@@ -31,9 +39,16 @@ export function createAuthCommands(ports: AuthPorts) {
     email: string;
   }): Promise<{ accepted: true }> {
     const email = input.email.trim().toLowerCase();
-    const employee = ports.identityProvider.findByEmail(email);
+    let employee = ports.identityProvider.findByEmail(email);
     if (!employee) {
-      return { accepted: true };
+      // First sign-in for this email: provision an identity (the default
+      // role comes from the provisioner wiring). When provisioning is
+      // unavailable the login stays silent so account existence is not
+      // revealed.
+      employee = await ports.provisioner.provision(email);
+      if (!employee) {
+        return { accepted: true };
+      }
     }
 
     const token = tokenFactory();

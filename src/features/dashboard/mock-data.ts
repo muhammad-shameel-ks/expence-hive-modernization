@@ -35,7 +35,7 @@ export interface HistoryEvent {
 
 export interface ExpenseStepView {
   id: string;
-  roleId: string;
+  roleId: string | null;
   roleName: string;
   assignedActorId?: string;
   assignedActorName?: string;

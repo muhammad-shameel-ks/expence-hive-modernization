@@ -17,6 +17,17 @@ export class InMemoryExpenseStore implements ExpenseStore {
     return this.employees.find((employee) => employee.id === id) ?? null;
   }
 
+  // Mirrors what the admin console's deactivation path does against the
+  // pg store: lets tests verify that an assigned actor deactivated mid-flow
+  // is treated as vacant by catch-up. Not part of the ExpenseStore
+  // contract; the real store is mutated through the admin commands.
+  setEmployeeActive(employeeId: string, active: boolean): void {
+    const employee = this.employees.find((candidate) => candidate.id === employeeId);
+    if (employee) {
+      employee.active = active;
+    }
+  }
+
   async listEmployees(organizationId: string): Promise<ExpenseEmployee[]> {
     return this.employees.filter((employee) => employee.organizationId === organizationId);
   }
@@ -49,9 +60,10 @@ export class InMemoryExpenseStore implements ExpenseStore {
   }
 
   async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {
-    const specific = this.flows.find((flow) => flow.roleId === roleId);
-    if (specific) return specific;
-    return this.flows.find((flow) => flow.id.length > 0) ?? null;
+    // Deterministic routing: only the flow published for the role matches.
+    // A role without its own published flow gets no flow at all - the
+    // "most recently created published flow" fallback was removed (story 40).
+    return this.flows.find((flow) => flow.roleId === roleId) ?? null;
   }
 
   async listActivityForActor(

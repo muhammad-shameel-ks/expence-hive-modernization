@@ -5,23 +5,18 @@ export type ExpenseRole = {
   departmentId?: string | null;
 };
 
-// Finance reviewer, HR, and Finance Head (the apex financial role) share
-// access to Payout Details, Finance Payment View, Comments, and viewing
-// another employee's individual activity feed.
-export const FINANCE_OR_HR_ROLE_CODES = ["finance-reviewer", "hr", "finance-head"];
-
-// The org-wide activity feed (every employee's decisions and comments, not
-// just one person's) is restricted to Finance Head alone, not the broader
-// Finance/HR oversight group above.
-export const ORGANIZATION_ACTIVITY_ROLE_CODES = ["finance-head"];
-
 export type ExpenseEmployee = {
   id: string;
   organizationId: string;
   name: string;
   departmentId?: string | null;
   role: ExpenseRole | null;
-  managerId?: string;
+  // The lifecycle flag: deactivated staff are excluded from routing
+  // eligibility and treated as vacant when a claim is assigned to them.
+  active: boolean;
+  // The person this employee reports to, from hierarchy_assignments. This
+  // is the named-person target of a 'team-lead' flow step.
+  managerId: string | null;
 };
 
 export type ExpenseAttachment = {
@@ -43,7 +38,9 @@ export type ExpenseStepStatus = "pending" | "approved" | "rejected" | "skipped" 
 
 export type ExpenseStep = {
   id: string;
-  roleId: string;
+  // The target role of a 'role' step; null for a 'team-lead' step (the
+  // assigned named person governs it, not a role).
+  roleId: string | null;
   assignedActorId?: string;
   status: ExpenseStepStatus;
   decidedAt?: string;
@@ -134,10 +131,18 @@ export type CreateExpenseDraftInput = {
   payoutDetails?: ExpensePayoutDetails;
 };
 
+// The target of one flow step. 'role' steps resolve to eligible holders of
+// the role (org-wide, or same-department for the Manager role); 'team-lead'
+// steps resolve to the requester's assigned named person from
+// hierarchy_assignments.manager_id.
+export type FlowStepTarget =
+  | { kind: "role"; roleId: string }
+  | { kind: "team-lead" };
+
 export type ExpenseFlow = {
   id: string;
   roleId: string;
-  steps: string[];
+  steps: FlowStepTarget[];
 };
 
 export interface ExpenseStore {

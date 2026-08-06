@@ -40,7 +40,9 @@ Each workflow will be configurable through an ordered visual editor with approva
 
 Workflow drafts can be simulated and must be published as immutable versions before receiving new requests.
 
-ExpenseHive will own hierarchy assignments, approval roles, and approval pools.
+ExpenseHive will own hierarchy assignments, roles, and flows.
+
+Superseded by issue #39 for the role and user model: approval pools are not separate entities, and the department lives on the person, not the role.
 
 Microsoft Graph will provide initial profile and hierarchy suggestions for administrators, but Graph data will not directly authorize financial decisions.
 
@@ -48,7 +50,11 @@ A higher-stage approver can take over a submitted request and skip all earlier s
 
 The CEO and people on the CEO safe list can exercise CEO authority, and the system will record the real actor and authority being exercised.
 
+Superseded by issue #39: the CEO and safe-list authority model is retired, replaced by later-stage takeovers and the Finance Head apex.
+
 The normal path reaches CEO approval and then Finance completes verification and payment marking.
+
+Superseded by issue #39: Finance Head is the apex stage of a flow, and Finance Executive is the required terminal verification-and-payment stage.
 
 The final employee-facing status is `Approved and paid`.
 
@@ -56,13 +62,13 @@ The final employee-facing status is `Approved and paid`.
 
 1. As an employee, I want to sign in with my company identity, so that I can use ExpenseHive without a separate password.
 
-2. As an employee, I want my first sign-in to create a basic ExpenseHive employee record, so that I can begin using the application while HR or an administrator completes my hierarchy.
+2. As an employee, I want my first sign-in to create a basic ExpenseHive employee record, so that I can begin using the application while Superadmin completes my hierarchy.
 
 3. As an administrator, I want to see the initial profile and hierarchy suggestions returned by Microsoft Graph, so that I can use existing company data as a starting point.
 
-4. As an administrator or HR user, I want to correct a manager or approver assignment inside ExpenseHive, so that an incomplete or inaccurate Microsoft directory does not block company policy.
+4. As a Superadmin, I want to correct a manager or approver assignment inside ExpenseHive, so that an incomplete or inaccurate Microsoft directory does not block company policy.
 
-5. As an administrator or HR user, I want to refresh the initial Graph suggestions for an employee, so that I can update profile information without surrendering authority to Graph.
+5. As a Superadmin, I want to refresh the initial Graph suggestions for an employee, so that I can update profile information without surrendering authority to Graph.
 
 6. As an employee, I want to request permission to spend money before making a purchase, so that I can obtain authorization before incurring an expense.
 
@@ -116,6 +122,8 @@ The final employee-facing status is `Approved and paid`.
 
 31. As a higher-stage approver, I want the takeover history to identify me as the real actor and record the authority I exercised, so that the audit trail is accountable.
 
+> Note: stories 32-39 describe the CEO and CEO-delegate authority model, which is retired by issue #39 (https://github.com/muhammad-shameel-ks/expence-hive-modernization/issues/39). Takeover is now exercised by any later-stage role, the Finance Head apex replaces the CEO shortcut, and self-approval prevention applies to every requester at every stage.
+
 32. As the CEO, I want to open any submitted request and approve it while skipping all earlier stages, so that I can resolve urgent requests directly.
 
 33. As the CEO, I want the system to show the manager, IT, Finance, or other earlier stages that were skipped, so that my shortcut is visible to the employee and authorized approvers.
@@ -136,7 +144,9 @@ The final employee-facing status is `Approved and paid`.
 
 41. As an administrator, I want to create department-specific workflow variants, so that departments can reflect legitimate organizational differences.
 
-42. As an administrator, I want to configure an application manager, approval role, approval pool, or named user as a stage target, so that the workflow can match the organization’s actual authority structure.
+42. As a Superadmin, I want to configure a stage target as a role or the requester's assigned team lead, so that the workflow can match the organization's actual authority structure.
+
+Superseded by issue #39 for the target kinds: a step targets a role (any locked or custom role) or the requester's assigned named team lead, and approval pools are not separate entities.
 
 43. As an administrator, I want to place approval, notification, Finance verification, and payment-completion nodes on a visual canvas, so that the workflow is understandable and maintainable.
 
@@ -150,13 +160,13 @@ The final employee-facing status is `Approved and paid`.
 
 48. As an administrator, I want active requests to retain the workflow version they started with, so that later policy changes do not rewrite history.
 
-49. As an administrator or HR user, I want a missing manager or approver assignment to skip to the next configured stage, so that a request does not stall indefinitely.
+49. As a Superadmin, I want a missing manager or approver assignment to skip to the next configured stage, so that a request does not stall indefinitely.
 
-50. As an administrator or HR user, I want to be notified when a missing assignment causes a stage to be skipped, so that the hierarchy defect can be corrected.
+50. As a Superadmin, I want to be notified when a missing assignment causes a stage to be skipped, so that the hierarchy defect can be corrected.
 
 51. As an administrator, I want category rules to control fields, limits, evidence, or additional reviews without hard-coding approval routing into category names, so that policy remains maintainable.
 
-52. As a Finance user, I want to see claims after the CEO approval stage, so that I can verify payment prerequisites.
+52. As a Finance user, I want to see claims that have reached the Finance payment queue, so that I can verify payment prerequisites.
 
 53. As a Finance user, I want to verify receipts, payment details, and required evidence, so that only valid claims are completed.
 
@@ -170,7 +180,9 @@ The final employee-facing status is `Approved and paid`.
 
 58. As a CEO, I want a post-payment correction to be represented as a new adjustment claim, so that the original paid claim remains immutable.
 
-59. As an administrator, I want to view organization, employee, role, pool, workflow, claim, payment, and audit records, so that I can operate the system.
+Superseded by issue #39 for CEO authority: post-payment adjustment claims remain out of scope (issue #21).
+
+59. As a Superadmin, I want to view organization, employee, role, workflow, claim, payment, and audit records, so that I can operate the system.
 
 60. As an authorized approver, I want to see the complete history for requests I am authorized to view, so that decisions are made with context.
 
@@ -178,7 +190,7 @@ The final employee-facing status is `Approved and paid`.
 
 62. As an employee, I want local development behavior to be independent of production Azure availability, so that the product can be built before tenant permissions are granted.
 
-63. As a developer, I want seeded local users for employee, approver, Finance, CEO, and delegate roles, so that every authority path can be tested safely.
+63. As a developer, I want seeded local users for employee, approver, Finance Head, Finance Executive, and Superadmin identities, so that every authority path can be tested safely.
 
 64. As a developer, I want local PostgreSQL, Blob, and email adapters to match production interfaces, so that moving to Azure does not require rewriting domain behavior.
 
@@ -338,7 +350,9 @@ Microsoft Graph may provide display name, email, title, department, and manager 
 
 Graph is not authoritative for approval relationships.
 
-System administrators and HR maintain the application manager relationship, approval roles, and approval pools inside ExpenseHive.
+Superadmin maintains the application manager (and team-lead) relationships, roles, departments, and flows inside ExpenseHive.
+
+Superseded by issue #39 for the role and user model: HR is removed, roles are org-wide definitions, and approval pools are not separate entities.
 
 The application stores the organization identifier from the beginning even though the first deployment serves one company.
 
@@ -349,9 +363,9 @@ The normalized schema will include an organization boundary and at least the fol
 - Organization represents the company boundary.
 - Employee represents a person who can submit or act in the system.
 - HierarchyAssignment represents an application-managed manager relationship.
-- ApprovalRole represents an authority such as IT Head, Finance, or CEO.
-- ApprovalPool represents eligible people for an approval role.
-- CEODelegate represents a person authorized to act for the CEO.
+- ApprovalRole represents an org-wide authority such as Manager, Finance Head, Finance Executive, or a custom role. Superseded by issue #39 for the role catalog: the locked predefined roles are Intern, Executive, Manager, Finance Head, and Finance Executive.
+- ApprovalPool represents eligible people for an approval role. Superseded by issue #39: approval pools are not stored entities; the Manager step is an implicit same-department pool where any one eligible holder completes the stage.
+- CEODelegate represents a person authorized to act for the CEO. Retired by issue #39.
 - PermissionRequest represents pre-spend authorization.
 - ReimbursementClaim represents repayment for already-spent money.
 - ExpenseLine represents one categorized amount in a claim.
@@ -389,11 +403,17 @@ Published versions used by an active request are immutable.
 
 Normal stage target types are application manager, approval role, approval pool, and named user.
 
+Superseded by issue #39 for the target kinds: a step targets a role (any locked or custom role) or the requester's assigned named team lead.
+
 Approval roles and pools are preferred for normal stages.
 
 Named users are reserved for exceptional fixed assignments and safe-list membership.
 
+Superseded by issue #39: the safe list is retired, and named-person targets are the requester's assigned team lead.
+
 One eligible person completes an ordinary approval pool unless a future workflow explicitly defines another quorum.
+
+Superseded by issue #39: quorum is always one, and the manager pool is implicit rather than a stored entity.
 
 An ordinary approver can complete only the stage to which they are authorized.
 
@@ -401,11 +421,13 @@ A higher-stage approver can take over a submitted request and skip all earlier s
 
 The CEO and a CEO delegate can take over through the CEO stage.
 
+Retired by issue #39: the Finance Head apex takeover skips every pending stage and routes the claim to the terminal Finance Executive stage.
+
 Every skipped stage is recorded as `Skipped`, not `Approved`.
 
 A takeover requires a reason code.
 
-Self-approval is prohibited for the requester, CEO, delegate, and any other actor.
+Self-approval is prohibited for the requester at every stage.
 
 ### Missing Assignments
 
@@ -413,7 +435,7 @@ If a required approver has no application assignment, the request continues to t
 
 The skipped stage records the missing assignment as the reason.
 
-HR and system administrators receive a notification about the missing assignment.
+Superadmin receives a notification about the missing assignment.
 
 The system must not select an arbitrary person from Microsoft Graph as a fallback.
 
@@ -421,7 +443,11 @@ The system must not select an arbitrary person from Microsoft Graph as a fallbac
 
 The normal reimbursement lifecycle is submission, configured approval stages, CEO approval, Finance verification, payment marking, and `Approved and paid`.
 
+Superseded by issue #39: the Finance Head stage replaces CEO approval, and Finance Executive is the required terminal verification-and-payment stage.
+
 A CEO or higher-stage takeover skips earlier approval steps and still leaves Finance as the final payment completion action.
+
+Superseded by issue #39: takeovers are exercised by later-stage roles, and the Finance Head apex leaves the terminal Finance Executive stage intact.
 
 A reimbursement without a linked permission request automatically receives an additional Finance review.
 
@@ -438,6 +464,8 @@ The same Finance person may verify and mark payment as paid, but both actions an
 Paid claims cannot be directly edited.
 
 Post-payment corrections create a new adjustment claim that links to the original paid claim and requires CEO authorization.
+
+Superseded by issue #39 for CEO authority: post-payment adjustment claims remain out of scope (issue #21).
 
 ### Audit and Visibility
 
@@ -474,8 +502,8 @@ The server-side application layer will expose behavior equivalent to the followi
 - Link a reimbursement claim to a permission request.
 - Approve or reject an assigned approval step.
 - Take over a request as a higher-stage authority.
-- Approve as CEO or act for CEO through the safe list.
-- Manage hierarchy assignments, approval roles, approval pools, and CEO delegates.
+- Retired by issue #39: approve as CEO or act for CEO through the safe list.
+- Manage hierarchy assignments (manager and team-lead), roles, departments, and flows.
 - Draft, simulate, publish, disable, and restore workflow versions.
 - Refresh initial Graph profile and hierarchy suggestions.
 - Verify a claim for payment and mark it paid.
@@ -535,15 +563,15 @@ The minimum acceptance suite should cover the following scenarios.
 
 6. A normal approver approves only their assigned stage.
 
-7. One member of an approval pool completes the pool stage.
+7. One member of the implicit same-department manager pool completes the pool stage. Superseded by issue #39 for pools: approval pools are not separate entities.
 
 8. A higher-stage approver takes over a request and all earlier stages become visibly skipped.
 
-9. A CEO delegate acts for the CEO and the history records both the actor and CEO authority.
+9. Retired by issue #39: a CEO delegate acts for the CEO and the history records both the actor and CEO authority.
 
-10. A requester, CEO, or delegate cannot approve their own expense.
+10. A requester cannot approve their own expense at any stage.
 
-11. A missing manager skips to the next configured stage and notifies HR and system administrators.
+11. A missing manager skips to the next configured stage and notifies Superadmin.
 
 12. A rejected request becomes terminal, and an employee can submit a new claim for the same expense that starts at the first stage while the rejected request's history remains visible unchanged.
 
@@ -553,7 +581,7 @@ The minimum acceptance suite should cover the following scenarios.
 
 15. A paid claim cannot be edited directly.
 
-16. A post-payment adjustment claim links to the original and requires CEO authorization.
+16. A post-payment adjustment claim links to the original and requires CEO authorization. Superseded by issue #39 for CEO authority.
 
 17. A workflow draft can be simulated and only a published version can receive new requests.
 

@@ -2,6 +2,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
+import { isExpenseError } from "@/server/expenses/commands";
 import { AppHeader } from "@/components/layout/app-header";
 import { FullExpenseList } from "@/features/dashboard/full-expense-list";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
@@ -13,7 +14,17 @@ export default async function AllExpensesPage() {
   if (!employee) {
     redirect("/login");
   }
-  const workspace = await expenseCommands().getWorkspace(employee.id);
+  let workspace;
+  try {
+    workspace = await expenseCommands().getWorkspace(employee.id);
+  } catch (error) {
+    // A deactivated employee still holds a session but is rejected by the
+    // expense domain; send them back to sign-in instead of crashing.
+    if (isExpenseError(error) && error.code === "unauthorized") {
+      redirect("/login");
+    }
+    throw error;
+  }
   const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
 
   return (

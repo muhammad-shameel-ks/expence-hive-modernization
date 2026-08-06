@@ -38,6 +38,7 @@ export default async function AdminPage() {
         flows={flows}
         roles={roles}
         departments={departments}
+        currentEmployeeId={employee.id}
       />
     </main>
   );

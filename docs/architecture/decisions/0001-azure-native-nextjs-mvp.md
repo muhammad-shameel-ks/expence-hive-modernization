@@ -8,6 +8,8 @@ The existing application uses Angular, ABP, .NET, SQL Server, Microsoft Entra ID
 
 The replacement should use Next.js, a new normalized database, configurable approval workflows, CEO and higher-approver takeovers, audit history, receipts, and email.
 
+Superseded by issue #39 for the CEO reference: takeovers are exercised by any later-stage role, with the Finance Head as the apex of a flow.
+
 The replacement also requires a substantial UX redesign focused on easy task completion, responsive use, and accessibility rather than a visual port of the legacy application.
 
 Development needs to start before production Azure permissions are available.

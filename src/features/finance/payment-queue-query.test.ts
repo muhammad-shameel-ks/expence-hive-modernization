@@ -157,7 +157,7 @@ describe("approvedOnFor", () => {
       history: [
         { id: "h1", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-07-26T08:55:00Z" },
         { id: "h2", kind: "approved", actorId: "emp-ada", createdAt: "2026-07-27T10:00:00Z" },
-        { id: "h3", kind: "approved", actorId: "emp-ceo", createdAt: "2026-07-29T09:05:00Z" },
+        { id: "h3", kind: "approved", actorId: "emp-pramod", createdAt: "2026-07-29T09:05:00Z" },
       ],
     });
     expect(approvedOnFor(withApprovals)).toBe("2026-07-29T09:05:00Z");

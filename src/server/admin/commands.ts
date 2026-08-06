@@ -1,19 +1,36 @@
 import {
-  HR_ADMINISTRATOR_ROLE_CODE,
+  resolveRoleCapabilities,
   SUPERADMIN_ROLE_CODE,
+  FINANCE_EXECUTIVE_ROLE_CODE,
+} from "../shared/authorization";
+import {
   type AdminDepartment,
   type AdminEmployee,
   type AdminRole,
   type AdminStore,
+  type AuditEvent,
+  type AuditFilter,
   type DepartmentInput,
   type FlowDraft,
   type FlowInput,
+  type FlowStepInput,
   type RoleInput,
 } from "./ports";
 
-export type AdminErrorCode = "unauthorized" | "validation" | "not-found";
+export type AdminErrorCode =
+  | "unauthorized"
+  | "validation"
+  | "not-found"
+  | "locked"
+  | "conflict";
 
-const ADMIN_ERROR_CODES = ["unauthorized", "validation", "not-found"] as const;
+const ADMIN_ERROR_CODES = [
+  "unauthorized",
+  "validation",
+  "not-found",
+  "locked",
+  "conflict",
+] as const;
 
 export class AdminError extends Error {
   constructor(
@@ -34,11 +51,6 @@ export function isAdminError(error: unknown): error is AdminError {
   );
 }
 
-const ADMIN_AUTHORIZED_ROLE_CODES: readonly string[] = [
-  SUPERADMIN_ROLE_CODE,
-  HR_ADMINISTRATOR_ROLE_CODE,
-];
-
 const MAX_NAME_LENGTH = 120;
 const MAX_CODE_LENGTH = 60;
 const MAX_FLOW_STEPS = 15;
@@ -48,8 +60,16 @@ export type AdminCommands = {
   listEmployees(actorId: string): Promise<AdminEmployee[]>;
   listFlows(actorId: string): Promise<FlowDraft[]>;
   getAdminActor(actorId: string): Promise<AdminEmployee | null>;
+  listAuditEvents(
+    actorId: string,
+    filter: AuditFilter,
+    pagination?: { page?: number; pageSize?: number },
+  ): Promise<{ events: AuditEvent[]; total: number }>;
   assignRole(actorId: string, input: { employeeId: string; roleId: string }): Promise<void>;
   assignDepartment(actorId: string, input: { employeeId: string; departmentId: string }): Promise<void>;
+  deactivateEmployee(actorId: string, employeeId: string): Promise<void>;
+  reactivateEmployee(actorId: string, employeeId: string): Promise<void>;
+  assignManager(actorId: string, input: { employeeId: string; managerId: string | null }): Promise<void>;
   listDepartments(actorId: string): Promise<AdminDepartment[]>;
   createDepartment(actorId: string, input: DepartmentInput): Promise<AdminDepartment>;
   deactivateDepartment(actorId: string, departmentId: string): Promise<void>;
@@ -72,10 +92,7 @@ export function createAdminCommands({
   async function requireAdmin(actorId: string): Promise<AdminEmployee> {
     const actor = await getAdminActor(actorId);
     if (!actor) {
-      throw new AdminError(
-        "unauthorized",
-        "Only Superadmin and HR administrators can use the admin workspace.",
-      );
+      throw new AdminError("unauthorized", "Only Superadmin can use the admin workspace.");
     }
     return actor;
   }
@@ -84,7 +101,7 @@ export function createAdminCommands({
     return store.getEmployee(actorId).then((actor) =>
       actor !== null &&
       actor.role !== null &&
-      ADMIN_AUTHORIZED_ROLE_CODES.includes(actor.role.code)
+      resolveRoleCapabilities(actor.role.code).canAccessAdminConsole
         ? actor
         : null,
     );
@@ -101,6 +118,20 @@ export function createAdminCommands({
     return role;
   }
 
+  async function resolveEmployeeInOrg(
+    organizationId: string,
+    employeeId: string,
+  ): Promise<AdminEmployee> {
+    if (employeeId.length > MAX_EMPLOYEE_ID_LENGTH) {
+      throw new AdminError("validation", "Employee id is too long.");
+    }
+    const target = await store.getEmployee(employeeId);
+    if (!target || target.organizationId !== organizationId) {
+      throw new AdminError("not-found", "Employee does not exist.");
+    }
+    return target;
+  }
+
   async function audit(actor: AdminEmployee, action: string, detail: string): Promise<void> {
     await store.appendAudit(actor.organizationId, {
       id: `audit-${crypto.randomUUID()}`,
@@ -110,6 +141,30 @@ export function createAdminCommands({
       detail,
       createdAt: now(),
     });
+  }
+
+  // Flow steps target either a role (existing, active, org-wide) or the
+  // requester's assigned team lead. A team-lead step must not carry a role
+  // id and a role step must carry one; anything else is malformed input.
+  async function validateFlowSteps(organizationId: string, steps: FlowStepInput[]): Promise<void> {
+    if (steps.length === 0) {
+      throw new AdminError("validation", "Flow needs at least one step.");
+    }
+    if (steps.length > MAX_FLOW_STEPS) {
+      throw new AdminError("validation", "Flow cannot have more than 15 steps.");
+    }
+    for (const step of steps) {
+      if (step.kind === "team-lead") {
+        if ("roleId" in step) {
+          throw new AdminError("validation", "A team lead step cannot carry a role id.");
+        }
+        continue;
+      }
+      if (step.kind !== "role") {
+        throw new AdminError("validation", "A flow step must target a role or a team lead.");
+      }
+      await requireActiveRole(organizationId, step.roleId);
+    }
   }
 
   return {
@@ -123,6 +178,13 @@ export function createAdminCommands({
     async listFlows(actorId) {
       const actor = await requireAdmin(actorId);
       return store.listFlows(actor.organizationId);
+    },
+
+    async listAuditEvents(actorId, filter, pagination) {
+      const actor = await requireAdmin(actorId);
+      const page = Math.max(1, Math.floor(pagination?.page ?? 1));
+      const pageSize = Math.min(100, Math.max(1, Math.floor(pagination?.pageSize ?? 50)));
+      return store.listAuditEvents(actor.organizationId, filter, { page, pageSize });
     },
 
     async assignRole(actorId, { employeeId, roleId }) {
@@ -162,6 +224,66 @@ export function createAdminCommands({
       }
       await store.setEmployeeDepartment(employeeId, department.id);
       await audit(actor, "assign-department", `${target.name} moved to the ${department.name} department.`);
+    },
+
+    async deactivateEmployee(actorId, employeeId) {
+      const actor = await requireAdmin(actorId);
+      const target = await resolveEmployeeInOrg(actor.organizationId, employeeId);
+      if (actor.id === employeeId) {
+        throw new AdminError("conflict", "You cannot deactivate your own account.");
+      }
+      if (target.role?.code === SUPERADMIN_ROLE_CODE) {
+        const employees = await store.listEmployees(actor.organizationId);
+        const otherActiveSuperadmins = employees.filter(
+          (employee) =>
+            employee.id !== employeeId &&
+            employee.active &&
+            employee.role?.code === SUPERADMIN_ROLE_CODE,
+        );
+        if (otherActiveSuperadmins.length === 0) {
+          throw new AdminError("conflict", "The last active Superadmin cannot be deactivated.");
+        }
+      }
+      await store.setEmployeeActive(employeeId, false);
+      await audit(actor, "deactivate-employee", `${target.name} deactivated.`);
+    },
+
+    async reactivateEmployee(actorId, employeeId) {
+      const actor = await requireAdmin(actorId);
+      const target = await resolveEmployeeInOrg(actor.organizationId, employeeId);
+      await store.setEmployeeActive(employeeId, true);
+      await audit(actor, "reactivate-employee", `${target.name} reactivated.`);
+    },
+
+    async assignManager(actorId, { employeeId, managerId }) {
+      const actor = await requireAdmin(actorId);
+      const target = await resolveEmployeeInOrg(actor.organizationId, employeeId);
+      if (managerId === null) {
+        if (target.managerId === null) {
+          return;
+        }
+        await store.setEmployeeManager(employeeId, null);
+        await audit(actor, "assign-manager", `Cleared ${target.name}'s manager assignment.`);
+        return;
+      }
+      if (managerId === employeeId) {
+        throw new AdminError("validation", "An employee cannot be their own manager.");
+      }
+      if (managerId.length > MAX_EMPLOYEE_ID_LENGTH) {
+        throw new AdminError("validation", "Employee id is too long.");
+      }
+      const manager = await store.getEmployee(managerId);
+      if (!manager || manager.organizationId !== actor.organizationId) {
+        throw new AdminError("not-found", "Manager does not exist.");
+      }
+      if (!manager.active) {
+        throw new AdminError("validation", "A deactivated employee cannot be a manager.");
+      }
+      if (target.managerId === manager.id) {
+        return;
+      }
+      await store.setEmployeeManager(employeeId, manager.id);
+      await audit(actor, "assign-manager", `${target.name} now reports to ${manager.name}.`);
     },
 
     async listDepartments(actorId) {
@@ -209,18 +331,8 @@ export function createAdminCommands({
       if (code.length > MAX_CODE_LENGTH || displayName.length > MAX_NAME_LENGTH) {
         throw new AdminError("validation", "Role code or display name is too long.");
       }
-      if (input.departmentId) {
-        const departments = await store.listDepartments(actor.organizationId);
-        const department = departments.find((candidate) => candidate.id === input.departmentId);
-        if (!department || !department.active) {
-          throw new AdminError("validation", "Unknown or inactive department.");
-        }
-      }
-      const role = await store.createRole(actor.organizationId, {
-        code,
-        displayName,
-        departmentId: input.departmentId,
-      });
+      // Roles are org-wide definitions: no department scoping on creation.
+      const role = await store.createRole(actor.organizationId, { code, displayName });
       await audit(actor, "create-role", `Created the "${displayName}" role.`);
       return role;
     },
@@ -228,6 +340,9 @@ export function createAdminCommands({
     async deactivateRole(actorId, roleId) {
       const actor = await requireAdmin(actorId);
       const role = await requireActiveRole(actor.organizationId, roleId);
+      if (role.locked) {
+        throw new AdminError("locked", "Locked predefined roles cannot be deactivated.");
+      }
       const [employees, flows] = await Promise.all([
         store.listEmployees(actor.organizationId),
         store.listFlows(actor.organizationId),
@@ -240,7 +355,10 @@ export function createAdminCommands({
         );
       }
       const referencedByPublishedFlow = flows.some(
-        (flow) => flow.status === "published" && (flow.roleId === role.id || flow.steps.includes(role.id)),
+        (flow) =>
+          flow.status === "published" &&
+          (flow.roleId === role.id ||
+            flow.steps.some((step) => step.kind === "role" && step.roleId === role.id)),
       );
       if (referencedByPublishedFlow) {
         throw new AdminError(
@@ -262,15 +380,7 @@ export function createAdminCommands({
         throw new AdminError("validation", "Flow name is too long (max 120 characters).");
       }
       await requireActiveRole(actor.organizationId, input.roleId);
-      if (input.steps.length === 0) {
-        throw new AdminError("validation", "Flow needs at least one step.");
-      }
-      if (input.steps.length > MAX_FLOW_STEPS) {
-        throw new AdminError("validation", "Flow cannot have more than 15 steps.");
-      }
-      for (const stepRoleId of input.steps) {
-        await requireActiveRole(actor.organizationId, stepRoleId);
-      }
+      await validateFlowSteps(actor.organizationId, input.steps);
       const existingFlows = await store.listFlows(actor.organizationId);
       const duplicate = existingFlows.find(
         (flow) =>
@@ -303,12 +413,7 @@ export function createAdminCommands({
       if (!input.roleId) {
         throw new AdminError("validation", "Flow needs an assigned role.");
       }
-      if (input.steps.length === 0) {
-        throw new AdminError("validation", "Flow needs at least one step.");
-      }
-      if (input.steps.length > MAX_FLOW_STEPS) {
-        throw new AdminError("validation", "Flow cannot have more than 15 steps.");
-      }
+      await validateFlowSteps(actor.organizationId, input.steps);
       const updated = await store.updateFlow(flowId, {
         name,
         roleId: input.roleId,
@@ -318,12 +423,11 @@ export function createAdminCommands({
       return updated;
     },
 
-    // Deliberately does not require a role named "Finance Executive" as the
-    // last step (issue #29): the expenses module treats whichever role is
-    // last in a Flow's steps as its terminal, non-skippable stage, so any
-    // Flow already gets a real payment-completion stage without Superadmin
-    // needing to name it "Finance Executive". Reserved, non-deletable named
-    // roles remain unimplemented; still tracked as follow-up.
+    // The Finance Executive role is the required terminal verification-and-
+    // payment stage: a Flow cannot be published unless its last step targets
+    // it, so the payment completion stage can never be missing. Finance Head
+    // takeover and absence auto-skips also treat the terminal step as
+    // non-skippable (see the expenses command layer).
     async publishFlow(actorId, flowId) {
       const actor = await requireAdmin(actorId);
       const flows = await store.listFlows(actor.organizationId);
@@ -333,6 +437,21 @@ export function createAdminCommands({
       }
       if (flow.status !== "draft") {
         throw new AdminError("validation", "Only a draft flow can be published.");
+      }
+      await validateFlowSteps(actor.organizationId, flow.steps);
+      const lastStep = flow.steps[flow.steps.length - 1];
+      if (lastStep.kind !== "role") {
+        throw new AdminError(
+          "validation",
+          "The last step of a flow must be the Finance Executive role.",
+        );
+      }
+      const terminalRole = await requireActiveRole(actor.organizationId, lastStep.roleId);
+      if (terminalRole.code !== FINANCE_EXECUTIVE_ROLE_CODE) {
+        throw new AdminError(
+          "validation",
+          "The last step of a flow must be the Finance Executive role.",
+        );
       }
       const published = await store.publishFlow(flowId);
       await audit(actor, "publish-flow", `Published the "${flow.name}" flow.`);

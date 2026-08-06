@@ -198,10 +198,10 @@ function DetailsStep({
               <Field label="Amount" hint="Enter the total in INR."><MoneyInput value={form.amount} onChange={(value) => update("amount", value)} /></Field>
               <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
             </div>
-            <Field label="Remark" hint="A short note for Finance and HR."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
+            <Field label="Remark" hint="A short note for Finance."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
             <div className={styles.formGrid}>
-              <Field label="Account number" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.accountNumber} placeholder="Bank account number" onChange={(event) => update("accountNumber", event.target.value)} /></Field>
-              <Field label="IFSC code" hint="Only Finance and HR can see this."><input className={styles.textInput} required value={form.ifscCode} placeholder="e.g. SBIN0012861" onChange={(event) => update("ifscCode", event.target.value.toUpperCase())} /></Field>
+              <Field label="Account number" hint="Only Finance can see this."><input className={styles.textInput} required value={form.accountNumber} placeholder="Bank account number" onChange={(event) => update("accountNumber", event.target.value)} /></Field>
+              <Field label="IFSC code" hint="Only Finance can see this."><input className={styles.textInput} required value={form.ifscCode} placeholder="e.g. SBIN0012861" onChange={(event) => update("ifscCode", event.target.value.toUpperCase())} /></Field>
             </div>
             {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
             <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Back</button><button className={styles.button} type="submit" disabled={busy}>{busy ? "Saving..." : "Review claim →"}</button></div>
@@ -232,7 +232,7 @@ function ReviewStep({ form, receipt, onBack, onSubmit, busy, error }: { form: Fo
 }
 
 function SubmittedState() {
-  return <div className={styles.content}><div className={styles.panel}><p className={styles.eyebrow}>CLAIM SUBMITTED</p><h1 className={styles.title}>Your claim is moving.</h1><p className={styles.intro}>It is now with your Manager, followed by IT and Finance. You can track every decision from the dashboard.</p><a className={styles.button} href="/expenses">Back to dashboard →</a></div></div>;
+  return <div className={styles.content}><div className={styles.panel}><p className={styles.eyebrow}>CLAIM SUBMITTED</p><h1 className={styles.title}>Your claim is moving.</h1><p className={styles.intro}>It is now with your Manager, followed by Finance. You can track every decision from the dashboard.</p><a className={styles.button} href="/expenses">Back to dashboard →</a></div></div>;
 }
 
 function CaptureRail({ receipt, step }: { receipt: { fileName: string; contentType: string } | null; step: number }) {

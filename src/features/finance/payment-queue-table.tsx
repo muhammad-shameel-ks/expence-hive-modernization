@@ -1,5 +1,5 @@
 "use client";
-// Searchable, filterable, sortable payment queue table for Finance and HR.
+// Searchable, filterable, sortable payment queue table for Finance.
 // Sortable by reference, category, submission date, amount, and status;
 // filterable by awaiting-payment/paid, category, amount range, and submitted date range.
 

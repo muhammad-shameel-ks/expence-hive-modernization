@@ -14,6 +14,17 @@ export type LoginToken = {
 export interface IdentityProvider {
   findByEmail(email: string): Employee | null;
   findById(id: string): Employee | null;
+  register(employee: Employee): void;
+}
+
+// Provisioning seam for identities the identity provider has never seen: an
+// adapter resolves profile attributes (title, department, manager) as
+// suggestions at provision time. A future Entra/Graph adapter plugs in
+// here; the dev wiring provides the fallback implementation. Provisioning
+// returns null when unavailable, and callers keep the silent-accept
+// behavior for unknown emails.
+export interface Provisioner {
+  provision(email: string): Promise<Employee | null>;
 }
 
 export interface TokenStore {
