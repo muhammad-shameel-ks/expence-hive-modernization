@@ -91,7 +91,7 @@ export function MyActivity({
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by requester, amount..."
+                placeholder="Search by requester, claim, amount..."
                 aria-label="Search my activity"
                 className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-8 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-ring focus:ring-2 focus:ring-ring/20"
               />
@@ -179,18 +179,18 @@ export function MyActivity({
           </button>
         </div>
       ) : (
-        <div className="mt-4 divide-y divide-border/60">
+        <ul className="mt-4 divide-y divide-border/60" role="list">
           {filtered.map((item) => (
-            <div key={item.id} className="py-1">
+            <li key={item.id} className="py-1">
               <ActivityItemRow
                 item={item}
                 onClick={onOpen ? () => onOpen(item.claimId) : undefined}
                 isLoading={loadingClaimId === item.claimId}
                 showActor={false}
               />
-            </div>
+            </li>
           ))}
-        </div>
+        </ul>
       )}
     </section>
   );
