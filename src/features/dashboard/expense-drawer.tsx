@@ -499,7 +499,7 @@ export function ExpenseDrawer({
               Cancel
             </Button>
             <Button variant="destructive" onClick={performReject} disabled={rejecting}>
-              {rejecting ? "Rejecting…" : "Reject claim"}
+              {rejecting ? "Rejecting…" : "Reject permanently"}
             </Button>
           </div>
         </DialogContent>

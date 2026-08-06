@@ -61,6 +61,7 @@ export type ExpenseCommands = {
   getClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   listClaims(actorId: string): Promise<ExpenseClaim[]>;
   getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
+  listEmployees(actorId: string): Promise<ExpenseEmployee[]>;
   submitClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
   rejectClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
@@ -250,6 +251,11 @@ export function createExpenseCommands({
       ]);
       const claims = await catchUpAll(rawClaims, employee.organizationId);
       return { employee, employees, claims: claims.map((claim) => maskPayoutDetails(claim, employee)) };
+    },
+
+    async listEmployees(actorId) {
+      const employee = await requireEmployee(actorId);
+      return store.listEmployees(employee.organizationId);
     },
 
     async submitClaim(actorId, claimId) {

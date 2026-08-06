@@ -1,9 +1,11 @@
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
 import { AppHeader } from "@/components/layout/app-header";
+import { Button } from "@/components/ui/button";
 import { activityEntryToItem } from "@/features/dashboard/expense-read-model";
 import { OrganizationActivity } from "@/features/finance/organization-activity";
 import styles from "../../expenses/expenses.module.css";
@@ -26,6 +28,11 @@ export default async function OrganizationActivityPage() {
           <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-10">
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Organization activity</h1>
             <p className="mt-4 text-sm text-muted-foreground">Only Finance Head can view this page.</p>
+            <div className="mt-6">
+              <Button asChild variant="outline">
+                <Link href="/finance/payments">Back to payment queue</Link>
+              </Button>
+            </div>
           </div>
         </main>
       );

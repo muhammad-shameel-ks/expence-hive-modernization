@@ -1,4 +1,5 @@
 import type { Pool } from "pg";
+import { ExpenseError } from "./commands";
 import type {
   ActivityEntry,
   ExpenseClaim,
@@ -130,7 +131,7 @@ export class PostgresExpenseStore implements ExpenseStore {
           claim.comments ?? null,
         ],
       );
-      if (result.rowCount !== 1) throw new Error("Claim was changed by another request.");
+      if (result.rowCount !== 1) throw new ExpenseError("conflict", "Claim was changed by another request.");
       for (let position = 0; position < claim.steps.length; position += 1) {
         const step = claim.steps[position];
         await client.query(

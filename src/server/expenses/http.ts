@@ -63,11 +63,11 @@ export async function handleGetExpenseRequest(
   claimId: string,
 ): Promise<Response> {
   try {
-    const [claim, workspace] = await Promise.all([
+    const [claim, employees] = await Promise.all([
       commands.getClaim(actorId, claimId),
-      commands.getWorkspace(actorId),
+      commands.listEmployees(actorId),
     ]);
-    return Response.json({ claim, employees: workspace.employees });
+    return Response.json({ claim, employees });
   } catch (error) {
     return expenseErrorResponse(error);
   }
