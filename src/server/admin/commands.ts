@@ -1,4 +1,8 @@
-import { resolveRoleCapabilities, SUPERADMIN_ROLE_CODE } from "../shared/authorization";
+import {
+  resolveRoleCapabilities,
+  SUPERADMIN_ROLE_CODE,
+  FINANCE_EXECUTIVE_ROLE_CODE,
+} from "../shared/authorization";
 import {
   type AdminDepartment,
   type AdminEmployee,
@@ -419,12 +423,11 @@ export function createAdminCommands({
       return updated;
     },
 
-    // Deliberately does not require a role named "Finance Executive" as the
-    // last step (issue #29): the expenses module treats whichever role is
-    // last in a Flow's steps as its terminal, non-skippable stage, so any
-    // Flow already gets a real payment-completion stage without Superadmin
-    // needing to name it "Finance Executive". Reserved, non-deletable named
-    // roles remain unimplemented; still tracked as follow-up.
+    // The Finance Executive role is the required terminal verification-and-
+    // payment stage: a Flow cannot be published unless its last step targets
+    // it, so the payment completion stage can never be missing. Finance Head
+    // takeover and absence auto-skips also treat the terminal step as
+    // non-skippable (see the expenses command layer).
     async publishFlow(actorId, flowId) {
       const actor = await requireAdmin(actorId);
       const flows = await store.listFlows(actor.organizationId);
@@ -434,6 +437,21 @@ export function createAdminCommands({
       }
       if (flow.status !== "draft") {
         throw new AdminError("validation", "Only a draft flow can be published.");
+      }
+      await validateFlowSteps(actor.organizationId, flow.steps);
+      const lastStep = flow.steps[flow.steps.length - 1];
+      if (lastStep.kind !== "role") {
+        throw new AdminError(
+          "validation",
+          "The last step of a flow must be the Finance Executive role.",
+        );
+      }
+      const terminalRole = await requireActiveRole(actor.organizationId, lastStep.roleId);
+      if (terminalRole.code !== FINANCE_EXECUTIVE_ROLE_CODE) {
+        throw new AdminError(
+          "validation",
+          "The last step of a flow must be the Finance Executive role.",
+        );
       }
       const published = await store.publishFlow(flowId);
       await audit(actor, "publish-flow", `Published the "${flow.name}" flow.`);

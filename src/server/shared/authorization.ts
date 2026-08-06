@@ -50,6 +50,7 @@ export const LOCKED_ROLE_CODES = [
 export const SUPERADMIN_ROLE_CODE = "superadmin";
 export const MANAGER_ROLE_CODE = "manager";
 export const FINANCE_HEAD_ROLE_CODE = "finance-head";
+export const FINANCE_EXECUTIVE_ROLE_CODE = "finance-executive";
 
 // The single source of truth for role authority, shared by the admin
 // console and the expense flow. Only the locked catalog and Superadmin have

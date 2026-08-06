@@ -382,10 +382,14 @@ describe("roles", () => {
     const { admin } = buildAdmin();
     const targetRole = await admin.createRole("emp-superadmin", { code: "intern", displayName: "Intern" });
     const stepRole = await admin.createRole("emp-superadmin", { code: "team-lead", displayName: "Team Lead" });
+    const financeExecRole = await admin.createRole("emp-superadmin", {
+      code: "finance-executive",
+      displayName: "Finance Executive",
+    });
     const flow = await admin.createFlow("emp-superadmin", {
       name: "Intern flow",
       roleId: targetRole.id,
-      steps: [roleStep(stepRole.id)],
+      steps: [roleStep(stepRole.id), roleStep(financeExecRole.id)],
     });
     await admin.publishFlow("emp-superadmin", flow.id);
 
@@ -607,8 +611,13 @@ describe("updateFlow", () => {
 describe("publishFlow", () => {
   it("publishes a draft flow", async () => {
     const { admin } = buildAdmin();
-    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
-    const flow = await admin.createFlow("emp-superadmin", { name: "Standard reimbursement", roleId: role.id, steps: [roleStep(role.id)] });
+    const executiveRole = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Standard reimbursement",
+      roleId: executiveRole.id,
+      steps: [roleStep(executiveRole.id), roleStep(financeExecRole.id)],
+    });
 
     const published = await admin.publishFlow("emp-superadmin", flow.id);
 
@@ -619,9 +628,18 @@ describe("publishFlow", () => {
     const { admin } = buildAdmin();
     const role1 = await admin.createRole("emp-superadmin", { code: "intern-eng", displayName: "Engineering Intern" });
     const role2 = await admin.createRole("emp-superadmin", { code: "intern-mkt", displayName: "Marketing Intern" });
-    const firstFlow = await admin.createFlow("emp-superadmin", { name: "Engineering Flow", roleId: role1.id, steps: [roleStep(role1.id)] });
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    const firstFlow = await admin.createFlow("emp-superadmin", {
+      name: "Engineering Flow",
+      roleId: role1.id,
+      steps: [roleStep(role1.id), roleStep(financeExecRole.id)],
+    });
     await admin.publishFlow("emp-superadmin", firstFlow.id);
-    const secondFlow = await admin.createFlow("emp-superadmin", { name: "Marketing Flow", roleId: role2.id, steps: [roleStep(role2.id)] });
+    const secondFlow = await admin.createFlow("emp-superadmin", {
+      name: "Marketing Flow",
+      roleId: role2.id,
+      steps: [roleStep(role2.id), roleStep(financeExecRole.id)],
+    });
 
     await admin.publishFlow("emp-superadmin", secondFlow.id);
 
@@ -632,8 +650,13 @@ describe("publishFlow", () => {
 
   it("rejects publishing an already-published flow", async () => {
     const { admin } = buildAdmin();
-    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
-    const flow = await admin.createFlow("emp-superadmin", { name: "Standard reimbursement", roleId: role.id, steps: [roleStep(role.id)] });
+    const executiveRole = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Standard reimbursement",
+      roleId: executiveRole.id,
+      steps: [roleStep(executiveRole.id), roleStep(financeExecRole.id)],
+    });
     await admin.publishFlow("emp-superadmin", flow.id);
 
     await expect(admin.publishFlow("emp-superadmin", flow.id)).rejects.toMatchObject({ code: "validation" });
@@ -654,6 +677,51 @@ describe("publishFlow", () => {
 
     await expect(admin.publishFlow("emp-katherine", flow.id)).rejects.toMatchObject({
       code: "unauthorized",
+    });
+  });
+
+  it("rejects publishing a flow whose last step is not the Finance Executive role", async () => {
+    const { admin } = buildAdmin();
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    const managerRole = await admin.createRole("emp-superadmin", { code: "manager", displayName: "Manager" });
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Standard reimbursement",
+      roleId: financeExecRole.id,
+      steps: [roleStep(financeExecRole.id), roleStep(managerRole.id)],
+    });
+
+    await expect(admin.publishFlow("emp-superadmin", flow.id)).rejects.toMatchObject({
+      code: "validation",
+    });
+  });
+
+  it("rejects publishing a flow whose last step is a team-lead step", async () => {
+    const { admin } = buildAdmin();
+    const executiveRole = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Standard reimbursement",
+      roleId: executiveRole.id,
+      steps: [roleStep(executiveRole.id), teamLeadStep],
+    });
+
+    await expect(admin.publishFlow("emp-superadmin", flow.id)).rejects.toMatchObject({
+      code: "validation",
+    });
+  });
+
+  it("rejects publishing a flow whose last step role is inactive", async () => {
+    const { admin } = buildAdmin();
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    const stepRole = await admin.createRole("emp-superadmin", { code: "manager", displayName: "Manager" });
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Standard reimbursement",
+      roleId: financeExecRole.id,
+      steps: [roleStep(financeExecRole.id), roleStep(stepRole.id)],
+    });
+    await admin.deactivateRole("emp-superadmin", stepRole.id);
+
+    await expect(admin.publishFlow("emp-superadmin", flow.id)).rejects.toMatchObject({
+      code: "validation",
     });
   });
 });
