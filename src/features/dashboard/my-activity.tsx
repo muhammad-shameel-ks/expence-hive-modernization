@@ -5,8 +5,9 @@
 // list, so this is the only place that action stays visible to you).
 
 import { useMemo, useState } from "react";
-import { Search } from "lucide-react";
-import { KIND_META, formatMoney } from "./journey-meta";
+import { Search, X, Activity, Filter } from "lucide-react";
+import { KIND_META, FILTER_DOT_COLOR, formatMoney } from "./journey-meta";
+import { ActivityItemRow } from "./activity-item-row";
 import type { ActivityItem, HistoryKind } from "./mock-data";
 
 export type ActivityKindFilter = "all" | HistoryKind;
@@ -64,90 +65,131 @@ export function MyActivity({
   );
 
   return (
-    <section aria-label="My activity" className="rounded-2xl border border-border bg-card p-5 shadow-sm">
-      <div className="flex flex-wrap items-start justify-between gap-3">
+    <section aria-label="My activity" className="rounded-2xl border border-border bg-card p-5 shadow-sm sm:p-6">
+      {/* Header section */}
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-semibold tracking-tight text-foreground">My activity</h2>
-          <p className="mt-0.5 text-sm text-muted-foreground">
+          <div className="flex items-center gap-2">
+            <h2 className="text-lg font-semibold tracking-tight text-foreground sm:text-xl">
+              My activity
+            </h2>
+            <span className="inline-flex items-center rounded-full bg-muted px-2.5 py-0.5 text-xs font-semibold text-muted-foreground border border-border/50">
+              {filtered.length} {filtered.length === 1 ? "action" : "actions"}
+            </span>
+          </div>
+          <p className="mt-1 text-sm text-muted-foreground">
             Decisions and comments you have made, even on claims no longer assigned to you.
           </p>
         </div>
+
         {items.length > 0 ? (
-          <div className="flex w-full flex-wrap gap-2 sm:w-auto">
+          <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center">
+            {/* Search Input */}
             <div className="relative flex-1 sm:w-64 sm:flex-none">
-              <Search className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
               <input
                 type="search"
                 value={query}
                 onChange={(event) => setQuery(event.target.value)}
-                placeholder="Search by requester, amount, claim..."
+                placeholder="Search by requester, claim, amount..."
                 aria-label="Search my activity"
-                className="w-full rounded-lg border border-border bg-background py-1.5 pl-8 pr-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                className="w-full rounded-xl border border-border bg-background py-2 pl-9 pr-8 text-sm text-foreground placeholder:text-muted-foreground outline-none transition-all focus:border-ring focus:ring-2 focus:ring-ring/20"
               />
+              {query ? (
+                <button
+                  type="button"
+                  onClick={() => setQuery("")}
+                  aria-label="Clear search"
+                  className="absolute right-2.5 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground"
+                >
+                  <X className="h-3.5 w-3.5" />
+                </button>
+              ) : null}
             </div>
-            <select
-              value={kindFilter}
-              onChange={(event) => setKindFilter(event.target.value as ActivityKindFilter)}
-              aria-label="Filter my activity by action"
-              className="rounded-lg border border-border bg-background py-1.5 px-2.5 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-            >
-              {KIND_FILTERS.map((option) => (
-                <option key={option.value} value={option.value}>
-                  {option.label}
-                </option>
-              ))}
-            </select>
+
+            {/* Select Dropdown for Mobile / Compact view */}
+            <div className="relative sm:hidden">
+              <select
+                value={kindFilter}
+                onChange={(event) => setKindFilter(event.target.value as ActivityKindFilter)}
+                aria-label="Filter my activity by action"
+                className="w-full rounded-xl border border-border bg-background py-2 pl-3 pr-8 text-sm text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/20"
+              >
+                {KIND_FILTERS.map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
+              </select>
+            </div>
           </div>
         ) : null}
       </div>
 
-      {items.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">You have not acted on any claims yet.</p>
-      ) : filtered.length === 0 ? (
-        <p className="mt-4 text-sm text-muted-foreground">
-          {query
-            ? <>No activity matches &ldquo;{query}&rdquo;.</>
-            : "No activity matches this filter."}
-        </p>
-      ) : (
-        <ul className="mt-4 divide-y divide-border">
-          {filtered.map((item) => {
-            const meta = KIND_META[item.kind];
-            const Icon = meta.icon;
-            const isLoading = loadingClaimId === item.claimId;
+      {/* Quick Filter Chips (Pills with Status Indicator Dots) */}
+      {items.length > 0 ? (
+        <div className="mt-4 hidden flex-wrap items-center gap-1.5 border-t border-border/60 pt-4 sm:flex">
+          <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
+            <Filter className="h-3.5 w-3.5" /> Filter:
+          </span>
+          {KIND_FILTERS.map((option) => {
+            const active = kindFilter === option.value;
+            const dotColor = FILTER_DOT_COLOR[option.value];
             return (
-              <li key={item.id}>
-                <button
-                  type="button"
-                  onClick={() => onOpen?.(item.claimId)}
-                  disabled={!onOpen || isLoading}
-                  className="flex w-full items-start gap-3 rounded-lg py-3 text-left transition-colors first:pt-0 last:pb-0 hover:bg-muted/40 disabled:cursor-default disabled:hover:bg-transparent"
-                >
-                  <span className="mt-0.5 flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-muted text-muted-foreground">
-                    <Icon className="h-3.5 w-3.5" />
-                  </span>
-                  <div className="min-w-0 flex-1">
-                    <div className="flex flex-wrap items-baseline justify-between gap-x-3 gap-y-0.5">
-                      <p className="truncate text-sm font-medium text-foreground">
-                        {meta.label} <span className="text-muted-foreground">&middot;</span> {item.claimTitle}
-                      </p>
-                      <span className="shrink-0 text-xs tabular-nums text-muted-foreground">
-                        {isLoading ? "Opening…" : item.date}
-                      </span>
-                    </div>
-                    <p className="mt-0.5 flex flex-wrap items-center gap-x-2 font-mono text-[11px] text-muted-foreground">
-                      <span>{item.claimRef}</span>
-                      <span aria-hidden>&middot;</span>
-                      <span>{item.requesterName}</span>
-                      <span aria-hidden>&middot;</span>
-                      <span>{formatMoney(item.amount, item.currency)}</span>
-                    </p>
-                    {item.detail ? <p className="mt-1 text-xs text-muted-foreground">{item.detail}</p> : null}
-                  </div>
-                </button>
-              </li>
+              <button
+                key={option.value}
+                type="button"
+                onClick={() => setKindFilter(option.value)}
+                className={`inline-flex items-center gap-1.5 rounded-full px-3 py-1 text-xs font-medium transition-all ${
+                  active
+                    ? "bg-primary text-primary-foreground shadow-2xs"
+                    : "bg-muted/60 text-muted-foreground hover:bg-muted hover:text-foreground"
+                }`}
+              >
+                <span className={`h-1.5 w-1.5 rounded-full ${active ? "bg-primary-foreground" : dotColor}`} />
+                {option.label}
+              </button>
             );
           })}
+        </div>
+      ) : null}
+
+      {/* Activity List Content */}
+      {items.length === 0 ? (
+        <div className="mt-8 flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-12 text-center">
+          <Activity className="h-8 w-8 text-muted-foreground/50" />
+          <p className="mt-2 text-sm font-medium text-foreground">You have not acted on any claims yet</p>
+          <p className="mt-1 text-xs text-muted-foreground">Your decisions and comments will appear here.</p>
+        </div>
+      ) : filtered.length === 0 ? (
+        <div className="mt-8 flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
+          <p className="text-sm font-medium text-foreground">
+            {query ? <>No activity matching &ldquo;{query}&rdquo;</> : "No activity matches this filter"}
+          </p>
+          <p className="mt-1 text-xs text-muted-foreground">Try adjusting your search query or filter selection.</p>
+          <button
+            type="button"
+            onClick={() => {
+              setQuery("");
+              setKindFilter("all");
+            }}
+            className="mt-3 text-xs font-semibold text-primary hover:underline"
+          >
+            Clear search & filters
+          </button>
+        </div>
+      ) : (
+        <ul className="mt-4 divide-y divide-border/60" role="list">
+          {filtered.map((item) => (
+            <li key={item.id} className="py-1">
+              <ActivityItemRow
+                item={item}
+                onClick={onOpen ? () => onOpen(item.claimId) : undefined}
+                isLoading={loadingClaimId === item.claimId}
+                showActor={false}
+              />
+            </li>
+          ))}
         </ul>
       )}
     </section>
