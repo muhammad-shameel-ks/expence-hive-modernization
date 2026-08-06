@@ -28,19 +28,10 @@ describe("nextActionFor", () => {
     });
   });
 
-  it("returns Resubmit for needs-correction, owned by me", () => {
-    expect(nextActionFor(expense({ status: "needs-correction" }), ME)).toEqual({
-      label: "Resubmit",
-      actor: ME,
-      mine: true,
-    });
-  });
-
-  it("sends a rejected expense back into the correction loop, owned by me", () => {
+  it("is terminal and unowned for a rejected expense", () => {
     expect(nextActionFor(expense({ status: "rejected" }), ME)).toEqual({
-      label: "Resubmit",
-      actor: ME,
-      mine: true,
+      label: "Submit a new claim",
+      mine: false,
     });
   });
 
@@ -90,31 +81,55 @@ describe("nextActionFor", () => {
   });
 
   it("honours an explicit current user instead of the mock identity", () => {
-    const result = nextActionFor(expense({ status: "needs-correction" }), "Ada Lovelace");
+    const result = nextActionFor(expense({ status: "in-approval", nextActor: "Ada Lovelace" }), "Ada Lovelace");
     expect(result.actor).toBe("Ada Lovelace");
   });
 
-  it("attributes the resubmit of a rejected expense to the explicit current user", () => {
+  it("a rejected expense has no owner regardless of the current user", () => {
     const result = nextActionFor(expense({ status: "rejected" }), "Ada Lovelace");
-    expect(result).toEqual({ label: "Resubmit", actor: "Ada Lovelace", mine: true });
+    expect(result).toEqual({ label: "Submit a new claim", mine: false });
+  });
+
+  it("matches the assigned approver by id even when the current user's display name differs from the directory name", () => {
+    // e.g. a dev-login label like "Sanil Davis / Manager (IT)" versus the
+    // plain "Sanil Davis" the expense directory assigns as the actor's name.
+    const assigned = expense({
+      status: "in-approval",
+      nextStage: "Manager approval",
+      nextActor: "Sanil Davis",
+      nextActorId: "emp-sanil",
+    });
+    expect(nextActionFor(assigned, "Sanil Davis / Manager (IT)", "emp-sanil")).toEqual({
+      label: "Manager approval",
+      actor: "Sanil Davis",
+      mine: true,
+    });
+  });
+
+  it("does not match by id when the assigned actor is someone else", () => {
+    const assigned = expense({
+      status: "in-approval",
+      nextStage: "Manager approval",
+      nextActor: "Sanil Davis",
+      nextActorId: "emp-sanil",
+    });
+    expect(nextActionFor(assigned, "Ada Lovelace", "emp-ada").mine).toBe(false);
+  });
+
+  it("falls back to name matching when either side has no actor id", () => {
+    const assigned = expense({ status: "in-approval", nextStage: "Manager approval", nextActor: "Ada Lovelace" });
+    expect(nextActionFor(assigned, "Ada Lovelace", "emp-ada").mine).toBe(true);
   });
 });
 
 describe("isTerminal", () => {
-  it("is true only for paid expenses", () => {
+  it("is true for paid and rejected expenses", () => {
     expect(isTerminal("paid")).toBe(true);
+    expect(isTerminal("rejected")).toBe(true);
   });
 
-  it("is false for every status that can still move, including rejected", () => {
-    for (const status of [
-      "draft",
-      "submitted",
-      "in-approval",
-      "needs-correction",
-      "approved",
-      "in-finance",
-      "rejected",
-    ] as const) {
+  it("is false for every status that can still move", () => {
+    for (const status of ["draft", "submitted", "in-approval", "approved", "in-finance"] as const) {
       expect(isTerminal(status)).toBe(false);
     }
   });

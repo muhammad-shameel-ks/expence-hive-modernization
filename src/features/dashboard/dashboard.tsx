@@ -6,18 +6,52 @@
 import { useState } from "react";
 import { dashboardStats } from "./dashboard-stats";
 import { ExpenseDrawer } from "./expense-drawer";
+import { claimToExpense } from "./expense-read-model";
 import { ExpenseOverview } from "./expense-overview";
-import type { Expense } from "./mock-data";
+import { MyActivity } from "./my-activity";
+import type { ActivityItem, Expense } from "./mock-data";
 import { formatMoney } from "./journey-meta";
 
-export function ExpenseDashboard({ currentUser, expenses }: { currentUser: string; expenses: Expense[] }) {
+export function ExpenseDashboard({
+  currentUser,
+  currentUserId,
+  expenses,
+  activity = [],
+}: {
+  currentUser: string;
+  currentUserId?: string;
+  expenses: Expense[];
+  activity?: ActivityItem[];
+}) {
   const [selected, setSelected] = useState<Expense | null>(null);
   const [open, setOpen] = useState(false);
+  const [loadingClaimId, setLoadingClaimId] = useState<string | null>(null);
 
   const openExpense = (expense: Expense) => {
     setSelected(expense);
     setOpen(true);
   };
+
+  // Activity entries can reference a claim that has moved past this user's
+  // stage and is no longer in `expenses` (the workspace list). Fetch it on
+  // demand instead of only being able to open claims still assigned to them.
+  async function openActivityClaim(claimId: string) {
+    const known = expenses.find((expense) => expense.id === claimId);
+    if (known) {
+      openExpense(known);
+      return;
+    }
+    setLoadingClaimId(claimId);
+    try {
+      const response = await fetch(`/api/expenses/${claimId}`);
+      if (response.ok) {
+        const { claim, employees } = await response.json();
+        openExpense(claimToExpense(claim, employees));
+      }
+    } finally {
+      setLoadingClaimId(null);
+    }
+  }
 
   const stats = dashboardStats(expenses, new Date().toISOString().slice(0, 7));
 
@@ -28,7 +62,7 @@ export function ExpenseDashboard({ currentUser, expenses }: { currentUser: strin
       hint: `${stats.spentThisMonthCount} ${stats.spentThisMonthCount === 1 ? "expense" : "expenses"}`,
     },
     { label: "Pending approval", value: String(stats.pendingApproval), hint: "awaiting a decision" },
-    { label: "Needs correction", value: String(stats.needsCorrection), hint: "one is yours" },
+    { label: "Rejected", value: String(stats.rejected), hint: "submit a new claim if still valid" },
     {
       label: "Reimbursed this month",
       value: formatMoney(stats.reimbursedThisMonth),
@@ -53,9 +87,17 @@ export function ExpenseDashboard({ currentUser, expenses }: { currentUser: strin
         ))}
       </section>
 
-      <ExpenseOverview expenses={expenses} onOpen={openExpense} />
+      <ExpenseOverview expenses={expenses} currentUserId={currentUserId} onOpen={openExpense} />
 
-      <ExpenseDrawer open={open} onOpenChange={setOpen} expense={selected} currentUser={currentUser} />
+      <MyActivity items={activity} onOpen={openActivityClaim} loadingClaimId={loadingClaimId} />
+
+      <ExpenseDrawer
+        open={open}
+        onOpenChange={setOpen}
+        expense={selected}
+        currentUser={currentUser}
+        currentUserId={currentUserId}
+      />
     </div>
   );
 }

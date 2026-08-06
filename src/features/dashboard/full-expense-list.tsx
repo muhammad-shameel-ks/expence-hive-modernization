@@ -11,9 +11,11 @@ import type { Expense } from "./mock-data";
 export function FullExpenseList({
   expenses,
   currentUser,
+  currentUserId,
 }: {
   expenses: Expense[];
   currentUser: string;
+  currentUserId?: string;
 }) {
   const [selected, setSelected] = useState<Expense | null>(null);
   const [open, setOpen] = useState(false);
@@ -29,7 +31,7 @@ export function FullExpenseList({
         <div>
           <h2 className="text-lg font-semibold tracking-tight text-foreground">All expenses</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Every claim from {currentUser.split(" ")[0]}, newest first.
+            Every claim you raised or need to act on, newest first.
           </p>
         </div>
         <Button className="gap-1.5" asChild>
@@ -42,12 +44,19 @@ export function FullExpenseList({
       <ExpenseTable
         expenses={expenses}
         currentUser={currentUser}
+        currentUserId={currentUserId}
         onOpen={openExpense}
         searchable
         filterable
       />
 
-      <ExpenseDrawer open={open} onOpenChange={setOpen} expense={selected} currentUser={currentUser} />
+      <ExpenseDrawer
+        open={open}
+        onOpenChange={setOpen}
+        expense={selected}
+        currentUser={currentUser}
+        currentUserId={currentUserId}
+      />
     </section>
   );
 }

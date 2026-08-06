@@ -56,6 +56,23 @@ export async function handleSubmitExpenseRequest(
   }
 }
 
+export async function handleGetExpenseRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const [claim, employees] = await Promise.all([
+      commands.getClaim(actorId, claimId),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
 export async function handleApproveExpenseRequest(
   _request: Request,
   commands: ExpenseCommands,
@@ -64,6 +81,24 @@ export async function handleApproveExpenseRequest(
 ): Promise<Response> {
   try {
     return Response.json({ claim: await commands.approveStage(actorId, claimId) });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleRejectExpenseRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).reason !== "string") {
+      return validationResponse();
+    }
+    const reason = (body as Record<string, unknown>).reason as string;
+    return Response.json({ claim: await commands.rejectClaim(actorId, claimId, reason) });
   } catch (error) {
     return expenseErrorResponse(error);
   }

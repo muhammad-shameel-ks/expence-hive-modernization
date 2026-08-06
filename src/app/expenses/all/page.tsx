@@ -19,7 +19,7 @@ export default async function AllExpensesPage() {
   return (
     <main className={styles.page}>
       <AppHeader
-        employeeName={employee.name}
+        employeeName={workspace.employee.name}
         role={workspace.employee.role}
         activePath="/expenses/all"
       />
@@ -36,7 +36,11 @@ export default async function AllExpensesPage() {
         </p>
 
         <div className="mt-8">
-          <FullExpenseList expenses={expenses} currentUser={employee.name} />
+          <FullExpenseList
+            expenses={expenses}
+            currentUser={workspace.employee.name}
+            currentUserId={workspace.employee.id}
+          />
         </div>
       </div>
     </main>

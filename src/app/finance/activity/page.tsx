@@ -1,32 +1,38 @@
 import { cookies } from "next/headers";
+import Link from "next/link";
 import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
 import { AppHeader } from "@/components/layout/app-header";
-import { PaymentQueueTable } from "@/features/finance/payment-queue-table";
+import { Button } from "@/components/ui/button";
+import { activityEntryToItem } from "@/features/dashboard/expense-read-model";
+import { OrganizationActivity } from "@/features/finance/organization-activity";
 import styles from "../../expenses/expenses.module.css";
 
-export default async function FinancePaymentsPage() {
+export default async function OrganizationActivityPage() {
   const sessionId = (await cookies()).get("eh_session")?.value;
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) redirect("/login");
 
   const workspace = await expenseCommands().getWorkspace(employee.id);
 
-  let claims;
+  let activity;
   try {
-    claims = await expenseCommands().listFinancePaymentQueue(employee.id);
+    activity = (await expenseCommands().listOrganizationActivity(employee.id)).map(activityEntryToItem);
   } catch (error) {
     if (isExpenseError(error) && error.code === "unauthorized") {
       return (
         <main className={styles.page}>
           <AppHeader employeeName={workspace.employee.name} role={workspace.employee.role} />
           <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-10">
-            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Payment queue</h1>
-            <p className="mt-4 text-sm text-muted-foreground">
-              Only Finance and HR can view this page.
-            </p>
+            <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Organization activity</h1>
+            <p className="mt-4 text-sm text-muted-foreground">Only Finance Head can view this page.</p>
+            <div className="mt-6">
+              <Button asChild variant="outline">
+                <Link href="/finance/payments">Back to payment queue</Link>
+              </Button>
+            </div>
           </div>
         </main>
       );
@@ -39,21 +45,25 @@ export default async function FinancePaymentsPage() {
       <AppHeader
         employeeName={workspace.employee.name}
         role={workspace.employee.role}
-        activePath="/finance/payments"
+        activePath="/finance/activity"
       />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
-          Finance / payment queue
+          Finance / organization activity
         </p>
         <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground sm:text-4xl">
-          Payment queue
+          Organization activity
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-          Claims at or past Finance verification, with the payout details needed to pay them.
+          Every approval, rejection, verification, payment, takeover, and comment made across the organization.
         </p>
 
         <div className="mt-8">
-          <PaymentQueueTable claims={claims} employees={workspace.employees} />
+          <OrganizationActivity
+            items={activity}
+            currentUser={workspace.employee.name}
+            currentUserId={workspace.employee.id}
+          />
         </div>
       </div>
     </main>

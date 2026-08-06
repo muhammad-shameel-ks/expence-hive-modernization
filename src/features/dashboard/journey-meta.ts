@@ -1,8 +1,8 @@
 import {
-  AlertTriangle,
   Banknote,
   Check,
   Gavel,
+  MessageSquare,
   PenLine,
   Send,
   ShieldCheck,
@@ -19,12 +19,12 @@ export const KIND_META: Record<HistoryKind, { label: string; tone: TimelineTone;
   submitted: { label: "Submitted", tone: "info", icon: Send },
   approved: { label: "Approved", tone: "success", icon: Check },
   rejected: { label: "Rejected", tone: "danger", icon: X },
-  correction: { label: "Needs correction", tone: "warning", icon: AlertTriangle },
   skipped: { label: "Stage skipped", tone: "muted", icon: SkipForward },
   takeover: { label: "Taken over", tone: "primary", icon: Gavel },
   reviewing: { label: "Finance review", tone: "primary", icon: ShieldCheck },
   verified: { label: "Finance verified", tone: "primary", icon: ShieldCheck },
   paid: { label: "Paid", tone: "success", icon: Banknote },
+  comment: { label: "Comment added", tone: "primary", icon: MessageSquare },
   note: { label: "Note", tone: "muted", icon: StickyNote },
 };
 

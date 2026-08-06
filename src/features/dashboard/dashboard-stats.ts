@@ -4,7 +4,7 @@ export interface DashboardStats {
   spentThisMonth: number;
   spentThisMonthCount: number;
   pendingApproval: number;
-  needsCorrection: number;
+  rejected: number;
   reimbursedThisMonth: number;
 }
 
@@ -14,15 +14,15 @@ export function dashboardStats(expenses: Expense[], month: string): DashboardSta
   let spentThisMonth = 0;
   let spentThisMonthCount = 0;
   let pendingApproval = 0;
-  let needsCorrection = 0;
+  let rejected = 0;
   let reimbursedThisMonth = 0;
 
   for (const expense of expenses) {
     if (expense.status === "submitted" || expense.status === "in-approval") {
       pendingApproval += 1;
     }
-    if (expense.status === "needs-correction") {
-      needsCorrection += 1;
+    if (expense.status === "rejected") {
+      rejected += 1;
     }
     if (!inMonth(expense)) continue;
     if (expense.status === "paid") {
@@ -34,5 +34,5 @@ export function dashboardStats(expenses: Expense[], month: string): DashboardSta
     }
   }
 
-  return { spentThisMonth, spentThisMonthCount, pendingApproval, needsCorrection, reimbursedThisMonth };
+  return { spentThisMonth, spentThisMonthCount, pendingApproval, rejected, reimbursedThisMonth };
 }

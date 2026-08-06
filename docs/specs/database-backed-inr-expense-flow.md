@@ -37,7 +37,7 @@ The employee dashboard will consume server-side read models rather than importin
 
 The same workspace will adapt to the current signed-in user's authority.
 
-Employees will see their own claims and required corrections.
+Employees will see their own claims, including any that were rejected.
 
 Approvers will see claims requiring their decision.
 
@@ -75,9 +75,9 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 11. As an employee, I want to see the current claim status, next action, blocking reason, and responsible actor, so that I understand what happens next.
 
-12. As an employee, I want to see each approval, correction, rejection, verification, and payment event, so that the claim history is transparent.
+12. As an employee, I want to see each approval, rejection, verification, and payment event, so that the claim history is transparent.
 
-13. As an employee, I want a claim returned for correction to remain recoverable, so that I can fix and resubmit it instead of creating a duplicate claim.
+13. As an employee, I want a rejected claim to show a clear reason and terminal status, so that I know I must submit a new claim rather than expect the rejected one to reopen.
 
 14. As an employee, I want a paid claim to show `Approved and paid`, so that payment completion is unambiguous.
 
@@ -87,7 +87,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 17. As a manager, I want to approve an assigned claim, so that it advances to the IT stage.
 
-18. As a manager, I want to request correction or reject a claim with a reason, so that the employee receives an actionable outcome.
+18. As a manager, I want to reject a claim with a reason, so that the employee receives a clear, actionable outcome.
 
 19. As an IT reviewer, I want to see claims assigned to the IT stage, so that I can perform the required IT review.
 
@@ -117,12 +117,22 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 32. As a user, I want the employee dashboard to show an empty state when no persisted claims exist, so that an empty database is understandable rather than appearing broken.
 
+33. As an employee, I want a "My activity" feed of every decision and comment I have made on any claim, so that my actions stay visible after the claim moves past my stage and drops out of my workspace list.
+
+34. As a Finance user or HR, I want to view any employee's individual activity feed, so that I can audit a single person's decisions and comments.
+
+35. As a Finance Head, I want an organization-wide activity feed of every employee's decisions and comments, so that the apex financial role can audit the whole organization from one place.
+
+36. As a user who has ever acted on a claim, I want to reopen its detail view even after it has moved past my stage, so that a decision I made remains traceable.
+
+37. As a Finance Head, I want the same standing oversight as Finance and HR: payout details, comments, the finance payment queue, and any employee's activity feed, so that the apex financial role can audit and process everything without extra assignments.
+
 ## Implementation Decisions
 
 ### Application Boundary
 
 - The browser will read composed dashboard and request-detail read models from protected server-side entrypoints.
-- All claim creation, draft updates, submission, approval, correction, rejection, verification, and payment actions will pass through server-side application commands.
+- All claim creation, draft updates, submission, approval, rejection, verification, and payment actions will pass through server-side application commands.
 - Each command will authenticate the current session, enforce organization scope, authorize the current actor, validate the state transition, and execute its mutation inside a database transaction.
 - The browser will not directly write claim, approval, history, or payment records.
 - The primary test seam will be the protected server-side command boundary called through route handlers or equivalent application entrypoints.
@@ -144,7 +154,8 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Assign the IT reviewer role to IT Head.
 - Assign the Finance reviewer role to Finance Officer.
 - Retain CEO delegate as a separate role for the later safe-list and delegated-authority slice.
-- Seed the Employee, Manager, IT reviewer, Finance reviewer, CEO, HR administrator, System administrator, and CEO delegate role vocabulary as needed by the current application.
+- Seed the Employee, Manager, IT reviewer, Finance reviewer, Finance Head, CEO, HR administrator, System administrator, and CEO delegate role vocabulary as needed by the current application.
+- Seed the Finance Head role as the apex financial role: it bypasses every earlier stage in its flow and shares Finance/HR standing oversight over payout details, comments, the payment queue, and individual activity feeds.
 - Keep directory suggestions separate from application-managed manager and approval assignments.
 
 ### Reimbursement Model
@@ -168,7 +179,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Resolve the Finance stage through the Finance reviewer role or pool.
 - Capture the workflow version or equivalent immutable workflow reference on each submitted claim.
 - Create request-specific approval steps when a claim is submitted rather than resolving authority only at display time.
-- An approval step can be pending, approved, needs correction, rejected, skipped, or completed according to its node type.
+- An approval step can be pending, approved, rejected, skipped, or completed according to its node type.
 - A normal approver can act only on the currently assigned pending stage.
 - One eligible person completes an ordinary role or pool stage.
 - Missing assignment behavior will follow the broader specification by recording a skipped stage and notifying administrators, but the seeded happy path must have all assignments present.
@@ -179,9 +190,9 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - A claim may be saved as `draft` without creating approval steps.
 - Submission changes the claim to an active approval state and creates its ordered approval steps in one transaction.
 - Successful Manager, IT, and CEO decisions advance the claim to the next stage.
-- A correction decision changes the claim to `needs-correction`, records the reason, and returns ownership to the employee.
-- Resubmission after correction restarts the approval path at the first stage and preserves all previous history.
-- A final rejection records the reason and prevents ordinary resubmission unless a later policy explicitly adds a correction path.
+- A rejection at any stage, including Finance, changes the claim to `rejected` immediately and records the reason.
+- A rejected claim is terminal: it is never edited or resubmitted, and there is no correction or send-back cycle.
+- An employee may submit a new, distinct claim for the same expense after a rejection; the new claim restarts at the first approval stage and preserves the rejected claim's history unchanged.
 - CEO approval advances the claim to Finance verification.
 - Finance verification records a distinct verification action and advances the claim to payment completion.
 - Finance payment marking records a distinct payment action and changes the final employee-facing status to `Approved and paid`.
@@ -189,11 +200,11 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 ### History and Payment Records
 
-- Store append-only history events for draft creation, submission, approval, correction, rejection, verification, and payment.
+- Store append-only history events for draft creation, submission, approval, rejection, verification, and payment.
 - Every history event records the organization, claim, actor, authority or role exercised, action, reason where required, workflow reference, and timestamp.
 - Store Finance verification and payment information in a payment record or equivalent normalized records.
 - Record verifier, payment actor, verification timestamp, payment timestamp, and payment status separately.
-- History visibility will be restricted to the requester and actors authorized to view the claim.
+- History visibility will be restricted to the requester, Finance/HR (including Finance Head), the currently assigned actor, and anyone who has ever acted on the claim such as an earlier-stage approver or a commenter.
 
 ### Role-Aware Workspace
 
@@ -201,9 +212,17 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Employee views will default to claims submitted by the current employee.
 - Approver views will default to claims requiring action from the current user.
 - Finance views will default to claims awaiting verification or payment completion.
-- The dashboard will separate actionable, waiting, completed, draft, correction, and rejected records using explicit labels rather than color alone.
+- The dashboard will separate actionable, waiting, completed, draft, and rejected records using explicit labels rather than color alone.
 - The request detail view will put claim evidence, current stage, next action, blocking reason, decision controls, and history in one view.
 - Empty, loading, error, unauthorized, and stale states will be explicit.
+
+### Activity Feeds
+
+- The personal "My activity" feed will list every decision and comment the current user made on any claim in the organization, including claims no longer assigned to them.
+- The personal feed derives from append-only history events, so an action stays visible even after the claim moves past the actor's stage.
+- Finance, HR, and Finance Head may view any employee's individual activity feed; other employees can only view their own.
+- The organization-wide activity feed will list every employee's decisions and comments and is restricted to Finance Head alone.
+- Comment events authored by Finance or HR will appear in the commenter's personal feed and in the organization feed, matching how approval and rejection events appear.
 
 ### INR Localization
 
@@ -224,7 +243,7 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 
 - Provide a protected current-user read operation for dashboard summary and claim list data.
 - Provide a protected claim-detail read operation with approval chain, history, and payment data.
-- Provide commands equivalent to create draft, update draft, submit claim, approve stage, request correction, reject claim, verify payment, and mark paid.
+- Provide commands equivalent to create draft, update draft, submit claim, approve stage, reject claim, verify payment, and mark paid.
 - Return domain-level validation, authorization, conflict, and not-found errors that the UI can present as actionable messages.
 - Use entity or request versions for state-changing commands where concurrent updates are possible.
 - Ensure repeated commands do not duplicate state transitions or history events.
@@ -234,11 +253,12 @@ Existing illustrative numeric fixture amounts will be retained as numeric INR va
 - Tests will assert externally observable persistence, authorization, state transitions, read-model results, history events, payment records, and user-visible recovery behavior.
 - Tests will not assert React component structure, CSS class names, SQL implementation details, or internal helper names.
 - Add migration and seed integration coverage for organization scoping, idempotency, seeded authority mapping, and persisted local sessions.
-- Add application-command coverage for draft creation, submission, each approval stage, correction, rejection, Finance verification, payment, self-approval prevention, unauthorized stage actions, optimistic conflicts, and duplicate commands.
+- Add application-command coverage for draft creation, submission, each approval stage, rejection, Finance verification, payment, self-approval prevention, unauthorized stage actions, optimistic conflicts, and duplicate commands.
 - Add protected route coverage for unauthenticated access, unauthorized access, current-user filtering, role-aware inbox results, and claim detail visibility.
 - Add read-model coverage for dashboard statistics, INR formatting inputs, empty states, current stage, next action, blocking reason, and final paid status.
+- Add read-model and command coverage for the personal and organization-wide activity feeds, including role restrictions, actor attribution, and the claim-detail visibility rule for anyone who has ever acted on the claim.
 - Add end-to-end browser coverage for switching from the employee identity to Manager, IT, CEO, and Finance identities and completing the claim-to-paid path.
-- Add end-to-end coverage for a correction and resubmission cycle.
+- Add end-to-end coverage that a rejected claim is terminal and that the employee can submit a new claim for the same expense afterward.
 - Add end-to-end coverage that a paid claim cannot be edited through the normal employee interface.
 - Add responsive and keyboard checks for claim creation, review, approval actions, payment actions, and the role-aware workspace.
 - Reuse the existing server boundary and seeded local identity testing patterns established by the authentication and administration tests.

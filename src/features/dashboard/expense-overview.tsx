@@ -1,10 +1,10 @@
 "use client";
 // The dashboard's below-stats section: a compact recent-claims list (left,
 // wider) plus a "needs your attention" card (right) grouping claims pending
-// approval and sent back for correction. Every row opens the drawer.
+// approval. Every row opens the drawer.
 
 import { useMemo, useState, type ReactNode } from "react";
-import { ArrowUpRight, AlertTriangle, ChevronDown, Clock3 } from "lucide-react";
+import { ArrowUpRight, ChevronDown, Clock3 } from "lucide-react";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/ui/button";
 import {
@@ -23,26 +23,33 @@ const RECENT_COUNT = 5;
 
 export function ExpenseOverview({
   expenses,
+  currentUserId,
   onOpen,
 }: {
   expenses: Expense[];
+  currentUserId?: string;
   onOpen: (expense: Expense) => void;
 }) {
-  const recent = useMemo(
-    () =>
-      [...expenses]
-        .sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0))
-        .slice(0, RECENT_COUNT),
-    [expenses],
+  // "Your Expense" is claims this person raised, not claims routed to them
+  // for a decision. The workspace list mixes both because approvers need
+  // their assigned claims too, so this section filters back down to mine.
+  const ownExpenses = useMemo(
+    () => (currentUserId ? expenses.filter((e) => e.requesterId === currentUserId) : expenses),
+    [expenses, currentUserId],
   );
 
-  const { pending, needsCorrection } = useMemo(() => groupAttentionItems(expenses), [expenses]);
-  const attentionItems = useMemo(
+  const recent = useMemo(
     () =>
-      [...needsCorrection, ...pending].sort((a, b) =>
-        a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0,
-      ),
-    [needsCorrection, pending],
+      [...ownExpenses]
+        .sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0))
+        .slice(0, RECENT_COUNT),
+    [ownExpenses],
+  );
+
+  const { pending } = useMemo(() => groupAttentionItems(expenses), [expenses]);
+  const attentionItems = useMemo(
+    () => [...pending].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0)),
+    [pending],
   );
 
   const [viewAllOpen, setViewAllOpen] = useState(false);
@@ -111,18 +118,7 @@ export function ExpenseOverview({
           emptyLabel="Nothing waiting on someone else"
           items={pending}
           onOpen={onOpen}
-          defaultOpen={pending.length > 0 && needsCorrection.length === 0}
-        />
-
-        <AttentionGroup
-          icon={<AlertTriangle className="h-4 w-4" />}
-          iconClassName="bg-amber-500/10 text-amber-600 dark:text-amber-400"
-          label="need correction"
-          singularLabel="needs correction"
-          emptyLabel="Nothing sent back to you"
-          items={needsCorrection}
-          onOpen={onOpen}
-          defaultOpen={needsCorrection.length > 0}
+          defaultOpen={pending.length > 0}
         />
       </section>
 
@@ -131,7 +127,7 @@ export function ExpenseOverview({
           <DialogHeader>
             <DialogTitle>Needs your attention</DialogTitle>
             <DialogDescription>
-              Everything pending approval or sent back to you, newest first.
+              Everything pending approval, newest first.
             </DialogDescription>
           </DialogHeader>
           <ul className="-mx-2 max-h-[60vh] divide-y divide-border overflow-y-auto">

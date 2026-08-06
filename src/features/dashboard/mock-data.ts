@@ -5,7 +5,6 @@ export type ExpenseStatus =
   | "draft"
   | "submitted"
   | "in-approval"
-  | "needs-correction"
   | "approved"
   | "in-finance"
   | "paid"
@@ -16,18 +15,20 @@ export type HistoryKind =
   | "submitted"
   | "approved"
   | "rejected"
-  | "correction"
   | "skipped"
   | "takeover"
   | "reviewing"
   | "verified"
   | "paid"
+  | "comment"
   | "note";
 
 export interface HistoryEvent {
   id: string;
   date: string;
   actor: string;
+  /** Employee id of the actor, when known. Lets the UI match "this was me" without relying on display-name string equality. */
+  actorId?: string;
   kind: HistoryKind;
   detail?: string;
 }
@@ -38,7 +39,7 @@ export interface ExpenseStepView {
   roleName: string;
   assignedActorId?: string;
   assignedActorName?: string;
-  status: "pending" | "approved" | "skipped" | "verified" | "paid";
+  status: "pending" | "approved" | "rejected" | "skipped" | "verified" | "paid";
 }
 
 export interface Expense {
@@ -53,8 +54,12 @@ export interface Expense {
   /** ISO timestamp of the first submission (drafts keep their creation time). */
   submittedAt: string;
   status: ExpenseStatus;
+  /** Employee id of whoever raised this claim. Used to tell "my claims" apart from claims assigned to me for a decision. */
+  requesterId?: string;
   nextStage?: string;
   nextActor?: string;
+  /** Employee id of the assigned actor for the current stage, if any. */
+  nextActorId?: string;
   blockingReason?: string;
   permission?: string;
   attachments: string[];
@@ -65,6 +70,23 @@ export interface Expense {
 
 export const ME = "Muhammad Shameel";
 
+/** One entry in a person's personal "My activity" feed: a decision or comment they made on a claim, regardless of whether that claim is still assigned to them. */
+export interface ActivityItem {
+  id: string;
+  claimId: string;
+  claimRef: string;
+  claimTitle: string;
+  claimCategory: string;
+  amount: number;
+  currency: string;
+  requesterName: string;
+  /** Who performed the action. Only populated in the organization-wide activity feed; the personal feed is implicitly "you". */
+  actorName?: string;
+  kind: HistoryKind;
+  detail?: string;
+  date: string;
+}
+
 export const STATUS_META: Record<
   ExpenseStatus,
   { label: string; tone: "neutral" | "info" | "success" | "warning" | "danger" }
@@ -72,7 +94,6 @@ export const STATUS_META: Record<
   draft: { label: "Draft", tone: "neutral" },
   submitted: { label: "Submitted", tone: "info" },
   "in-approval": { label: "In approval", tone: "info" },
-  "needs-correction": { label: "Needs correction", tone: "warning" },
   approved: { label: "Approved", tone: "success" },
   "in-finance": { label: "In finance", tone: "info" },
   paid: { label: "Approved and paid", tone: "success" },
@@ -110,15 +131,13 @@ export const expenses: Expense[] = [
     currency: "INR",
     date: "Aug 1",
     submittedAt: "2026-07-29T13:20:00Z",
-    status: "needs-correction",
-    nextStage: "Resubmit claim",
-    nextActor: ME,
+    status: "rejected",
     blockingReason: "Receipt over ₹150 requires an itemized breakdown.",
     attachments: ["receipt-acme-dinner.jpg"],
     history: [
       { id: "h1", date: "Jul 29, 13:20", actor: ME, kind: "submitted" },
       { id: "h2", date: "Jul 30, 11:02", actor: "Grace Hopper", kind: "approved" },
-      { id: "h3", date: "Aug 1, 15:40", actor: "Finance Officer", kind: "correction", detail: "Itemized breakdown required over ₹150" },
+      { id: "h3", date: "Aug 1, 15:40", actor: "Finance Officer", kind: "rejected", detail: "Itemized breakdown required over ₹150" },
     ],
   },
   {

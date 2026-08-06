@@ -38,12 +38,14 @@ const SORT_COLUMNS: { key: ExpenseSortKey; label: string; className: string }[] 
 export function ExpenseTable({
   expenses,
   currentUser,
+  currentUserId,
   onOpen,
   searchable = false,
   filterable = false,
 }: {
   expenses: Expense[];
   currentUser: string;
+  currentUserId?: string;
   onOpen: (expense: Expense) => void;
   searchable?: boolean;
   filterable?: boolean;
@@ -275,7 +277,7 @@ export function ExpenseTable({
         <TableBody>
           {rows.map((expense) => {
             const status = STATUS_META[expense.status];
-            const next = nextActionFor(expense, currentUser);
+            const next = nextActionFor(expense, currentUser, currentUserId);
             return (
               <TableRow
                 key={expense.id}
