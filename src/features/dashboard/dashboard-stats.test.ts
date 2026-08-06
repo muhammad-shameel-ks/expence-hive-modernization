@@ -39,14 +39,15 @@ describe("dashboardStats", () => {
     expect(dashboardStats(list, "2026-08").spentThisMonth).toBe(0);
   });
 
-  it("counts pending approval and rejected across all months", () => {
+  it("counts awaiting-decision and rejected claims across all months", () => {
     const list = [
       expense({ id: "e5", status: "submitted", submittedAt: "2026-07-20T10:00:00Z" }),
       expense({ id: "e5b", status: "in-approval", submittedAt: "2026-06-10T10:00:00Z" }),
+      expense({ id: "e5c", status: "in-finance", submittedAt: "2026-05-10T10:00:00Z" }),
       expense({ id: "e6", status: "rejected", submittedAt: "2026-07-19T10:00:00Z" }),
     ];
     const stats = dashboardStats(list, "2026-08");
-    expect(stats.pendingApproval).toBe(2);
+    expect(stats.pendingApproval).toBe(3);
     expect(stats.rejected).toBe(1);
   });
 
@@ -63,14 +64,14 @@ describe("dashboardStats", () => {
     expect(dashboardStats(expenses, "2026-08")).toEqual({
       spentThisMonth: 594,
       spentThisMonthCount: 1,
-      pendingApproval: 3,
+      pendingApproval: 4,
       rejected: 2,
       reimbursedThisMonth: 0,
     });
     expect(dashboardStats(expenses, "2026-07")).toEqual({
       spentThisMonth: 2077,
       spentThisMonthCount: 10,
-      pendingApproval: 3,
+      pendingApproval: 4,
       rejected: 2,
       reimbursedThisMonth: 461,
     });

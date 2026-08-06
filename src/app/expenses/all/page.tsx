@@ -25,7 +25,13 @@ export default async function AllExpensesPage() {
     }
     throw error;
   }
-  const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
+  // The workspace list mixes claims the user raised with claims routed to
+  // them for a decision; this page is the user's own expenses only. Claims
+  // awaiting the user's decision surface on the dashboard ("Needs your
+  // attention") and in My Activity instead.
+  const expenses = workspace.claims
+    .filter((claim) => claim.requesterId === employee.id)
+    .map((claim) => claimToExpense(claim, workspace.employees));
 
   return (
     <main className={styles.page}>
@@ -43,7 +49,7 @@ export default async function AllExpensesPage() {
           All expenses
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-          Search, filter, and sort every claim from submission to payment.
+          Search, filter, and sort your expenses from submission to payment.
         </p>
 
         <div className="mt-8">

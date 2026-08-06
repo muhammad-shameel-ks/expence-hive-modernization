@@ -61,7 +61,7 @@ export function ExpenseDashboard({
       value: formatMoney(stats.spentThisMonth),
       hint: `${stats.spentThisMonthCount} ${stats.spentThisMonthCount === 1 ? "expense" : "expenses"}`,
     },
-    { label: "Pending approval", value: String(stats.pendingApproval), hint: "awaiting a decision" },
+    { label: "Awaiting decision", value: String(stats.pendingApproval), hint: "awaiting a decision" },
     { label: "Rejected", value: String(stats.rejected), hint: "submit a new claim if still valid" },
     {
       label: "Reimbursed this month",

@@ -114,7 +114,7 @@ export function ExpenseOverview({
         <AttentionGroup
           icon={<Clock3 className="h-4 w-4" />}
           iconClassName="bg-sky-500/10 text-sky-600 dark:text-sky-400"
-          label="pending approval"
+          label="awaiting decision"
           emptyLabel="Nothing waiting on someone else"
           items={pending}
           onOpen={onOpen}
@@ -127,7 +127,7 @@ export function ExpenseOverview({
           <DialogHeader>
             <DialogTitle>Needs your attention</DialogTitle>
             <DialogDescription>
-              Everything pending approval, newest first.
+              Everything awaiting a decision, newest first.
             </DialogDescription>
           </DialogHeader>
           <ul className="-mx-2 max-h-[60vh] divide-y divide-border overflow-y-auto">

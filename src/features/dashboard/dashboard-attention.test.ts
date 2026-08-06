@@ -20,23 +20,23 @@ function expense(overrides: Partial<Expense>): Expense {
 }
 
 describe("groupAttentionItems", () => {
-  it("puts submitted and in-approval claims in pending", () => {
+  it("puts submitted, in-approval, and in-finance claims in pending", () => {
     const list = [
       expense({ id: "a", status: "submitted" }),
       expense({ id: "b", status: "in-approval" }),
-      expense({ id: "c", status: "paid" }),
+      expense({ id: "c", status: "in-finance" }),
+      expense({ id: "d", status: "paid" }),
     ];
     const { pending } = groupAttentionItems(list);
-    expect(pending.map((e) => e.id)).toEqual(["a", "b"]);
+    expect(pending.map((e) => e.id)).toEqual(["a", "b", "c"]);
   });
 
-  it("excludes drafts, approved, in-finance, paid, and rejected from pending", () => {
+  it("excludes drafts, approved, paid, and rejected from pending", () => {
     const list = [
       expense({ id: "a", status: "draft" }),
       expense({ id: "b", status: "approved" }),
-      expense({ id: "c", status: "in-finance" }),
-      expense({ id: "d", status: "paid" }),
-      expense({ id: "e", status: "rejected" }),
+      expense({ id: "c", status: "paid" }),
+      expense({ id: "d", status: "rejected" }),
     ];
     const { pending } = groupAttentionItems(list);
     expect(pending).toEqual([]);
