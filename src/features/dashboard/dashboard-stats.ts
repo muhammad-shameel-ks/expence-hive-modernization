@@ -18,7 +18,11 @@ export function dashboardStats(expenses: Expense[], month: string): DashboardSta
   let reimbursedThisMonth = 0;
 
   for (const expense of expenses) {
-    if (expense.status === "submitted" || expense.status === "in-approval") {
+    if (
+      expense.status === "submitted" ||
+      expense.status === "in-approval" ||
+      expense.status === "in-finance"
+    ) {
       pendingApproval += 1;
     }
     if (expense.status === "rejected") {

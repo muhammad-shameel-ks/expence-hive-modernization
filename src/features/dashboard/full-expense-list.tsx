@@ -31,7 +31,7 @@ export function FullExpenseList({
         <div>
           <h2 className="text-lg font-semibold tracking-tight text-foreground">All expenses</h2>
           <p className="mt-0.5 text-sm text-muted-foreground">
-            Every claim you raised or need to act on, newest first.
+            Your expenses, newest first.
           </p>
         </div>
         <Button className="gap-1.5" asChild>
