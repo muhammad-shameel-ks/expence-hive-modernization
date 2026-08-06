@@ -144,7 +144,7 @@ jobs:
           Analyze the repository evidence and diff above, then respond with the review.
           PROMPT
 
-          if ! opencode run --model "$MODEL" --format json --pure < /tmp/prompt.txt \
+          if ! opencode run --model "$MODEL" --variant max --format json --pure < /tmp/prompt.txt \
             > /tmp/opencode.jsonl 2> /tmp/opencode.stderr; then
             echo "OpenCode failed to produce a review." >&2
             cat /tmp/opencode.stderr >&2 || true
