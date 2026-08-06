@@ -233,7 +233,7 @@ async function insertClaim(client: { query: (sql: string, values?: unknown[]) =>
   await client.query(
     `INSERT INTO reimbursement_claims
       (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, account_number, ifsc_code)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)`,
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
     [
       claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.currentStageSince ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
       claim.payoutDetails?.accountNumber ?? null,
