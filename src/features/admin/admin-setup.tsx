@@ -5,16 +5,18 @@ import {
   Building2,
   CheckCircle2,
   CircleAlert,
+  ScrollText,
   Users,
   Workflow,
   X,
 } from "lucide-react";
 import type { AdminDepartment, AdminEmployee, AdminRole, FlowDraft } from "@/server/admin/ports";
+import { AuditSection } from "./audit-section";
 import { FlowSection } from "./flow-section";
 import { OrgSection } from "./org-section";
 import { PeopleSection } from "./people-section";
 
-type TabSection = "org" | "people" | "flows";
+type TabSection = "org" | "people" | "flows" | "audit";
 
 export function AdminSetup({
   people,
@@ -98,6 +100,20 @@ export function AdminSetup({
             {flows.length}
           </span>
         </button>
+
+        <button
+          onClick={() => setActiveTab("audit")}
+          aria-current={activeTab === "audit" ? "page" : undefined}
+          className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
+            activeTab === "audit"
+              ? "bg-[#e8f2f6] text-[#175d75]"
+              : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
+          }`}
+        >
+          <ScrollText className="size-3.5" />
+          <span className="sm:hidden">Audit</span>
+          <span className="hidden sm:inline">Audit Log</span>
+        </button>
       </nav>
 
       {/* Main Content Area */}
@@ -118,14 +134,18 @@ export function AdminSetup({
               ? "Departments & Roles Management"
               : activeTab === "people"
                 ? "People Management"
-                : "Approval Flow Pipelines"}
+                : activeTab === "flows"
+                  ? "Approval Flow Pipelines"
+                  : "Audit Log"}
           </h1>
           <p className="mt-0.5 text-xs text-[#7d8a9b]">
             {activeTab === "org"
               ? "Create company departments and define department-scoped roles."
               : activeTab === "people"
                 ? "Search people, assign roles, departments and managers, and manage active access."
-                : "Design, build, and publish multi-stage expense approval workflows."}
+                : activeTab === "flows"
+                  ? "Design, build, and publish multi-stage expense approval workflows."
+                  : "Review the chronological trail of administrative changes."}
           </p>
         </div>
 
@@ -148,7 +168,7 @@ export function AdminSetup({
             onMessage={setMessage}
             onError={setError}
           />
-        ) : (
+        ) : activeTab === "flows" ? (
           <FlowSection
             flows={flows}
             roles={rolesState}
@@ -156,6 +176,8 @@ export function AdminSetup({
             onMessage={setMessage}
             onError={setError}
           />
+        ) : (
+          <AuditSection people={people} onError={setError} />
         )}
       </div>
 

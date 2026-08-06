@@ -1,10 +1,12 @@
 import { AdminError } from "./commands";
+import { auditRangeBounds } from "./audit-filter";
 import type {
   AdminDepartment,
   AdminEmployee,
   AdminRole,
   AdminStore,
   AuditEvent,
+  AuditFilter,
   DepartmentInput,
   FlowDraft,
   FlowInput,
@@ -224,5 +226,30 @@ export class InMemoryAdminStore implements AdminStore {
 
   async appendAudit(organizationId: string, event: AuditEvent): Promise<void> {
     this.audit.push({ ...event, organizationId });
+  }
+
+  async listAuditEvents(
+    organizationId: string,
+    filter: AuditFilter,
+    pagination: { page: number; pageSize: number },
+  ): Promise<{ events: AuditEvent[]; total: number }> {
+    const { from, to } = auditRangeBounds(filter);
+    const matching = this.audit.filter((event) => {
+      if (event.organizationId !== organizationId) return false;
+      if (filter.actorId && event.actorId !== filter.actorId) return false;
+      if (filter.action && event.action !== filter.action) return false;
+      if (from && event.createdAt < from) return false;
+      if (to && event.createdAt >= to) return false;
+      return true;
+    });
+    const sorted = [...matching].sort((a, b) => {
+      const byTime = b.createdAt.getTime() - a.createdAt.getTime();
+      return byTime !== 0 ? byTime : b.id.localeCompare(a.id);
+    });
+    const offset = (pagination.page - 1) * pagination.pageSize;
+    return {
+      events: sorted.slice(offset, offset + pagination.pageSize),
+      total: sorted.length,
+    };
   }
 }

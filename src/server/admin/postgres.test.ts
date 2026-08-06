@@ -251,4 +251,94 @@ describe("PostgresAdminStore", () => {
       },
     ]);
   });
+
+  it("listAuditEvents filters, orders, and paginates with parameterized SQL plus a count query", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      if (String(sql).includes("count(*)")) {
+        return Promise.resolve({ rows: [{ count: "12" }] });
+      }
+      return Promise.resolve({
+        rows: [
+          {
+            id: "audit-1",
+            organization_id: "org-1",
+            actor_id: "emp-1",
+            action: "assign-role",
+            detail: "Ada Lovelace assigned to the Executive role.",
+            created_at: "2026-08-05T09:00:00.000Z",
+          },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const result = await store.listAuditEvents(
+      "org-1",
+      { actorId: "emp-1", action: "assign-role", from: "2026-08-01", to: "2026-08-10" },
+      { page: 2, pageSize: 10 },
+    );
+
+    expect(poolQuery).toHaveBeenCalledTimes(2);
+    const selectSql = String(poolQuery.mock.calls[0]?.[0]);
+    expect(selectSql).toContain("FROM audit_events");
+    expect(selectSql).toContain(
+      "WHERE organization_id = $1 AND actor_id = $2 AND action = $3 AND created_at >= $4 AND created_at < $5",
+    );
+    expect(selectSql).toContain("ORDER BY created_at DESC, id DESC");
+    expect(selectSql).toContain("LIMIT $6 OFFSET $7");
+    expect(poolQuery.mock.calls[0]?.[1]).toEqual([
+      "org-1",
+      "emp-1",
+      "assign-role",
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-11T00:00:00.000Z"),
+      10,
+      10,
+    ]);
+    const countSql = String(poolQuery.mock.calls[1]?.[0]);
+    expect(countSql).toContain("SELECT count(*)");
+    expect(countSql).toContain(
+      "WHERE organization_id = $1 AND actor_id = $2 AND action = $3 AND created_at >= $4 AND created_at < $5",
+    );
+    expect(poolQuery.mock.calls[1]?.[1]).toEqual([
+      "org-1",
+      "emp-1",
+      "assign-role",
+      new Date("2026-08-01T00:00:00.000Z"),
+      new Date("2026-08-11T00:00:00.000Z"),
+    ]);
+    expect(result).toEqual({
+      events: [
+        {
+          id: "audit-1",
+          organizationId: "org-1",
+          actorId: "emp-1",
+          action: "assign-role",
+          detail: "Ada Lovelace assigned to the Executive role.",
+          createdAt: new Date("2026-08-05T09:00:00.000Z"),
+        },
+      ],
+      total: 12,
+    });
+  });
+
+  it("listAuditEvents without filters scopes only to the organization", async () => {
+    const poolQuery = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const result = await store.listAuditEvents("org-1", {}, { page: 1, pageSize: 50 });
+
+    expect(poolQuery).toHaveBeenCalledTimes(2);
+    const selectSql = String(poolQuery.mock.calls[0]?.[0]);
+    expect(selectSql).toContain("WHERE organization_id = $1");
+    expect(selectSql).not.toMatch(/actor_id = \$/);
+    expect(selectSql).not.toMatch(/action = \$/);
+    expect(selectSql).not.toMatch(/created_at >= \$/);
+    expect(selectSql).not.toMatch(/created_at < \$/);
+    expect(selectSql).toContain("LIMIT $2 OFFSET $3");
+    expect(poolQuery.mock.calls[0]?.[1]).toEqual(["org-1", 50, 0]);
+    expect(result).toEqual({ events: [], total: 0 });
+  });
 });

@@ -997,3 +997,213 @@ describe("assignManager", () => {
     ).rejects.toMatchObject({ code: "unauthorized" });
   });
 });
+
+describe("listAuditEvents", () => {
+  const seededEvents: AuditEvent[] = [
+    {
+      id: "audit-1",
+      organizationId: "org-1",
+      actorId: "emp-superadmin",
+      action: "assign-role",
+      detail: "Katherine Johnson assigned to the Manager role.",
+      createdAt: new Date("2026-08-01T10:00:00.000Z"),
+    },
+    {
+      id: "audit-2",
+      organizationId: "org-1",
+      actorId: "emp-shameel",
+      action: "create-department",
+      detail: 'Created the "Engineering" department.',
+      createdAt: new Date("2026-08-05T09:00:00.000Z"),
+    },
+    {
+      id: "audit-3",
+      organizationId: "org-1",
+      actorId: "emp-shameel",
+      action: "assign-role",
+      detail: "Katherine Johnson assigned to the Executive role.",
+      createdAt: new Date("2026-08-10T08:00:00.000Z"),
+    },
+    {
+      id: "audit-4",
+      organizationId: "org-1",
+      actorId: "emp-superadmin",
+      action: "create-flow-draft",
+      detail: 'Created the "Standard reimbursement" flow draft.',
+      createdAt: new Date("2026-08-10T09:00:00.000Z"),
+    },
+    {
+      id: "audit-other-org",
+      organizationId: "org-2",
+      actorId: "emp-other-org",
+      action: "create-role",
+      detail: 'Created the "Executive" role.',
+      createdAt: new Date("2026-08-02T00:00:00.000Z"),
+    },
+  ];
+
+  function buildAdminWithAudit(events: AuditEvent[] = seededEvents) {
+    const { admin, store } = buildAdmin();
+    store.audit.push(...events);
+    return { admin, store };
+  }
+
+  it("rejects a non-superadmin actor", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    await expect(
+      admin.listAuditEvents("emp-katherine", {}, { page: 1, pageSize: 50 }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("lists the actor's own organization newest first and excludes other orgs", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents("emp-superadmin", {}, { page: 1, pageSize: 50 });
+
+    expect(result.total).toBe(4);
+    expect(result.events.map((event) => event.id)).toEqual([
+      "audit-4",
+      "audit-3",
+      "audit-2",
+      "audit-1",
+    ]);
+  });
+
+  it("breaks timestamp ties by id descending", async () => {
+    const { admin } = buildAdminWithAudit([
+      {
+        id: "audit-a",
+        organizationId: "org-1",
+        actorId: "emp-superadmin",
+        action: "create-role",
+        detail: "",
+        createdAt: new Date("2026-08-06T00:00:00.000Z"),
+      },
+      {
+        id: "audit-b",
+        organizationId: "org-1",
+        actorId: "emp-superadmin",
+        action: "create-role",
+        detail: "",
+        createdAt: new Date("2026-08-06T00:00:00.000Z"),
+      },
+    ]);
+
+    const result = await admin.listAuditEvents("emp-superadmin", {}, { page: 1, pageSize: 50 });
+
+    expect(result.events.map((event) => event.id)).toEqual(["audit-b", "audit-a"]);
+  });
+
+  it("filters by actor", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents(
+      "emp-superadmin",
+      { actorId: "emp-shameel" },
+      { page: 1, pageSize: 50 },
+    );
+
+    expect(result.total).toBe(2);
+    expect(result.events.map((event) => event.id)).toEqual(["audit-3", "audit-2"]);
+  });
+
+  it("filters by action", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents(
+      "emp-superadmin",
+      { action: "assign-role" },
+      { page: 1, pageSize: 50 },
+    );
+
+    expect(result.total).toBe(2);
+    expect(result.events.map((event) => event.id)).toEqual(["audit-3", "audit-1"]);
+  });
+
+  it("filters from a bare from date inclusively from the start of that day", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents(
+      "emp-superadmin",
+      { from: "2026-08-05" },
+      { page: 1, pageSize: 50 },
+    );
+
+    expect(result.total).toBe(3);
+    expect(result.events.map((event) => event.id)).toEqual(["audit-4", "audit-3", "audit-2"]);
+  });
+
+  it("treats a bare to date as inclusive of that whole day", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents(
+      "emp-superadmin",
+      { to: "2026-08-05" },
+      { page: 1, pageSize: 50 },
+    );
+
+    expect(result.total).toBe(2);
+    expect(result.events.map((event) => event.id)).toEqual(["audit-2", "audit-1"]);
+  });
+
+  it("combines actor, action, and an inclusive date range", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents(
+      "emp-superadmin",
+      { actorId: "emp-shameel", action: "assign-role", from: "2026-08-01", to: "2026-08-31" },
+      { page: 1, pageSize: 50 },
+    );
+
+    expect(result.total).toBe(1);
+    expect(result.events.map((event) => event.id)).toEqual(["audit-3"]);
+  });
+
+  it("paginates with a stable total across pages", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const firstPage = await admin.listAuditEvents(
+      "emp-superadmin",
+      {},
+      { page: 1, pageSize: 2 },
+    );
+    const secondPage = await admin.listAuditEvents(
+      "emp-superadmin",
+      {},
+      { page: 2, pageSize: 2 },
+    );
+
+    expect(firstPage.events.map((event) => event.id)).toEqual(["audit-4", "audit-3"]);
+    expect(firstPage.total).toBe(4);
+    expect(secondPage.events.map((event) => event.id)).toEqual(["audit-2", "audit-1"]);
+    expect(secondPage.total).toBe(4);
+  });
+
+  it("returns an empty page beyond the last event", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const result = await admin.listAuditEvents("emp-superadmin", {}, { page: 9, pageSize: 50 });
+
+    expect(result).toEqual({ events: [], total: 4 });
+  });
+
+  it("clamps page and pageSize to the supported range with a 50 default", async () => {
+    const { admin } = buildAdminWithAudit();
+
+    const clamped = await admin.listAuditEvents("emp-superadmin", {}, { page: 0, pageSize: 0 });
+    expect(clamped).toEqual({
+      events: [seededEvents[3]],
+      total: 4,
+    });
+
+    const defaults = await admin.listAuditEvents("emp-superadmin", {});
+    expect(defaults.total).toBe(4);
+    expect(defaults.events.map((event) => event.id)).toEqual([
+      "audit-4",
+      "audit-3",
+      "audit-2",
+      "audit-1",
+    ]);
+  });
+});

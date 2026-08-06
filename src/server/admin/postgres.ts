@@ -1,11 +1,13 @@
 import { Pool } from "pg";
 import { AdminError } from "./commands";
+import { auditRangeBounds } from "./audit-filter";
 import type {
   AdminDepartment,
   AdminEmployee,
   AdminRole,
   AdminStore,
   AuditEvent,
+  AuditFilter,
   DepartmentInput,
   FlowDraft,
   FlowInput,
@@ -101,6 +103,17 @@ function departmentFromRow(row: Row): AdminDepartment {
 
 function flowStatusFromRow(row: Row): FlowStatus {
   return row.status === "published" ? "published" : row.status === "archived" ? "archived" : "draft";
+}
+
+function auditEventFromRow(row: Row): AuditEvent {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    actorId: String(row.actor_id),
+    action: String(row.action),
+    detail: String(row.detail),
+    createdAt: new Date(String(row.created_at)),
+  };
 }
 
 export class PostgresAdminStore implements AdminStore {
@@ -440,6 +453,54 @@ export class PostgresAdminStore implements AdminStore {
        VALUES ($1, $2, $3, $4, $5, $6)`,
       [event.id, organizationId, event.actorId, event.action, event.detail, event.createdAt],
     );
+  }
+
+  async listAuditEvents(
+    organizationId: string,
+    filter: AuditFilter,
+    pagination: { page: number; pageSize: number },
+  ): Promise<{ events: AuditEvent[]; total: number }> {
+    // The WHERE clause is assembled from fixed fragments with sequential
+    // placeholders; every value travels as a query parameter, never
+    // interpolated into the SQL text.
+    const conditions = ["organization_id = $1"];
+    const filterValues: unknown[] = [organizationId];
+    if (filter.actorId) {
+      filterValues.push(filter.actorId);
+      conditions.push(`actor_id = $${filterValues.length}`);
+    }
+    if (filter.action) {
+      filterValues.push(filter.action);
+      conditions.push(`action = $${filterValues.length}`);
+    }
+    const { from, to } = auditRangeBounds(filter);
+    if (from) {
+      filterValues.push(from);
+      conditions.push(`created_at >= $${filterValues.length}`);
+    }
+    if (to) {
+      filterValues.push(to);
+      conditions.push(`created_at < $${filterValues.length}`);
+    }
+    const where = conditions.join(" AND ");
+    const [rows, countResult] = await Promise.all([
+      this.pool.query<Row>(
+        `SELECT id, organization_id, actor_id, action, detail, created_at
+         FROM audit_events
+         WHERE ${where}
+         ORDER BY created_at DESC, id DESC
+         LIMIT $${filterValues.length + 1} OFFSET $${filterValues.length + 2}`,
+        [...filterValues, pagination.pageSize, (pagination.page - 1) * pagination.pageSize],
+      ),
+      this.pool.query<Row>(
+        `SELECT count(*) AS count
+         FROM audit_events
+         WHERE ${where}`,
+        filterValues,
+      ),
+    ]);
+    const total = Number(countResult.rows[0]?.count ?? 0);
+    return { events: rows.rows.map(auditEventFromRow), total };
   }
 }
 

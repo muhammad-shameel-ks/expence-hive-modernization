@@ -79,6 +79,16 @@ export type AuditEvent = {
   createdAt: Date;
 };
 
+// from/to are ISO date strings (YYYY-MM-DD or a full ISO instant). A bare
+// date means the whole day: `from` includes that day from its start and `to`
+// includes it through its end (the query compares against created_at).
+export type AuditFilter = {
+  actorId?: string;
+  action?: string;
+  from?: string;
+  to?: string;
+};
+
 export interface AdminStore {
   listEmployees(organizationId: string): Promise<AdminEmployee[]>;
   getEmployee(id: string): Promise<AdminEmployee | null>;
@@ -103,4 +113,9 @@ export interface AdminStore {
   deleteFlow(flowId: string): Promise<void>;
   listFlows(organizationId: string): Promise<FlowDraft[]>;
   appendAudit(organizationId: string, event: AuditEvent): Promise<void>;
+  listAuditEvents(
+    organizationId: string,
+    filter: AuditFilter,
+    pagination: { page: number; pageSize: number },
+  ): Promise<{ events: AuditEvent[]; total: number }>;
 }

@@ -4,6 +4,8 @@ import {
   type AdminEmployee,
   type AdminRole,
   type AdminStore,
+  type AuditEvent,
+  type AuditFilter,
   type DepartmentInput,
   type FlowDraft,
   type FlowInput,
@@ -54,6 +56,11 @@ export type AdminCommands = {
   listEmployees(actorId: string): Promise<AdminEmployee[]>;
   listFlows(actorId: string): Promise<FlowDraft[]>;
   getAdminActor(actorId: string): Promise<AdminEmployee | null>;
+  listAuditEvents(
+    actorId: string,
+    filter: AuditFilter,
+    pagination?: { page?: number; pageSize?: number },
+  ): Promise<{ events: AuditEvent[]; total: number }>;
   assignRole(actorId: string, input: { employeeId: string; roleId: string }): Promise<void>;
   assignDepartment(actorId: string, input: { employeeId: string; departmentId: string }): Promise<void>;
   deactivateEmployee(actorId: string, employeeId: string): Promise<void>;
@@ -167,6 +174,13 @@ export function createAdminCommands({
     async listFlows(actorId) {
       const actor = await requireAdmin(actorId);
       return store.listFlows(actor.organizationId);
+    },
+
+    async listAuditEvents(actorId, filter, pagination) {
+      const actor = await requireAdmin(actorId);
+      const page = Math.max(1, Math.floor(pagination?.page ?? 1));
+      const pageSize = Math.min(100, Math.max(1, Math.floor(pagination?.pageSize ?? 50)));
+      return store.listAuditEvents(actor.organizationId, filter, { page, pageSize });
     },
 
     async assignRole(actorId, { employeeId, roleId }) {

@@ -1,5 +1,16 @@
 import { isAdminError, type AdminCommands } from "./commands";
-import type { FlowStepInput } from "./ports";
+import type { AuditFilter, FlowStepInput } from "./ports";
+
+const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isBareDate(value: string): boolean {
+  if (!BARE_DATE.test(value)) return false;
+  const date = new Date(`${value}T00:00:00.000Z`);
+  if (Number.isNaN(date.getTime())) return false;
+  // new Date overflows invalid days (e.g. 2026-02-30 parses to Mar 2), so
+  // require the parsed date to round-trip to the exact input.
+  return date.toISOString().slice(0, 10) === value;
+}
 
 export function adminErrorResponse(error: { code: string }): Response {
   const status =
@@ -358,4 +369,54 @@ export async function handleAssignManagerRequest(
       return Response.json({ ok: true });
     },
   );
+}
+
+export async function handleListAuditRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const params = new URL(request.url).searchParams;
+    const filter: AuditFilter = {};
+    const actorIdParam = params.get("actorId");
+    if (actorIdParam !== null) filter.actorId = actorIdParam;
+    const action = params.get("action");
+    if (action !== null) filter.action = action;
+    const from = params.get("from");
+    if (from !== null) {
+      if (!isBareDate(from)) return invalidBodyResponse();
+      filter.from = from;
+    }
+    const to = params.get("to");
+    if (to !== null) {
+      if (!isBareDate(to)) return invalidBodyResponse();
+      filter.to = to;
+    }
+    const pageParam = params.get("page");
+    const pageSizeParam = params.get("pageSize");
+    if (
+      (pageParam !== null && !/^\d+$/.test(pageParam)) ||
+      (pageSizeParam !== null && !/^\d+$/.test(pageSizeParam))
+    ) {
+      return invalidBodyResponse();
+    }
+    const page = pageParam === null ? 1 : Number(pageParam);
+    const pageSize = pageSizeParam === null ? 50 : Number(pageSizeParam);
+    if (page < 1 || pageSize < 1 || pageSize > 100) {
+      return invalidBodyResponse();
+    }
+    const result = await commands.listAuditEvents(actorId, filter, { page, pageSize });
+    return Response.json({
+      events: result.events,
+      total: result.total,
+      page,
+      pageSize,
+    });
+  } catch (error) {
+    if (isAdminError(error)) {
+      return adminErrorResponse(error);
+    }
+    return handleUnexpectedError(error);
+  }
 }

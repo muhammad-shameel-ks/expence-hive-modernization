@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { AdminError, type AdminCommands } from "./commands";
 import {
   handleAssignDepartmentRequest,
@@ -10,6 +10,7 @@ import {
   handleDeactivateDepartmentRequest,
   handleDeactivateEmployeeRequest,
   handleDeactivateRoleRequest,
+  handleListAuditRequest,
   handlePublishFlowRequest,
   handleReactivateEmployeeRequest,
   handleUpdateFlowRequest,
@@ -67,6 +68,7 @@ function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
       steps: [{ kind: "role", roleId: "role-2" }],
     }),
     deleteFlow: async () => {},
+    listAuditEvents: async () => ({ events: [], total: 0 }),
     ...overrides,
   };
 }
@@ -654,5 +656,142 @@ describe("handleAssignDepartmentRequest", () => {
     );
 
     expect(response.status).toBe(200);
+  });
+});
+
+describe("handleListAuditRequest", () => {
+  it("returns 200 with events, total, page, and pageSize", async () => {
+    const commands = buildCommands({
+      listAuditEvents: async () => ({
+        events: [
+          {
+            id: "audit-1",
+            organizationId: "org-1",
+            actorId: "emp-superadmin",
+            action: "assign-role",
+            detail: "Katherine Johnson assigned to the Manager role.",
+            createdAt: new Date("2026-08-01T10:00:00.000Z"),
+          },
+        ],
+        total: 1,
+      }),
+    });
+    const response = await handleListAuditRequest(
+      new Request("http://localhost/api/admin/audit?page=2&pageSize=25"),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as {
+      events: Array<{ id: string; createdAt: string }>;
+      total: number;
+      page: number;
+      pageSize: number;
+    };
+    expect(body).toMatchObject({ total: 1, page: 2, pageSize: 25 });
+    expect(body.events).toHaveLength(1);
+    expect(body.events[0]).toMatchObject({
+      id: "audit-1",
+      actorId: "emp-superadmin",
+      action: "assign-role",
+      createdAt: "2026-08-01T10:00:00.000Z",
+    });
+  });
+
+  it("passes the parsed filters and pagination to the command", async () => {
+    const listAuditEvents = vi.fn().mockResolvedValue({ events: [], total: 0 });
+    const commands = buildCommands({ listAuditEvents });
+    const response = await handleListAuditRequest(
+      new Request(
+        "http://localhost/api/admin/audit?actorId=emp-1&action=assign-role&from=2026-08-01&to=2026-08-10&page=2&pageSize=25",
+      ),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    expect(listAuditEvents).toHaveBeenCalledWith(
+      "emp-superadmin",
+      { actorId: "emp-1", action: "assign-role", from: "2026-08-01", to: "2026-08-10" },
+      { page: 2, pageSize: 25 },
+    );
+  });
+
+  it("defaults page and pageSize when omitted", async () => {
+    const listAuditEvents = vi.fn().mockResolvedValue({ events: [], total: 0 });
+    const commands = buildCommands({ listAuditEvents });
+
+    const response = await handleListAuditRequest(
+      new Request("http://localhost/api/admin/audit"),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    expect(listAuditEvents).toHaveBeenCalledWith("emp-superadmin", {}, { page: 1, pageSize: 50 });
+  });
+
+  it("maps a non-superadmin actor to 403", async () => {
+    const commands = buildCommands({
+      listAuditEvents: async () =>
+        Promise.reject(
+          new AdminError("unauthorized", "Only Superadmin can use the admin workspace."),
+        ),
+    });
+    const response = await handleListAuditRequest(
+      new Request("http://localhost/api/admin/audit"),
+      commands,
+      "emp-katherine",
+    );
+
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toEqual({ error: "unauthorized" });
+  });
+
+  it("rejects a non-date from or to with 422", async () => {
+    const badValues = ["08-01-2026", "2026-08-1", "2026-13-99", "2026-02-30", "not-a-date"];
+    for (const value of badValues) {
+      const response = await handleListAuditRequest(
+        new Request(`http://localhost/api/admin/audit?from=${value}`),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(response.status, `from=${value}`).toBe(422);
+
+      const toResponse = await handleListAuditRequest(
+        new Request(`http://localhost/api/admin/audit?to=${value}`),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(toResponse.status, `to=${value}`).toBe(422);
+    }
+  });
+
+  it("rejects malformed page or pageSize with 422", async () => {
+    const badQueries = ["page=0", "page=abc", "pageSize=0", "pageSize=101", "pageSize=-1"];
+    for (const query of badQueries) {
+      const response = await handleListAuditRequest(
+        new Request(`http://localhost/api/admin/audit?${query}`),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(response.status, query).toBe(422);
+    }
+  });
+
+  it("returns 500 for unexpected failures", async () => {
+    const commands = buildCommands({
+      listAuditEvents: async () => {
+        throw new Error("connection refused");
+      },
+    });
+    const response = await handleListAuditRequest(
+      new Request("http://localhost/api/admin/audit"),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(500);
   });
 });
