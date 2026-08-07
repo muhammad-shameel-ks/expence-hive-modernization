@@ -12,6 +12,13 @@ function maxReceiptSizeBytes(): number {
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 10 * 1024 * 1024;
 }
 
+// A human-readable rendering of the configured cap for user-facing messages
+// ("10 MB" for the default; whole bytes when the cap is not a whole MB).
+export function receiptSizeLimitLabel(): string {
+  const megabytes = MAX_RECEIPT_SIZE_BYTES / (1024 * 1024);
+  return Number.isInteger(megabytes) ? `${megabytes} MB` : `${MAX_RECEIPT_SIZE_BYTES} bytes`;
+}
+
 const PDF_MAGIC = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
 const PNG_MAGIC = [0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a];
 const JPEG_MAGIC = [0xff, 0xd8, 0xff];

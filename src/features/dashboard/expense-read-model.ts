@@ -44,6 +44,9 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
     nextActor: claim.currentActorId ? names.get(claim.currentActorId) : undefined,
     nextActorId: claim.currentActorId,
     attachments: claim.attachment ? [claim.attachment.fileName] : [],
+    // Legacy placeholder rows (empty digest) have no stored object behind the
+    // name; the drawer must not offer a receipt link that would 404.
+    attachmentAvailable: Boolean(claim.attachment?.contentSha256),
     history: claim.history.map((event) => ({
       id: event.id,
       date: formatHistoryDate(event.createdAt),

@@ -115,10 +115,19 @@ export class PostgresExpenseStore implements ExpenseStore {
       await client.query("BEGIN");
       const result = await client.query(
         `UPDATE reimbursement_claims
-         SET status = $2, current_stage = $3, current_actor_id = $4, current_stage_since = $5, version = $6, submitted_at = $7, comments = $8, updated_at = now()
-         WHERE id = $1 AND version < $6`,
+         SET title = $2, category = $3, sub_category = $4, remark = $5, amount_minor = $6, expense_date = $7, account_number = $8, ifsc_code = $9,
+             status = $10, current_stage = $11, current_actor_id = $12, current_stage_since = $13, version = $14, submitted_at = $15, comments = $16, updated_at = now()
+         WHERE id = $1 AND version < $14`,
         [
           claim.id,
+          claim.title,
+          claim.category,
+          claim.subCategory,
+          claim.remark,
+          claim.amountMinor,
+          claim.expenseDate,
+          claim.payoutDetails?.accountNumber ?? null,
+          claim.payoutDetails?.ifscCode ?? null,
           claim.status,
           claim.currentStage ?? null,
           claim.currentActorId ?? null,
@@ -129,6 +138,29 @@ export class PostgresExpenseStore implements ExpenseStore {
         ],
       );
       if (result.rowCount !== 1) throw new ExpenseError("conflict", "Claim was changed by another request.");
+      if (claim.attachment) {
+        // The claim has at most one attachment (created with the claim or
+        // added while editing a draft); the id is the conflict target.
+        await client.query(
+          `INSERT INTO claim_attachments (id, claim_id, file_name, content_type, storage_key, status, content_sha256, size_bytes, uploaded_at)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+           ON CONFLICT (id) DO UPDATE SET
+             file_name = EXCLUDED.file_name, content_type = EXCLUDED.content_type,
+             storage_key = EXCLUDED.storage_key, status = EXCLUDED.status,
+             content_sha256 = EXCLUDED.content_sha256, size_bytes = EXCLUDED.size_bytes, uploaded_at = EXCLUDED.uploaded_at`,
+          [
+            claim.attachment.id,
+            claim.id,
+            claim.attachment.fileName,
+            claim.attachment.contentType,
+            claim.attachment.storageKey,
+            claim.attachment.status,
+            claim.attachment.contentSha256,
+            claim.attachment.sizeBytes,
+            claim.attachment.uploadedAt,
+          ],
+        );
+      }
       for (let position = 0; position < claim.steps.length; position += 1) {
         const step = claim.steps[position];
         await client.query(
@@ -159,6 +191,16 @@ export class PostgresExpenseStore implements ExpenseStore {
       throw error;
     } finally {
       client.release();
+    }
+  }
+
+  async deleteClaim(id: string, version: number): Promise<void> {
+    const result = await this.pool.query(
+      "DELETE FROM reimbursement_claims WHERE id = $1 AND status = 'draft' AND version = $2",
+      [id, version],
+    );
+    if (result.rowCount !== 1) {
+      throw new ExpenseError("conflict", "Claim was changed by another request.");
     }
   }
 
@@ -291,6 +333,15 @@ async function insertHistory(client: { query: (sql: string, values?: unknown[]) 
   }
 }
 
+function expenseDateColumn(value: unknown): string {
+  if (value instanceof Date) {
+    const month = String(value.getMonth() + 1).padStart(2, "0");
+    const day = String(value.getDate()).padStart(2, "0");
+    return `${value.getFullYear()}-${month}-${day}`;
+  }
+  return String(value).slice(0, 10);
+}
+
 function claimFromRow(row: Row): ExpenseClaim {
   return {
     id: String(row.id),
@@ -303,7 +354,11 @@ function claimFromRow(row: Row): ExpenseClaim {
     remark: row.remark ? String(row.remark) : "",
     amountMinor: Number(row.amount_minor),
     currency: "INR",
-    expenseDate: String(row.expense_date).slice(0, 10),
+    // node-postgres parses DATE columns into Date objects at local
+    // midnight; both String() and toISOString() mangle the day. Format from
+    // the local date components to the yyyy-mm-dd shape the domain and the
+    // date inputs expect.
+    expenseDate: expenseDateColumn(row.expense_date),
     status: String(row.status) as ExpenseClaim["status"],
     currentStage: row.current_stage ? String(row.current_stage) : undefined,
     currentActorId: row.current_actor_id ? String(row.current_actor_id) : undefined,

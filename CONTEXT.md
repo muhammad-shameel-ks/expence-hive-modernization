@@ -22,3 +22,8 @@ _Avoid_: Storage key, file path, object name
 **Receipt-first flow**:
 The /expenses/new wizard that starts with proof before details: pick a receipt, fill the gaps, review and submit.
 _Avoid_: Upload flow, new claim form
+
+**Draft**:
+A claim saved but not yet submitted, owned only by its requester.
+Drafts can be continued (fields edited and a receipt added) or deleted; both actions are requester-only and disappear once the claim is submitted.
+_Avoid_: Saved claim, working copy

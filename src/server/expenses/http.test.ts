@@ -5,6 +5,7 @@ import { createExpenseCommands } from "./commands";
 import {
   handleApproveExpenseRequest,
   handleCreateExpenseRequest,
+  handleDeleteExpenseRequest,
   handleFinancePaymentQueueRequest,
   handleGetExpenseRequest,
   handleGetReceiptRequest,
@@ -12,6 +13,7 @@ import {
   handleSubmitExpenseRequest,
   handleTakeOverExpenseRequest,
   handleUpdateCommentsRequest,
+  handleUpdateExpenseRequest,
 } from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee } from "./ports";
@@ -269,19 +271,22 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(422);
   });
 
-  it("rejects an oversized receipt file part with a message-bearing validation response", async () => {
+  it("rejects an oversized receipt file part from a body without content-length with a message-bearing too-large response", async () => {
     const { commands } = build();
     const bigReceipt = new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1);
     bigReceipt.set(PDF_RECEIPT);
+    // The synthetic Request carries no content-length header (chunked
+    // encoding, as undici omits it), so this exercises the command-layer
+    // size cap rather than the header pre-check.
     const response = await handleCreateExpenseRequest(
       createRequest(BASE_FIELDS, { name: "huge.pdf", type: "application/pdf", data: bigReceipt }),
       commands,
       "emp-shameel",
     );
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({
-      error: "validation",
+      error: "too-large",
       message: "The receipt is larger than 10 MB.",
     });
   });
@@ -294,6 +299,31 @@ describe("expense HTTP boundary", () => {
     const response = await handleCreateExpenseRequest(createRequest(fields), commands, "emp-shameel");
 
     expect(response.status).toBe(422);
+  });
+
+  it("rejects an oversized request body from content-length before buffering it", async () => {
+    const { commands, blobStore } = build();
+    // Browsers always send content-length for multipart form posts; the
+    // handler must reject an oversized body from that header without
+    // buffering it. (undici omits the header on synthetic Requests, so the
+    // test sets it explicitly, like a browser would.)
+    const form = multipartBody(BASE_FIELDS, { name: "huge.pdf", type: "application/pdf", data: PDF_RECEIPT });
+    const response = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        body: form,
+        headers: { "content-length": String(MAX_RECEIPT_SIZE_BYTES + 2 * 1024 * 1024) },
+      }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toMatchObject({
+      error: "too-large",
+      message: "The receipt is larger than 10 MB.",
+    });
+    expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
 
   it("serves the receipt bytes to the requester with the right headers", async () => {
@@ -316,6 +346,7 @@ describe("expense HTTP boundary", () => {
     expect(response.headers.get("content-type")).toBe("image/jpeg");
     expect(response.headers.get("content-length")).toBe(String(JPEG_RECEIPT.byteLength));
     expect(response.headers.get("content-disposition")).toBe('inline; filename="boarding-pass.jpg"');
+    expect(response.headers.get("cache-control")).toContain("no-store");
     await expect(response.arrayBuffer()).resolves.toEqual(JPEG_RECEIPT.buffer);
   });
 
@@ -792,5 +823,131 @@ describe("expense HTTP boundary", () => {
     await expect(approveResponse.json()).resolves.toMatchObject({
       claim: { currentStage: ROLE_MANAGER.id },
     });
+  });
+});
+
+describe("draft update and delete handlers", () => {
+  function updateRequest(fields: Record<string, string>, file?: { name: string; type: string; data: Uint8Array<ArrayBuffer> }): Request {
+    return new Request("http://localhost/api/expenses/claim-1", {
+      method: "PATCH",
+      body: multipartBody(fields, file),
+    });
+  }
+
+  async function createDraft() {
+    const { commands, blobStore } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    return { commands, blobStore, claimId: payload.claim.id };
+  }
+
+  it("updates draft fields through PATCH and returns the claim", async () => {
+    const { commands, claimId } = await createDraft();
+
+    const response = await handleUpdateExpenseRequest(
+      updateRequest({ ...BASE_FIELDS, title: "Renamed taxi", amount: "999.00" }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      claim: { id: claimId, title: "Renamed taxi", amountMinor: 99900 },
+    });
+  });
+
+  it("adds a receipt to a draft that skipped it through PATCH", async () => {
+    const { commands, blobStore, claimId } = await createDraft();
+
+    const response = await handleUpdateExpenseRequest(
+      updateRequest(BASE_FIELDS, { name: "late.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(response.status).toBe(200);
+    const payload = (await response.json()) as { claim: { attachment: { fileName: string; storageKey: string } } };
+    expect(payload.claim.attachment.fileName).toBe("late.pdf");
+    await expect(blobStore.getBlob(payload.claim.attachment.storageKey)).resolves.not.toBeNull();
+  });
+
+  it("returns 422 for a malformed PATCH body", async () => {
+    const { commands, claimId } = await createDraft();
+    const form = new FormData();
+    form.set("title", "Only a title");
+
+    const response = await handleUpdateExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1", { method: "PATCH", body: form }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("rejects editing a submitted claim with 409", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    await handleSubmitExpenseRequest(new Request("http://localhost"), commands, "emp-shameel", payload.claim.id);
+
+    const response = await handleUpdateExpenseRequest(updateRequest(BASE_FIELDS), commands, "emp-shameel", payload.claim.id);
+
+    expect(response.status).toBe(409);
+  });
+
+  it("rejects editing another employee's draft with 403", async () => {
+    const { commands, claimId } = await createDraft();
+
+    const response = await handleUpdateExpenseRequest(updateRequest(BASE_FIELDS), commands, "emp-katherine", claimId);
+
+    expect(response.status).toBe(403);
+  });
+
+  it("deletes a draft and its receipt through DELETE, returning 204", async () => {
+    const { commands, blobStore, claimId } = await createDraft();
+    const addResponse = await handleUpdateExpenseRequest(
+      updateRequest(BASE_FIELDS, { name: "late.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+    const payload = (await addResponse.json()) as { claim: { attachment: { storageKey: string } } };
+
+    const deleteResponse = await handleDeleteExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1", { method: "DELETE" }),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+
+    expect(deleteResponse.status).toBe(204);
+    await expect(blobStore.getBlob(payload.claim.attachment.storageKey)).resolves.toBeNull();
+    const getResponse = await handleGetExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1"),
+      commands,
+      "emp-shameel",
+      claimId,
+    );
+    expect(getResponse.status).toBe(404);
+  });
+
+  it("rejects deleting a submitted claim with 409", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    await handleSubmitExpenseRequest(new Request("http://localhost"), commands, "emp-shameel", payload.claim.id);
+
+    const deleteResponse = await handleDeleteExpenseRequest(
+      new Request("http://localhost/api/expenses/claim-1", { method: "DELETE" }),
+      commands,
+      "emp-shameel",
+      payload.claim.id,
+    );
+
+    expect(deleteResponse.status).toBe(409);
   });
 });
