@@ -175,7 +175,7 @@ export interface ExpenseStore {
   createClaim(claim: ExpenseClaim): Promise<void>;
   getClaim(id: string): Promise<ExpenseClaim | null>;
   updateClaim(claim: ExpenseClaim): Promise<void>;
-  deleteClaim(id: string): Promise<void>;
+  deleteClaim(id: string, version: number): Promise<void>;
   getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null>;
   listActivityForActor(
     organizationId: string,

@@ -210,7 +210,7 @@ describe("expense commands", () => {
         attachment: { fileName: "huge.pdf", contentType: "application/pdf", data: bigReceipt },
       }),
     ).rejects.toMatchObject({
-      code: "validation",
+      code: "too-large",
       message: "The receipt is larger than 10 MB.",
     });
     await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
@@ -1514,6 +1514,30 @@ describe("updateDraft", () => {
     });
   });
 
+  it("replaces a legacy placeholder attachment row (empty digest) with a real receipt", async () => {
+    const { commands, store, blobStore, draft } = await buildDraftWithReceipt();
+    // Migration 0019 documented placeholder rows with no digest and no
+    // stored object; rewriting the stored claim simulates that legacy state.
+    const stored = (await store.getClaim(draft.id))!;
+    await store.updateClaim({
+      ...stored,
+      attachment: { ...stored.attachment!, contentSha256: "" },
+    });
+
+    const updated = await commands.updateDraft(employee.id, draft.id, {
+      ...UPDATE_FIELDS,
+      attachment: { fileName: "real.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+
+    expect(updated.attachment).toMatchObject({
+      id: draft.attachment!.id,
+      fileName: "real.pdf",
+      contentType: "application/pdf",
+      contentSha256: createHash("sha256").update(PDF_RECEIPT).digest("hex"),
+    });
+    await expect(blobStore.getBlob(updated.attachment!.storageKey)).resolves.toMatchObject({ data: PDF_RECEIPT });
+  });
+
   it("rejects editing a claim that is not a draft", async () => {
     const { commands } = buildCommands();
     const submitted = await submitStandardDraft(commands);
@@ -1643,5 +1667,61 @@ describe("deleteDraft", () => {
 
     await expect(commands.deleteDraft(employee.id, draft.id)).resolves.toBeUndefined();
     await expect(store.getClaim(draft.id)).resolves.toBeNull();
+  });
+
+  it("guards the delete with the claim version it read", async () => {
+    const { commands, store } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+    const deleteSpy = vi.spyOn(store, "deleteClaim");
+
+    await commands.deleteDraft(employee.id, draft.id);
+
+    expect(deleteSpy).toHaveBeenCalledWith(draft.id, draft.version);
+  });
+
+  it("rejects a store conflict, leaving the claim and its receipt in place", async () => {
+    const { commands, store, blobStore } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    const key = draft.attachment!.storageKey;
+    vi.spyOn(store, "deleteClaim").mockRejectedValue(
+      Object.assign(new Error("Claim was changed by another request."), { code: "conflict" }),
+    );
+
+    await expect(commands.deleteDraft(employee.id, draft.id)).rejects.toMatchObject({ code: "conflict" });
+    await expect(store.getClaim(draft.id)).resolves.toMatchObject({ id: draft.id, status: "draft" });
+    await expect(blobStore.getBlob(key)).resolves.not.toBeNull();
+  });
+
+  it("cannot delete a draft that was concurrently submitted", async () => {
+    const { commands, store, blobStore } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    const submitted = await commands.submitClaim(employee.id, draft.id);
+
+    await expect(store.deleteClaim(draft.id, draft.version)).rejects.toMatchObject({
+      code: "conflict",
+      message: "Claim was changed by another request.",
+    });
+    await expect(store.getClaim(draft.id)).resolves.toMatchObject({ id: draft.id, status: submitted.status });
+    await expect(blobStore.getBlob(draft.attachment!.storageKey)).resolves.not.toBeNull();
   });
 });

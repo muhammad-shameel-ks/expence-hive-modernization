@@ -271,19 +271,22 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(422);
   });
 
-  it("rejects an oversized receipt file part with a message-bearing validation response", async () => {
+  it("rejects an oversized receipt file part from a body without content-length with a message-bearing too-large response", async () => {
     const { commands } = build();
     const bigReceipt = new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1);
     bigReceipt.set(PDF_RECEIPT);
+    // The synthetic Request carries no content-length header (chunked
+    // encoding, as undici omits it), so this exercises the command-layer
+    // size cap rather than the header pre-check.
     const response = await handleCreateExpenseRequest(
       createRequest(BASE_FIELDS, { name: "huge.pdf", type: "application/pdf", data: bigReceipt }),
       commands,
       "emp-shameel",
     );
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({
-      error: "validation",
+      error: "too-large",
       message: "The receipt is larger than 10 MB.",
     });
   });

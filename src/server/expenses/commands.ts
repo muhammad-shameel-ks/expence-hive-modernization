@@ -290,7 +290,7 @@ export function createExpenseCommands({
       throw new ExpenseError("validation", "Receipts must be a JPEG, PNG, or PDF file.");
     }
     if (input.data.byteLength > MAX_RECEIPT_SIZE_BYTES) {
-      throw new ExpenseError("validation", `The receipt is larger than ${receiptSizeLimitLabel()}.`);
+      throw new ExpenseError("too-large", `The receipt is larger than ${receiptSizeLimitLabel()}.`);
     }
     const contentSha256 = createHash("sha256").update(input.data).digest("hex");
     const attachmentId = idFactory("attachment");
@@ -369,14 +369,21 @@ export function createExpenseCommands({
       // attachment's blob must never be deleted while its row survives.
       let addedAttachment: ExpenseAttachment | undefined;
       if (input.attachment) {
-        if (claim.attachment) {
+        if (claim.attachment?.contentSha256) {
           throw new ExpenseError(
             "validation",
             "This draft already has a receipt. Delete the draft to start over with a different receipt.",
           );
         }
         addedAttachment = await uploadReceipt(input.attachment, claim.organizationId, claimId, now().toISOString());
-        claim.attachment = addedAttachment;
+        if (claim.attachment) {
+          // A legacy placeholder row (empty digest, migration 0019) has no
+          // stored object behind it: keep its id so the pg upsert replaces
+          // the row in place instead of leaving two attachment rows.
+          claim.attachment = { ...addedAttachment, id: claim.attachment.id };
+        } else {
+          claim.attachment = addedAttachment;
+        }
       }
       claim.title = input.title.trim();
       claim.category = input.category.trim();
@@ -400,7 +407,7 @@ export function createExpenseCommands({
       if (claim.status !== "draft") {
         throw new ExpenseError("conflict", "Only a draft claim can be deleted.");
       }
-      await store.deleteClaim(claim.id);
+      await store.deleteClaim(claim.id, claim.version);
       // The attachment row cascades away with the claim; the stored bytes
       // are removed best-effort so an orphan blob never blocks the delete.
       await compensateBlob(claim.attachment);

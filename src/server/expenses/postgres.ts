@@ -194,8 +194,14 @@ export class PostgresExpenseStore implements ExpenseStore {
     }
   }
 
-  async deleteClaim(id: string): Promise<void> {
-    await this.pool.query("DELETE FROM reimbursement_claims WHERE id = $1", [id]);
+  async deleteClaim(id: string, version: number): Promise<void> {
+    const result = await this.pool.query(
+      "DELETE FROM reimbursement_claims WHERE id = $1 AND status = 'draft' AND version = $2",
+      [id, version],
+    );
+    if (result.rowCount !== 1) {
+      throw new ExpenseError("conflict", "Claim was changed by another request.");
+    }
   }
 
   async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {

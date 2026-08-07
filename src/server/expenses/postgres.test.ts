@@ -460,14 +460,28 @@ describe("PostgresExpenseStore claim lifecycle", () => {
     );
   });
 
-  it("deletes a claim by id, cascading its children", async () => {
-    const query = vi.fn().mockResolvedValue(undefined);
+  it("deletes a draft claim only when its version still matches", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
     const pool = { query } as unknown as Pool;
     const store = new PostgresExpenseStore(pool);
 
-    await store.deleteClaim("claim-1");
+    await store.deleteClaim("claim-1", 3);
 
-    expect(query).toHaveBeenCalledWith("DELETE FROM reimbursement_claims WHERE id = $1", ["claim-1"]);
+    expect(query).toHaveBeenCalledWith(
+      "DELETE FROM reimbursement_claims WHERE id = $1 AND status = 'draft' AND version = $2",
+      ["claim-1", 3],
+    );
+  });
+
+  it("rejects deleting a claim whose status or version moved", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 0 });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await expect(store.deleteClaim("claim-1", 3)).rejects.toMatchObject({
+      code: "conflict",
+      message: "Claim was changed by another request.",
+    });
   });
 });
 

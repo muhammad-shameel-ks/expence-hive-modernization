@@ -4,6 +4,7 @@ import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
 import { ExpenseCreateForm, type ExpenseDraftInitial } from "@/features/expenses/expense-create-form";
+import { draftAttachmentFileName } from "@/features/expenses/expense-draft";
 import { AppHeader } from "@/components/layout/app-header";
 import styles from "../expenses.module.css";
 
@@ -46,7 +47,7 @@ export default async function NewExpensePage({
         expenseDate: claim.expenseDate,
         accountNumber: claim.payoutDetails?.accountNumber ?? "",
         ifscCode: claim.payoutDetails?.ifscCode ?? "",
-        receiptFileName: claim.attachment?.fileName,
+        receiptFileName: draftAttachmentFileName(claim),
       };
     } catch (error) {
       if (isExpenseError(error) && (error.code === "not-found" || error.code === "unauthorized")) {
