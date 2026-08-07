@@ -1,7 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { createHash } from "node:crypto";
+import { describe, expect, it, vi } from "vitest";
+import { InMemoryBlobStore } from "../blob/fakes";
+import type { BlobStore } from "../blob/ports";
 import { createExpenseCommands } from "./commands";
 import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee, ExpenseFlow, FlowStepTarget } from "./ports";
+import { MAX_RECEIPT_SIZE_BYTES } from "./receipt-validation";
 
 const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive" };
 const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
@@ -46,18 +50,32 @@ const BASE_EMPLOYEES: ExpenseEmployee[] = [
   emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
 ];
 
-function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date } = {}) {
+function bytes(...values: number[]): Uint8Array {
+  return new Uint8Array(values);
+}
+
+const PDF_RECEIPT: Uint8Array = bytes(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a); // "%PDF-1.4\n"
+const JPEG_RECEIPT: Uint8Array = bytes(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46);
+
+function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date; blobStore?: BlobStore } = {}) {
   const store = new InMemoryExpenseStore({
     employees: overrides.employees ?? BASE_EMPLOYEES,
     flows: overrides.flows ?? [STANDARD_FLOW],
   });
+  const blobStore = overrides.blobStore ?? new InMemoryBlobStore();
   return {
     store,
+    blobStore,
     commands: createExpenseCommands({
       store,
+      blobStore,
       idFactory: (() => {
-        let index = 0;
-        return (prefix: string) => `${prefix}-${++index}`;
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
       })(),
       now: overrides.now ?? (() => new Date("2026-08-04T10:00:00.000Z")),
     }),
@@ -77,7 +95,7 @@ async function submitStandardDraft(commands: ReturnType<typeof buildCommands>["c
 
 describe("expense commands", () => {
   it("creates a receipt-backed INR draft that the requester can retrieve", async () => {
-    const { commands } = buildCommands();
+    const { commands, blobStore } = buildCommands();
 
     const draft = await commands.createDraft(employee.id, {
       title: "Bengaluru client flight",
@@ -88,7 +106,7 @@ describe("expense commands", () => {
       attachment: {
         fileName: "flight-receipt.pdf",
         contentType: "application/pdf",
-        storageKey: "prototype/flight-receipt.pdf",
+        data: PDF_RECEIPT,
       },
     });
 
@@ -98,13 +116,177 @@ describe("expense commands", () => {
       title: "Bengaluru client flight",
       amountMinor: 1250000,
       currency: "INR",
-      attachment: { fileName: "flight-receipt.pdf" },
+      attachment: {
+        id: "attachment-1",
+        fileName: "flight-receipt.pdf",
+        contentType: "application/pdf",
+        storageKey: "org-1/claim-1/attachment-1.pdf",
+        status: "available",
+        sizeBytes: PDF_RECEIPT.byteLength,
+        uploadedAt: "2026-08-04T10:00:00.000Z",
+      },
+    });
+    expect(draft.attachment?.contentSha256).toBe(createHash("sha256").update(PDF_RECEIPT).digest("hex"));
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
     });
     await expect(commands.getClaim(employee.id, draft.id)).resolves.toMatchObject({
       id: draft.id,
       requesterId: employee.id,
       status: "draft",
     });
+  });
+
+  it("sniffs the format when the declared type is the octet-stream absence placeholder", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: {
+        fileName: "scan.bin",
+        contentType: "application/octet-stream",
+        data: PDF_RECEIPT,
+      },
+    });
+
+    expect(draft.attachment).toMatchObject({
+      fileName: "scan.bin",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
+    });
+  });
+
+  it("sniffs the format for an attachment with an empty declared content type", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: {
+        fileName: "scan.pdf",
+        contentType: "",
+        data: PDF_RECEIPT,
+      },
+    });
+
+    expect(draft.attachment).toMatchObject({
+      fileName: "scan.pdf",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
+    });
+  });
+
+  it("persists nothing when the blob write fails", async () => {
+    const { store, blobStore, commands } = buildCommands();
+    vi.spyOn(blobStore, "putBlob").mockRejectedValue(new Error("blob storage unavailable"));
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "scan.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      }),
+    ).rejects.toThrow("blob storage unavailable");
+    await expect(store.getClaim("claim-1")).resolves.toBeNull();
+  });
+
+  it("deletes the blob best-effort when the claim insert fails, and propagates the error", async () => {
+    const { store, blobStore, commands } = buildCommands();
+    vi.spyOn(store, "createClaim").mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "scan.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      }),
+    ).rejects.toThrow("database unavailable");
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
+  it("rejects an oversized receipt without touching the blob store", async () => {
+    const { commands, blobStore } = buildCommands();
+    const bigReceipt = new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1);
+    bigReceipt.set(PDF_RECEIPT);
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "huge.pdf", contentType: "application/pdf", data: bigReceipt },
+      }),
+    ).rejects.toMatchObject({
+      code: "too-large",
+      message: "The receipt is larger than 25 MB.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
+  it("rejects JPEG receipt bytes, which are no longer an accepted receipt format", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "photo.jpg", contentType: "image/jpeg", data: JPEG_RECEIPT },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Receipts must be a PDF file.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.jpg")).resolves.toBeNull();
+  });
+
+  it("rejects receipt bytes that match no known format", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    await expect(
+      commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: {
+          fileName: "mystery.bin",
+          contentType: "application/pdf",
+          data: bytes(0x00, 0x01, 0x02, 0x03, 0x04),
+        },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Receipts must be a PDF file.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
 
   it("lets the requester see their own payout details on their claim", async () => {
@@ -1168,5 +1350,409 @@ describe("expense commands", () => {
         expect.objectContaining({ claimId: draft.id, kind: "rejected" }),
       ]);
     });
+  });
+
+  describe("receipt downloads", () => {
+    async function createReceiptDraft(commands: ReturnType<typeof buildCommands>["commands"]) {
+      return commands.createDraft(employee.id, {
+        title: "Bengaluru client flight",
+        category: "Travel",
+        amountMinor: 1250000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "flight-receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+    }
+
+    it("gives the requester the stored receipt bytes", async () => {
+      const { commands } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+
+      const receipt = await commands.getReceipt(employee.id, draft.id);
+
+      expect(receipt).toEqual({
+        fileName: "flight-receipt.pdf",
+        contentType: "application/pdf",
+        contentSha256: createHash("sha256").update(PDF_RECEIPT).digest("hex"),
+        sizeBytes: PDF_RECEIPT.byteLength,
+        data: PDF_RECEIPT,
+      });
+    });
+
+    it("gives a manager who acted on the claim the receipt, even after the claim moved past their stage", async () => {
+      const { commands } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+      await commands.submitClaim(employee.id, draft.id);
+      await commands.approveStage("emp-ada", draft.id);
+
+      await expect(commands.getReceipt("emp-ada", draft.id)).resolves.toMatchObject({
+        fileName: "flight-receipt.pdf",
+        sizeBytes: PDF_RECEIPT.byteLength,
+      });
+    });
+
+    it("gives Finance standing access to any claim's receipt", async () => {
+      const { commands } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+
+      await expect(commands.getReceipt("emp-finance", draft.id)).resolves.toMatchObject({
+        fileName: "flight-receipt.pdf",
+      });
+    });
+
+    it("denies the receipt to an employee of another organization", async () => {
+      const outsider: ExpenseEmployee = {
+        id: "emp-outsider",
+        organizationId: "org-2",
+        name: "Outsider",
+        role: ROLE_EXECUTIVE,
+        active: true,
+        managerId: null,
+      };
+      const { commands } = buildCommands({ employees: [...BASE_EMPLOYEES, outsider] });
+      const draft = await createReceiptDraft(commands);
+
+      await expect(commands.getReceipt(outsider.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+      });
+    });
+
+    it("reports not-found for a claim without a receipt", async () => {
+      const { commands } = buildCommands();
+      const draft = await commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+
+      await expect(commands.getReceipt(employee.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+        message: "This claim has no receipt.",
+      });
+    });
+
+    it("reports not-found when the blob is missing from the store", async () => {
+      const { commands, blobStore } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+      await blobStore.deleteBlob(draft.attachment!.storageKey);
+
+      await expect(commands.getReceipt(employee.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+        message: "The receipt is unavailable.",
+      });
+    });
+
+    it("refuses to serve bytes whose digest no longer matches the attachment record", async () => {
+      const { commands, blobStore } = buildCommands();
+      const draft = await createReceiptDraft(commands);
+      await blobStore.putBlob(draft.attachment!.storageKey, bytes(0x00, 0x11, 0x22, 0x33), "application/pdf");
+
+      await expect(commands.getReceipt(employee.id, draft.id)).rejects.toMatchObject({
+        code: "not-found",
+        message: "The receipt is unavailable.",
+      });
+    });
+  });
+});
+
+describe("updateDraft", () => {
+
+  const UPDATE_FIELDS = {
+    title: "Renamed client dinner",
+    category: "Meals",
+    subCategory: "Client Meeting",
+    remark: "Edited remark",
+    amountMinor: 99900,
+    currency: "INR",
+    expenseDate: "2026-08-05",
+    payoutDetails: { accountNumber: "99999999999", ifscCode: "HDFC0001234" },
+  };
+
+  async function buildDraftWithReceipt() {
+    const built = buildCommands();
+    const draft = await built.commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    return { ...built, draft };
+  }
+
+  it("updates the draft fields and bumps the version, keeping the stored receipt", async () => {
+    const { commands, blobStore, draft } = await buildDraftWithReceipt();
+    const key = draft.attachment!.storageKey;
+
+    const updated = await commands.updateDraft(employee.id, draft.id, UPDATE_FIELDS);
+
+    expect(updated).toMatchObject({
+      id: draft.id,
+      title: "Renamed client dinner",
+      category: "Meals",
+      subCategory: "Client Meeting",
+      remark: "Edited remark",
+      amountMinor: 99900,
+      expenseDate: "2026-08-05",
+      payoutDetails: { accountNumber: "99999999999", ifscCode: "HDFC0001234" },
+      version: draft.version + 1,
+    });
+    expect(updated.attachment).toEqual(draft.attachment);
+    await expect(blobStore.getBlob(key)).resolves.not.toBeNull();
+  });
+
+  it("adds a receipt to a draft that skipped it, storing the bytes under the claim key", async () => {
+    const { commands, blobStore } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Taxi",
+      category: "Travel",
+      amountMinor: 45000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+    expect(draft.attachment).toBeUndefined();
+
+    const updated = await commands.updateDraft(employee.id, draft.id, {
+      ...UPDATE_FIELDS,
+      attachment: { fileName: "taxi.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+
+    expect(updated.attachment).toMatchObject({
+      fileName: "taxi.pdf",
+      contentType: "application/pdf",
+      storageKey: `org-1/${draft.id}/attachment-1.pdf`,
+      sizeBytes: PDF_RECEIPT.byteLength,
+    });
+    await expect(blobStore.getBlob(updated.attachment!.storageKey)).resolves.toMatchObject({
+      data: PDF_RECEIPT,
+    });
+  });
+
+  it("rejects replacing an existing receipt", async () => {
+    const { commands, draft } = await buildDraftWithReceipt();
+
+    await expect(
+      commands.updateDraft(employee.id, draft.id, {
+        ...UPDATE_FIELDS,
+        attachment: { fileName: "other.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "This draft already has a receipt. Delete the draft to start over with a different receipt.",
+    });
+  });
+
+  it("replaces a legacy placeholder attachment row (empty digest) with a real receipt", async () => {
+    const { commands, store, blobStore, draft } = await buildDraftWithReceipt();
+    // Migration 0019 documented placeholder rows with no digest and no
+    // stored object; rewriting the stored claim simulates that legacy state.
+    const stored = (await store.getClaim(draft.id))!;
+    await store.updateClaim({
+      ...stored,
+      attachment: { ...stored.attachment!, contentSha256: "" },
+    });
+
+    const updated = await commands.updateDraft(employee.id, draft.id, {
+      ...UPDATE_FIELDS,
+      attachment: { fileName: "real.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+
+    expect(updated.attachment).toMatchObject({
+      id: draft.attachment!.id,
+      fileName: "real.pdf",
+      contentType: "application/pdf",
+      contentSha256: createHash("sha256").update(PDF_RECEIPT).digest("hex"),
+    });
+    await expect(blobStore.getBlob(updated.attachment!.storageKey)).resolves.toMatchObject({ data: PDF_RECEIPT });
+  });
+
+  it("rejects editing a claim that is not a draft", async () => {
+    const { commands } = buildCommands();
+    const submitted = await submitStandardDraft(commands);
+
+    await expect(commands.updateDraft(employee.id, submitted.id, UPDATE_FIELDS)).rejects.toMatchObject({
+      code: "conflict",
+      message: "Only a draft claim can be edited.",
+    });
+  });
+
+  it("rejects editing someone else's claim", async () => {
+    const { commands, draft } = await buildDraftWithReceipt();
+
+    await expect(commands.updateDraft("emp-katherine", draft.id, UPDATE_FIELDS)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("compensates the new blob when the store write fails after the upload", async () => {
+    const { commands, store, blobStore, draft } = await (async () => {
+      const built = buildCommands();
+      const draft = await built.commands.createDraft(employee.id, {
+        title: "Taxi",
+        category: "Travel",
+        amountMinor: 45000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      return { ...built, draft };
+    })();
+    vi.spyOn(store, "updateClaim").mockRejectedValue(new Error("database unavailable"));
+
+    await expect(
+      commands.updateDraft(employee.id, draft.id, {
+        ...UPDATE_FIELDS,
+        attachment: { fileName: "taxi.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      }),
+    ).rejects.toThrow("database unavailable");
+    await expect(blobStore.getBlob(`org-1/${draft.id}/attachment-1.pdf`)).resolves.toBeNull();
+  });
+
+  it("does not delete the kept receipt blob when a field-only update fails", async () => {
+    const { commands, store, blobStore, draft } = await buildDraftWithReceipt();
+    const key = draft.attachment!.storageKey;
+    vi.spyOn(store, "updateClaim").mockRejectedValue(new Error("database unavailable"));
+
+    await expect(commands.updateDraft(employee.id, draft.id, UPDATE_FIELDS)).rejects.toThrow(
+      "database unavailable",
+    );
+    await expect(blobStore.getBlob(key)).resolves.not.toBeNull();
+  });
+});
+
+describe("deleteDraft", () => {
+  it("deletes the claim and its stored receipt bytes", async () => {
+    const { commands, store, blobStore } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    const key = draft.attachment!.storageKey;
+
+    await commands.deleteDraft(employee.id, draft.id);
+
+    await expect(store.getClaim(draft.id)).resolves.toBeNull();
+    await expect(blobStore.getBlob(key)).resolves.toBeNull();
+  });
+
+  it("deletes a receipt-less draft", async () => {
+    const { commands, store } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Taxi",
+      category: "Travel",
+      amountMinor: 45000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+
+    await commands.deleteDraft(employee.id, draft.id);
+
+    await expect(store.getClaim(draft.id)).resolves.toBeNull();
+  });
+
+  it("rejects deleting a claim that is not a draft", async () => {
+    const { commands } = buildCommands();
+    const submitted = await submitStandardDraft(commands);
+
+    await expect(commands.deleteDraft(employee.id, submitted.id)).rejects.toMatchObject({
+      code: "conflict",
+      message: "Only a draft claim can be deleted.",
+    });
+  });
+
+  it("rejects deleting someone else's claim", async () => {
+    const { commands } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+
+    await expect(commands.deleteDraft("emp-katherine", draft.id)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("succeeds even when the blob delete fails, leaving an unreachable orphan", async () => {
+    const { commands, store, blobStore, draft } = await (async () => {
+      const built = buildCommands();
+      const draft = await built.commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      return { ...built, draft };
+    })();
+    vi.spyOn(blobStore, "deleteBlob").mockRejectedValue(new Error("blob unavailable"));
+
+    await expect(commands.deleteDraft(employee.id, draft.id)).resolves.toBeUndefined();
+    await expect(store.getClaim(draft.id)).resolves.toBeNull();
+  });
+
+  it("guards the delete with the claim version it read", async () => {
+    const { commands, store } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+    const deleteSpy = vi.spyOn(store, "deleteClaim");
+
+    await commands.deleteDraft(employee.id, draft.id);
+
+    expect(deleteSpy).toHaveBeenCalledWith(draft.id, draft.version);
+  });
+
+  it("rejects a store conflict, leaving the claim and its receipt in place", async () => {
+    const { commands, store, blobStore } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    const key = draft.attachment!.storageKey;
+    vi.spyOn(store, "deleteClaim").mockRejectedValue(
+      Object.assign(new Error("Claim was changed by another request."), { code: "conflict" }),
+    );
+
+    await expect(commands.deleteDraft(employee.id, draft.id)).rejects.toMatchObject({ code: "conflict" });
+    await expect(store.getClaim(draft.id)).resolves.toMatchObject({ id: draft.id, status: "draft" });
+    await expect(blobStore.getBlob(key)).resolves.not.toBeNull();
+  });
+
+  it("cannot delete a draft that was concurrently submitted", async () => {
+    const { commands, store, blobStore } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    const submitted = await commands.submitClaim(employee.id, draft.id);
+
+    await expect(store.deleteClaim(draft.id, draft.version)).rejects.toMatchObject({
+      code: "conflict",
+      message: "Claim was changed by another request.",
+    });
+    await expect(store.getClaim(draft.id)).resolves.toMatchObject({ id: draft.id, status: submitted.status });
+    await expect(blobStore.getBlob(draft.attachment!.storageKey)).resolves.not.toBeNull();
   });
 });

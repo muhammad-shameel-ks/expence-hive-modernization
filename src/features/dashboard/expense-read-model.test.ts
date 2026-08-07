@@ -121,4 +121,40 @@ describe("claimToExpense", () => {
     expect(expense.steps?.[0]).toMatchObject({ roleId: null, roleName: "Team lead" });
     expect(expense.steps?.[1]).toMatchObject({ roleId: "role-finance-executive" });
   });
+
+  it("marks the attachment as available only when it carries a stored digest", () => {
+    const stored = claimToExpense(
+      rejectedClaim({
+        attachment: {
+          id: "attachment-1",
+          fileName: "receipt.jpg",
+          contentType: "application/pdf",
+          storageKey: "org-1/claim-1/attachment-1.jpg",
+          status: "available",
+          contentSha256: "abc123",
+          sizeBytes: 10,
+          uploadedAt: "2026-08-04T10:00:00.000Z",
+        },
+      }),
+      employees,
+    );
+    const placeholder = claimToExpense(
+      rejectedClaim({
+        attachment: {
+          id: "attachment-1",
+          fileName: "legacy-receipt.jpg",
+          contentType: "application/pdf",
+          storageKey: "org-1/claim-1/attachment-1.jpg",
+          status: "available",
+          contentSha256: "",
+          sizeBytes: 0,
+          uploadedAt: "2026-08-04T10:00:00.000Z",
+        },
+      }),
+      employees,
+    );
+
+    expect(stored.attachmentAvailable).toBe(true);
+    expect(placeholder.attachmentAvailable).toBe(false);
+  });
 });

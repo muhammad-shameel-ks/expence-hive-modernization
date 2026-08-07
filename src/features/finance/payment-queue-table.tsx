@@ -3,11 +3,13 @@
 // Sortable by reference, category, submission date, amount, and status;
 // filterable by awaiting-payment/paid, category, amount range, and submitted date range.
 
-import { useMemo, useState } from "react";
-import { ArrowUpDown, Search, SlidersHorizontal, X } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ArrowUpDown, FileText, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { ReceiptPreview } from "@/features/receipts/receipt-preview";
+import { hasReceiptAttachment, selectedClaimFor, stepSelection } from "./payment-queue-selection";
 import {
   approvedOnFor,
   filterAndSortPaymentQueue,
@@ -39,6 +41,42 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
       setSavingCommentFor(null);
     }
   }
+
+  const [selectedClaimId, setSelectedClaimId] = useState<string | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
+  const panelRef = useRef<HTMLElement | null>(null);
+  const previewButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  const selected = selectedClaimFor(claims, selectedClaimId);
+  const selectedHasReceipt = selected ? hasReceiptAttachment(selected) : false;
+
+  function openPanel(claimId: string) {
+    setSelectedClaimId(claimId);
+    // The panel does not exist in the DOM until the next render; focus it
+    // after paint so screen-reader users land on the panel contents.
+    requestAnimationFrame(() => panelRef.current?.focus());
+  }
+
+  function closePanel() {
+    const claimId = selectedClaimId;
+    setSelectedClaimId(null);
+    // Return focus to the row that opened the panel (a no-op if the row was
+    // filtered out while the panel was open, in which case the button is gone).
+    if (claimId) {
+      requestAnimationFrame(() => previewButtonRefs.current.get(claimId)?.focus());
+    }
+  }
+
+  useEffect(() => {
+    if (!selectedClaimId) return;
+    const row = rowRefs.current.get(selectedClaimId);
+    if (!row) return;
+    // On small screens the panel is a fixed overlay covering the table, so
+    // scrolling the row into view would only scroll the hidden page behind it.
+    if (window.matchMedia("(min-width: 1024px)").matches) {
+      row.scrollIntoView({ block: "nearest" });
+    }
+  }, [selectedClaimId]);
 
   const [query, setQuery] = useState("");
   const [filter, setFilter] = useState<PaymentQueueFilter>("All");
@@ -78,6 +116,30 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
     [claims, query, filter, sort, categories, amountMin, amountMax, dateFrom, dateTo],
   );
 
+  // Defined after the rows memo above: react-hooks/preserve-manual-memoization
+  // flags a hoisted handler that reads a value declared later in the body.
+  function handleTableKeyDown(event: React.KeyboardEvent<HTMLDivElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePanel();
+      return;
+    }
+    // Arrow keys inside the comment inputs move the text caret; never hijack.
+    if ((event.target as HTMLElement).closest("input, textarea, select")) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const direction = event.key === "ArrowDown" ? 1 : -1;
+      setSelectedClaimId(stepSelection(rows, selectedClaimId, direction));
+    }
+  }
+
+  function handlePanelKeyDown(event: React.KeyboardEvent<HTMLElement>) {
+    if (event.key === "Escape") {
+      event.preventDefault();
+      closePanel();
+    }
+  }
+
   const countFor = (f: PaymentQueueFilter) =>
     f === "All" ? claims.length : filterAndSortPaymentQueue(claims, { filter: f }).length;
 
@@ -97,7 +159,11 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
 
   function sortHeader(sortKey: PaymentQueueSortKey, label: string, className?: string) {
     return (
-      <th key={sortKey} className={cn("px-4 py-3 font-medium", className)}>
+      <th
+        key={sortKey}
+        aria-sort={sort.key === sortKey ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+        className={cn("px-4 py-3 font-medium", className)}
+      >
         <button
           type="button"
           onClick={() => toggleSort(sortKey)}
@@ -207,7 +273,7 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                   aria-label="Minimum amount"
                   className="h-9 w-24 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
-                <span className="text-muted-foreground">–</span>
+                <span aria-hidden="true" className="text-muted-foreground">–</span>
                 <input
                   type="number"
                   inputMode="decimal"
@@ -233,7 +299,7 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                   aria-label="Submitted from date"
                   className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
-                <span className="text-muted-foreground">–</span>
+                <span aria-hidden="true" className="text-muted-foreground">–</span>
                 <input
                   type="date"
                   value={dateTo}
@@ -254,94 +320,176 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
         </div>
       ) : null}
 
-      <div className="max-h-[70vh] overflow-auto rounded-xl border border-black/10">
-        <table className="w-full min-w-[1600px] border-collapse text-sm">
-          <thead className="sticky top-0 z-10">
-            <tr className="bg-background text-left shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.1)]">
-              <th className="px-4 py-3 font-medium">Name</th>
-              {sortHeader("ref", "Reference")}
-              {sortHeader("category", "Category", "hidden md:table-cell")}
-              <th className="hidden px-4 py-3 font-medium lg:table-cell">Sub category</th>
-              {sortHeader("submitted", "Bill submission", "hidden sm:table-cell")}
-              <th className="hidden px-4 py-3 font-medium lg:table-cell">Bill invoice date</th>
-              {sortHeader("amount", "Amount", "text-right")}
-              {sortHeader("status", "Status")}
-              <th className="px-4 py-3 font-medium">Payment status</th>
-              <th className="hidden px-4 py-3 font-medium xl:table-cell">Approved on</th>
-              <th className="px-4 py-3 font-medium">Account number</th>
-              <th className="px-4 py-3 font-medium">IFSC code</th>
-              <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
-              <th className="min-w-[220px] px-4 py-3 font-medium">Comments</th>
-            </tr>
-          </thead>
-          <tbody>
-            {rows.length === 0 ? (
-              <tr>
-                <td className="px-4 py-6 text-muted-foreground" colSpan={14}>
-                  No claims match your search.
-                </td>
-              </tr>
+      <div className="flex w-full items-start gap-4 xl:gap-6">
+        <aside
+          ref={panelRef}
+          tabIndex={-1}
+          aria-hidden={!selected}
+          inert={!selected}
+          aria-label={selected ? `Receipt preview for ${selected.ref}` : "Receipt preview"}
+          onKeyDown={handlePanelKeyDown}
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 flex flex-col bg-card shadow-2xl transition-all duration-300 ease-in-out border-r border-border w-full sm:w-[480px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+            "lg:static lg:z-auto lg:h-[70vh] lg:shadow-none lg:rounded-xl lg:border lg:border-border",
+            selected
+              ? "translate-x-0 opacity-100 lg:w-[420px] xl:w-[460px] lg:shrink-0"
+              : "-translate-x-full opacity-0 pointer-events-none lg:translate-x-0 lg:w-0 lg:p-0 lg:border-0 lg:overflow-hidden lg:shrink-0"
+          )}
+        >
+          {selected ? (
+            selectedHasReceipt ? (
+              <ReceiptPreview
+                claimId={selected.id}
+                fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
+                onClose={closePanel}
+                className="h-full flex-1 border-0 rounded-none lg:rounded-xl bg-card"
+              />
             ) : (
-              rows.map((claim) => {
-                const approvedOn = approvedOnFor(claim);
-                const commentValue = comments[claim.id] ?? claim.comments ?? "";
-                return (
-                  <tr key={claim.id} className="border-t border-black/10 odd:bg-muted/60">
-                    <td className="px-4 py-3 text-foreground">{employeeNameById.get(claim.requesterId) ?? "-"}</td>
-                    <td className="px-4 py-3">
-                      <p className="font-medium text-foreground">{claim.title}</p>
-                      <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{claim.ref}</p>
-                    </td>
-                    <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{claim.category}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.subCategory || "-"}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
-                      {(claim.submittedAt ?? claim.createdAt).slice(0, 10)}
-                    </td>
-                    <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.expenseDate}</td>
-                    <td className="px-4 py-3 text-right font-medium tabular-nums text-foreground">
-                      ₹{(claim.amountMinor / 100).toFixed(2)}
-                    </td>
-                    <td className="px-4 py-3">{claim.status}</td>
-                    <td className="px-4 py-3">
-                      <span
-                        className={cn(
-                          "rounded-full px-2 py-0.5 text-xs font-medium",
-                          paymentStatusFor(claim) === "Paid"
-                            ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                            : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-                        )}
-                      >
-                        {paymentStatusFor(claim)}
-                      </span>
-                    </td>
-                    <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">
-                      {approvedOn ? approvedOn.slice(0, 10) : "-"}
-                    </td>
-                    <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
-                    <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
-                    <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
-                    <td className="px-4 py-3">
-                      <input
-                        type="text"
-                        defaultValue={commentValue}
-                        placeholder="Add a comment…"
-                        aria-label={`Comment for ${claim.ref}`}
-                        disabled={savingCommentFor === claim.id}
-                        onBlur={(e) => {
-                          if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
-                        }}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter") e.currentTarget.blur();
-                        }}
-                        className="h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                      />
-                    </td>
-                  </tr>
-                );
-              })
-            )}
-          </tbody>
-        </table>
+              <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card">
+                <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+                  <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
+                  <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
+                    <X />
+                  </Button>
+                </div>
+                <div className="m-auto flex items-center justify-center p-6 text-sm text-muted-foreground">
+                  No receipt attached to this claim.
+                </div>
+              </div>
+            )
+          ) : null}
+        </aside>
+
+        <div className="min-w-0 flex-1 transition-all duration-300 ease-in-out">
+          <div
+            tabIndex={selectedClaimId ? 0 : undefined}
+            aria-label={selectedClaimId ? "Payment queue, arrow keys move selection" : undefined}
+            onKeyDown={selectedClaimId ? handleTableKeyDown : undefined}
+            className="max-h-[70vh] overflow-auto rounded-xl border border-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
+          >
+          <table className="w-full min-w-[1600px] border-collapse text-sm">
+            <thead className="sticky top-0 z-10">
+              <tr className="bg-background text-left shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.1)]">
+                <th className="px-4 py-3 font-medium">Name</th>
+                {sortHeader("ref", "Reference")}
+                {sortHeader("category", "Category", "hidden md:table-cell")}
+                <th className="hidden px-4 py-3 font-medium lg:table-cell">Sub category</th>
+                {sortHeader("submitted", "Bill submission", "hidden sm:table-cell")}
+                <th className="hidden px-4 py-3 font-medium lg:table-cell">Bill invoice date</th>
+                {sortHeader("amount", "Amount", "text-right")}
+                {sortHeader("status", "Status")}
+                <th className="px-4 py-3 font-medium">Payment status</th>
+                <th className="hidden px-4 py-3 font-medium xl:table-cell">Approved on</th>
+                <th className="px-4 py-3 font-medium">Account number</th>
+                <th className="px-4 py-3 font-medium">IFSC code</th>
+                <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
+                <th className="min-w-[220px] px-4 py-3 font-medium">Comments</th>
+              </tr>
+            </thead>
+            <tbody>
+              {rows.length === 0 ? (
+                <tr>
+                  <td className="px-4 py-6 text-muted-foreground" colSpan={14}>
+                    No claims match your search.
+                  </td>
+                </tr>
+              ) : (
+                rows.map((claim) => {
+                  const approvedOn = approvedOnFor(claim);
+                  const commentValue = comments[claim.id] ?? claim.comments ?? "";
+                  const rowSelected = selectedClaimId === claim.id;
+                  return (
+                    <tr
+                      key={claim.id}
+                      ref={(el) => {
+                        if (el) rowRefs.current.set(claim.id, el);
+                        else rowRefs.current.delete(claim.id);
+                      }}
+                      className="border-t border-black/10 odd:bg-muted/60"
+                    >
+                      <td className="px-4 py-3 text-foreground">
+                        <div className="flex min-w-0 items-center gap-2">
+                          {hasReceiptAttachment(claim) ? (
+                            <Button
+                              ref={(el) => {
+                                if (el) previewButtonRefs.current.set(claim.id, el);
+                                else previewButtonRefs.current.delete(claim.id);
+                              }}
+                              variant={rowSelected ? "default" : "outline"}
+                              size="icon-sm"
+                              aria-label={`Preview receipt for ${claim.ref}`}
+                              aria-expanded={rowSelected}
+                              onClick={() => {
+                                if (rowSelected) {
+                                  closePanel();
+                                } else {
+                                  openPanel(claim.id);
+                                }
+                              }}
+                              className="shrink-0"
+                            >
+                              <FileText />
+                            </Button>
+                          ) : null}
+                          <span className="truncate">{employeeNameById.get(claim.requesterId) ?? "-"}</span>
+                        </div>
+                      </td>
+                      <td className="px-4 py-3">
+                        <p className="font-medium text-foreground">{claim.title}</p>
+                        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{claim.ref}</p>
+                      </td>
+                      <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{claim.category}</td>
+                      <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.subCategory || "-"}</td>
+                      <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
+                        {(claim.submittedAt ?? claim.createdAt).slice(0, 10)}
+                      </td>
+                      <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.expenseDate}</td>
+                      <td className="px-4 py-3 text-right font-medium tabular-nums text-foreground">
+                        ₹{(claim.amountMinor / 100).toFixed(2)}
+                      </td>
+                      <td className="px-4 py-3">{claim.status}</td>
+                      <td className="px-4 py-3">
+                        <span
+                          className={cn(
+                            "rounded-full px-2 py-0.5 text-xs font-medium",
+                            paymentStatusFor(claim) === "Paid"
+                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
+                              : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+                          )}
+                        >
+                          {paymentStatusFor(claim)}
+                        </span>
+                      </td>
+                      <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">
+                        {approvedOn ? approvedOn.slice(0, 10) : "-"}
+                      </td>
+                      <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
+                      <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
+                      <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
+                      <td className="px-4 py-3">
+                        <input
+                          type="text"
+                          defaultValue={commentValue}
+                          placeholder="Add a comment…"
+                          aria-label={`Comment for ${claim.ref}`}
+                          disabled={savingCommentFor === claim.id}
+                          onBlur={(e) => {
+                            if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
+                          }}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter") e.currentTarget.blur();
+                          }}
+                          className="h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                        />
+                      </td>
+                    </tr>
+                  );
+                })
+              )}
+            </tbody>
+          </table>
+          </div>
+        </div>
       </div>
     </div>
   );

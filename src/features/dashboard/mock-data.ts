@@ -63,6 +63,8 @@ export interface Expense {
   blockingReason?: string;
   permission?: string;
   attachments: string[];
+  /** Whether the receipt bytes actually exist in blob storage (false for legacy placeholder rows with no stored object). */
+  attachmentAvailable?: boolean;
   history: HistoryEvent[];
   steps?: ExpenseStepView[];
   primaryAction?: "approve" | "verify" | "pay";

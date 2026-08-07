@@ -1,4 +1,111 @@
-import { isExpenseError, type ExpenseCommands } from "./commands";
+import { ExpenseError, isExpenseError, type ExpenseCommands } from "./commands";
+import type { CreateExpenseDraftInput, ReceiptUploadInput } from "./ports";
+import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel } from "./receipt-validation";
+
+// The receipt cap applies to the file's own bytes; the whole multipart body
+// additionally carries the envelope (boundaries, part headers, and the eight
+// text fields). The content-length pre-check allows that much headroom so a
+// file exactly at the cap is not falsely rejected.
+const MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 1024 * 1024;
+
+// Parses the receipt-first form's multipart body: eight text fields plus an
+// optional file part named "receipt". Returns null on any malformed part;
+// the size cap and content-type authority live in the command layer.
+async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput | null> {
+  // Reject oversized bodies before formData() buffers them: the content-length
+  // header is checked first. Bodies without a content-length header (chunked
+  // transfer encoding) are streamed chunk-by-chunk up to maxAllowedBytes before
+  // formData() parses them.
+  const maxAllowedBytes = MAX_RECEIPT_SIZE_BYTES + MULTIPART_ENVELOPE_ALLOWANCE_BYTES;
+  let parsedRequest = request;
+
+  const contentLengthHeader = request.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader);
+    if (Number.isFinite(contentLength) && contentLength > maxAllowedBytes) {
+      throw new ExpenseError("too-large", "The form or receipt is larger than " + receiptSizeLimitLabel() + ".");
+    }
+  } else if (request.body) {
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          totalBytes += value.byteLength;
+          if (totalBytes > maxAllowedBytes) {
+            await reader.cancel();
+            throw new ExpenseError("too-large", "The form or receipt is larger than " + receiptSizeLimitLabel() + ".");
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Lock might already be released on cancel.
+      }
+    }
+
+    const combined = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    parsedRequest = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: combined,
+    });
+  }
+
+  const form = await parsedRequest.formData();
+  const title = form.get("title");
+  const category = form.get("category");
+  const subCategory = form.get("subCategory");
+  const remark = form.get("remark");
+  const amount = form.get("amount");
+  const expenseDate = form.get("expenseDate");
+  const accountNumber = form.get("accountNumber");
+  const ifscCode = form.get("ifscCode");
+  if (
+    typeof title !== "string" ||
+    typeof category !== "string" ||
+    typeof subCategory !== "string" ||
+    typeof remark !== "string" ||
+    typeof amount !== "string" ||
+    typeof expenseDate !== "string" ||
+    typeof accountNumber !== "string" ||
+    typeof ifscCode !== "string"
+  ) {
+    return null;
+  }
+  const amountMinor = parseAmount(amount);
+  if (amountMinor === null) return null;
+  const receiptFile = form.get("receipt");
+  if (receiptFile !== null && !(receiptFile instanceof File)) return null;
+  let attachment: ReceiptUploadInput | undefined;
+  if (receiptFile instanceof File) {
+    const data = new Uint8Array(await receiptFile.arrayBuffer());
+    attachment = { fileName: receiptFile.name, contentType: receiptFile.type, data };
+  }
+  return {
+    title,
+    category,
+    subCategory,
+    remark,
+    amountMinor,
+    currency: "INR",
+    expenseDate,
+    attachment,
+    payoutDetails: { accountNumber, ifscCode },
+  };
+}
 
 export async function handleCreateExpenseRequest(
   request: Request,
@@ -6,37 +113,65 @@ export async function handleCreateExpenseRequest(
   actorId: string,
 ): Promise<Response> {
   try {
-    const body = await readBody(request);
-    if (!body || typeof body !== "object") return validationResponse();
-    const value = body as Record<string, unknown>;
-    if (
-      typeof value.title !== "string" ||
-      typeof value.category !== "string" ||
-      typeof value.subCategory !== "string" ||
-      typeof value.remark !== "string" ||
-      typeof value.amount !== "string" ||
-      typeof value.expenseDate !== "string" ||
-      typeof value.accountNumber !== "string" ||
-      typeof value.ifscCode !== "string"
-    ) {
-      return validationResponse();
-    }
-    const amountMinor = parseAmount(value.amount);
-    if (amountMinor === null) return validationResponse();
-    const attachment = parseAttachment(value.attachment);
-    if (value.attachment !== undefined && attachment === null) return validationResponse();
-    const claim = await commands.createDraft(actorId, {
-      title: value.title,
-      category: value.category,
-      subCategory: value.subCategory,
-      remark: value.remark,
-      amountMinor,
-      currency: "INR",
-      expenseDate: value.expenseDate,
-      attachment: attachment ?? undefined,
-      payoutDetails: { accountNumber: value.accountNumber, ifscCode: value.ifscCode },
-    });
+    const input = await parseDraftForm(request);
+    if (!input) return validationResponse();
+    const claim = await commands.createDraft(actorId, input);
     return Response.json({ claim }, { status: 201 });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleUpdateExpenseRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const input = await parseDraftForm(request);
+    if (!input) return validationResponse();
+    const claim = await commands.updateDraft(actorId, claimId, input);
+    return Response.json({ claim });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleDeleteExpenseRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    await commands.deleteDraft(actorId, claimId);
+    return new Response(null, { status: 204 });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleGetReceiptRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const receipt = await commands.getReceipt(actorId, claimId);
+    // Response bodies require an ArrayBuffer-backed view; the blob bytes are
+    // copied into one (the 25 MB cap keeps the copy cheap).
+    return new Response(new Uint8Array(receipt.data), {
+      headers: {
+        "content-type": receipt.contentType,
+        "content-length": String(receipt.sizeBytes),
+        "content-disposition": `inline; filename="${sanitizeFileName(receipt.fileName)}"`,
+        // Receipt bytes are sensitive, authorization-checked data: never let
+        // a shared or on-disk cache serve them without a fresh access check.
+        "cache-control": "private, no-store",
+      },
+    });
   } catch (error) {
     return expenseErrorResponse(error);
   }
@@ -186,25 +321,29 @@ function parseAmount(value: string): number | null {
   return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
 }
 
-function parseAttachment(value: unknown) {
-  if (value === undefined || value === null) return undefined;
-  if (!value || typeof value !== "object") return null;
-  const input = value as Record<string, unknown>;
-  if (typeof input.fileName !== "string" || typeof input.contentType !== "string") return null;
-  return {
-    fileName: input.fileName,
-    contentType: input.contentType,
-    storageKey: `local/${crypto.randomUUID()}/${input.fileName}`,
-  };
-}
-
 function expenseErrorResponse(error: unknown): Response {
   if (!isExpenseError(error)) {
     console.error("expense command failed", error instanceof Error ? error : String(error));
     return Response.json({ error: "internal" }, { status: 500 });
   }
-  const status = error.code === "unauthorized" ? 403 : error.code === "not-found" ? 404 : error.code === "conflict" ? 409 : 422;
+  const status =
+    error.code === "unauthorized"
+      ? 403
+      : error.code === "not-found"
+        ? 404
+        : error.code === "conflict"
+          ? 409
+          : error.code === "too-large"
+            ? 413
+            : 422;
   return Response.json({ error: error.code, message: error.message }, { status });
+}
+
+// The browser-supplied file name lands in a content-disposition header, so
+// header-breaking characters are stripped before it is quoted (RFC 6266).
+function sanitizeFileName(fileName: string): string {
+  const sanitized = fileName.replace(/["\\\r\n]/g, "");
+  return sanitized.trim() ? sanitized : "receipt";
 }
 
 async function readBody(request: Request): Promise<unknown | null> {

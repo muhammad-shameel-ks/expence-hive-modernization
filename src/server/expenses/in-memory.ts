@@ -1,3 +1,4 @@
+import { ExpenseError } from "./commands";
 import type { ActivityEntry, ExpenseClaim, ExpenseEmployee, ExpenseFlow, ExpenseHistoryEvent, ExpenseStore } from "./ports";
 
 export class InMemoryExpenseStore implements ExpenseStore {
@@ -57,6 +58,17 @@ export class InMemoryExpenseStore implements ExpenseStore {
 
   async updateClaim(claim: ExpenseClaim): Promise<void> {
     this.claims.set(claim.id, structuredClone(claim));
+  }
+
+  async deleteClaim(id: string, version: number): Promise<void> {
+    // Mirrors the pg store's optimistic guard (updateClaim's version check):
+    // a claim submitted between the deleteDraft read and this call must not
+    // be destroyed, and its stored receipt bytes must stay reachable.
+    const claim = this.claims.get(id);
+    if (!claim || claim.status !== "draft" || claim.version !== version) {
+      throw new ExpenseError("conflict", "Claim was changed by another request.");
+    }
+    this.claims.delete(id);
   }
 
   async getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null> {

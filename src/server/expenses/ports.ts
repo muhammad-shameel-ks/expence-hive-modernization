@@ -1,3 +1,5 @@
+import type { ReceiptContentType } from "../blob/keys";
+
 export type ExpenseRole = {
   id: string;
   code: string;
@@ -22,12 +24,27 @@ export type ExpenseEmployee = {
 export type ExpenseAttachment = {
   id: string;
   fileName: string;
-  contentType: string;
+  contentType: ReceiptContentType;
   storageKey: string;
   status: "available";
+  contentSha256: string;
+  sizeBytes: number;
+  uploadedAt: string;
 };
 
-export type ExpenseAttachmentInput = Omit<ExpenseAttachment, "id" | "status">;
+export type ReceiptUploadInput = {
+  fileName: string;
+  contentType: string;
+  data: Uint8Array;
+};
+
+export type ReceiptData = {
+  fileName: string;
+  contentType: ReceiptContentType;
+  contentSha256: string;
+  sizeBytes: number;
+  data: Uint8Array;
+};
 
 export type ExpensePayoutDetails = {
   accountNumber: string;
@@ -127,9 +144,14 @@ export type CreateExpenseDraftInput = {
   amountMinor: number;
   currency: string;
   expenseDate: string;
-  attachment?: ExpenseAttachmentInput;
+  attachment?: ReceiptUploadInput;
   payoutDetails?: ExpensePayoutDetails;
 };
+
+// Editing a draft accepts the same fields as creation. An attachment is
+// only ever ADDED: replacing the receipt of an existing draft is not
+// supported (delete the draft and start over instead).
+export type UpdateExpenseDraftInput = CreateExpenseDraftInput;
 
 // The target of one flow step. 'role' steps resolve to eligible holders of
 // the role (org-wide, or same-department for the Manager role); 'team-lead'
@@ -153,6 +175,7 @@ export interface ExpenseStore {
   createClaim(claim: ExpenseClaim): Promise<void>;
   getClaim(id: string): Promise<ExpenseClaim | null>;
   updateClaim(claim: ExpenseClaim): Promise<void>;
+  deleteClaim(id: string, version: number): Promise<void>;
   getPublishedFlowForRole(organizationId: string, roleId: string): Promise<ExpenseFlow | null>;
   listActivityForActor(
     organizationId: string,

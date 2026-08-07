@@ -2,6 +2,7 @@
 // Right-side expense detail drawer: amount, facts, next action, journey, attachments.
 
 import { useState } from "react";
+import { useRouter } from "next/navigation";
 import { AlertTriangle, ArrowUpRight, Paperclip, X, type LucideIcon } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
@@ -14,6 +15,7 @@ import {
   type TimelineTone,
 } from "@/components/motion/timeline";
 import { Button } from "@/components/ui/button";
+import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
@@ -223,6 +225,22 @@ export function ExpenseDrawer({
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
+  const [deleteOpen, setDeleteOpen] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
+  const router = useRouter();
+
+  // Close the inline receipt preview whenever the drawer switches to a
+  // different expense so stale documents are never shown. The id is
+  // normalized to null so an unselected drawer (expense undefined) does
+  // not re-trigger this every render (undefined !== null would loop).
+  const currentExpenseId = expense?.id ?? null;
+  const [previousExpenseId, setPreviousExpenseId] = useState<string | null>(currentExpenseId);
+  if (currentExpenseId !== previousExpenseId) {
+    setPreviousExpenseId(currentExpenseId);
+    setReceiptOpen(false);
+  }
 
   const statusMeta = expense ? STATUS_META[expense.status] : null;
   const terminal = expense ? isTerminal(expense.status) : false;
@@ -246,6 +264,37 @@ export function ExpenseDrawer({
     if (!expense?.primaryAction || !next?.mine) return;
     const response = await fetch(`/api/expenses/${expense.id}/${expense.primaryAction}`, { method: "POST" });
     if (response.ok) window.location.reload();
+  }
+
+  // Drafts are not routed to any stage: the primary action resumes the
+  // receipt-first flow with the draft pre-filled.
+  function continueDraft() {
+    if (!expense) return;
+    router.push(`/expenses/new?id=${encodeURIComponent(expense.id)}`);
+  }
+
+  function openDeleteDraft() {
+    setDeleteError(null);
+    setDeleteOpen(true);
+  }
+
+  async function performDeleteDraft() {
+    if (!expense) return;
+    setDeleting(true);
+    setDeleteError(null);
+    try {
+      const response = await fetch(`/api/expenses/${expense.id}`, { method: "DELETE" });
+      if (response.ok) {
+        setDeleteOpen(false);
+        onOpenChange(false);
+        window.location.reload();
+        return;
+      }
+      const body = await response.json().catch(() => null);
+      setDeleteError(body?.message ?? "Could not delete this draft.");
+    } finally {
+      setDeleting(false);
+    }
   }
 
   function openReject() {
@@ -452,17 +501,53 @@ export function ExpenseDrawer({
                     </li>
                   ))}
                 </ul>
+                {expense.attachmentAvailable !== false ? (
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      aria-expanded={receiptOpen}
+                      onClick={() => setReceiptOpen((open) => !open)}
+                    >
+                      {receiptOpen ? "Hide receipt" : "View receipt"}
+                    </Button>
+                    {receiptOpen ? (
+                      <div className="mt-3">
+                        <ReceiptPreview
+                          key={expense.id}
+                          claimId={expense.id}
+                          fileName={expense.attachments[0]}
+                        />
+                      </div>
+                    ) : null}
+                  </>
+                ) : null}
               </section>
             ) : null}
           </div>
 
           <footer className="flex items-center gap-3 border-t border-border bg-card px-6 py-4">
-            <Button className="flex-1" disabled={!expense.primaryAction || !next.mine} onClick={performAction}>{actionLabel}</Button>
-            {canReject ? (
-              <Button variant="destructive" onClick={openReject}>
-                Reject
-              </Button>
-            ) : null}
+            {expense.status === "draft" ? (
+              <>
+                <Button className="flex-1" onClick={continueDraft}>
+                  Continue draft
+                  <ArrowUpRight className="h-3.5 w-3.5" />
+                </Button>
+                <Button variant="destructive" onClick={openDeleteDraft}>
+                  Delete draft
+                </Button>
+              </>
+            ) : (
+              <>
+                <Button className="flex-1" disabled={!expense.primaryAction || !next.mine} onClick={performAction}>{actionLabel}</Button>
+                {canReject ? (
+                  <Button variant="destructive" onClick={openReject}>
+                    Reject
+                  </Button>
+                ) : null}
+              </>
+            )}
             <Button variant="outline" className="gap-1.5">
               Full record
               <ArrowUpRight className="h-3.5 w-3.5" />
@@ -500,6 +585,27 @@ export function ExpenseDrawer({
             </Button>
             <Button variant="destructive" onClick={performReject} disabled={rejecting}>
               {rejecting ? "Rejecting…" : "Reject permanently"}
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={deleteOpen} onOpenChange={setDeleteOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Delete this draft?</DialogTitle>
+            <DialogDescription>
+              This removes the draft and its stored receipt permanently. This cannot be undone. If the expense
+              is still valid, start a new claim instead.
+            </DialogDescription>
+          </DialogHeader>
+          {deleteError ? <p className="text-xs text-destructive">{deleteError}</p> : null}
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
+              Keep draft
+            </Button>
+            <Button variant="destructive" onClick={performDeleteDraft} disabled={deleting}>
+              {deleting ? "Deleting…" : "Delete permanently"}
             </Button>
           </div>
         </DialogContent>
