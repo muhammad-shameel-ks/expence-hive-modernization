@@ -1,12 +1,23 @@
 // @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
 import { act, cleanup, render, screen, waitFor } from "@testing-library/react";
+import { createRef } from "react";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { MAX_RECEIPT_SIZE_BYTES } from "@/features/expenses/receipt-file-validation";
 import { ReceiptPreview } from "./receipt-preview";
 
 // The base (scale = 1) page size pdf.js reports for every loaded document in
 // these tests. Chosen so fitScale produces distinct, easy-to-check
 // percentages for the viewport sizes used below.
 const BASE_PAGE = { width: 600, height: 800 };
+
+// Every loading task the mocked pdf.js creates, recorded so tests can assert
+// on destroy() after a source switch or unmount. Setting rejectWith makes the
+// next getDocument() call fail, exercising the invalid-pdf error path.
+const pdfjsState = vi.hoisted(() => ({
+  tasks: [] as Array<{ destroy: ReturnType<typeof vi.fn> }>,
+  rejectWith: null as Error | null,
+}));
 
 vi.mock("pdfjs-dist", () => {
   const page = {
@@ -20,7 +31,15 @@ vi.mock("pdfjs-dist", () => {
   const pdf = { numPages: 1, getPage: vi.fn(async () => page) };
   return {
     GlobalWorkerOptions: {},
-    getDocument: vi.fn(() => ({ promise: Promise.resolve(pdf), destroy: vi.fn() })),
+    getDocument: vi.fn(() => {
+      const task = {
+        promise: pdfjsState.rejectWith ? Promise.reject(pdfjsState.rejectWith) : Promise.resolve(pdf),
+        destroy: vi.fn(),
+      };
+      pdfjsState.rejectWith = null;
+      pdfjsState.tasks.push(task);
+      return task;
+    }),
   };
 });
 
@@ -64,16 +83,18 @@ function fireResize() {
   });
 }
 
+let fetchMock: ReturnType<typeof vi.fn>;
+
 beforeEach(() => {
   resizeCallbacks = [];
+  pdfjsState.tasks.length = 0;
+  pdfjsState.rejectWith = null;
   vi.stubGlobal("ResizeObserver", StubResizeObserver);
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
-    }))
-  );
+  fetchMock = vi.fn(async () => ({
+    ok: true,
+    arrayBuffer: async () => new Uint8Array([1, 2, 3, 4]).buffer,
+  }));
+  vi.stubGlobal("fetch", fetchMock);
 });
 
 afterEach(() => {
@@ -91,6 +112,7 @@ async function renderAndWaitReady(viewport: { w: number; h: number }, content: {
 
   await waitFor(() => {
     expect(container.querySelector("canvas")).not.toBeNull();
+    expect(screen.queryByText(/loading receipt/i)).toBeNull();
   });
 
   return { container, layer };
@@ -146,6 +168,16 @@ describe("ReceiptPreview fit-on-open and resize re-fit", () => {
   });
 });
 
+describe("ReceiptPreview close control", () => {
+  it("exposes the accessible close button through its ref", () => {
+    const closeButtonRef = createRef<HTMLButtonElement>();
+    render(<ReceiptPreview claimId="claim-1" onClose={vi.fn()} ref={closeButtonRef} />);
+
+    const closeButton = screen.getByRole("button", { name: "Close receipt preview" });
+    expect(closeButtonRef.current).toBe(closeButton);
+  });
+});
+
 describe("ReceiptPreview wheel zoom at scale bounds", () => {
   it("does not preventDefault or change scale/pan when already at MIN_SCALE and scrolling further out", async () => {
     // A tiny 100x100 viewport against the 600x800 base page fits at 0.125,
@@ -187,5 +219,99 @@ describe("ReceiptPreview wheel zoom at scale bounds", () => {
     await waitFor(() => {
       expect(percentageText()).toBe("50%");
     });
+  });
+});
+
+describe("ReceiptPreview local file mode", () => {
+  function makeFile(name = "receipt.pdf", size = 4, type = "application/pdf") {
+    return new File([new Uint8Array(size)], name, { type });
+  }
+
+  async function renderFileAndWaitReady(
+    file: File,
+    viewport: { w: number; h: number },
+    content: { w: number; h: number }
+  ) {
+    const utils = render(<ReceiptPreview file={file} fileName={file.name} />);
+    const container = screen.getByRole("region");
+    const layer = container.firstElementChild as HTMLElement;
+    mockSize(container, { clientWidth: viewport.w, clientHeight: viewport.h });
+    mockSize(layer, { offsetWidth: content.w, offsetHeight: content.h });
+
+    await waitFor(() => {
+      expect(container.querySelector("canvas")).not.toBeNull();
+      expect(screen.queryByText(/loading receipt/i)).toBeNull();
+    });
+
+    return { ...utils, container, layer };
+  }
+
+  it("renders a valid local file through the pdf pipeline and fits it on open", async () => {
+    const { container } = await renderFileAndWaitReady(
+      makeFile("receipt.pdf"),
+      { w: 800, h: 600 },
+      { w: 600, h: 800 }
+    );
+
+    expect(percentageText()).toBe("75%");
+    expect(container.querySelectorAll("canvas")).toHaveLength(1);
+    expect(pdfjsState.tasks).toHaveLength(1);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects a file that exceeds the size cap with the error state", async () => {
+    render(<ReceiptPreview file={makeFile("big.pdf", MAX_RECEIPT_SIZE_BYTES + 1)} />);
+
+    await waitFor(() => {
+      expect(screen.getByText("This receipt could not be loaded.")).toBeInTheDocument();
+    });
+    expect(pdfjsState.tasks).toHaveLength(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("shows the error state when the file bytes are not a valid pdf", async () => {
+    pdfjsState.rejectWith = new Error("Invalid PDF structure");
+    render(<ReceiptPreview file={makeFile("bad.pdf")} />);
+    const container = screen.getByRole("region");
+
+    await waitFor(() => {
+      expect(screen.getByText("This receipt could not be loaded.")).toBeInTheDocument();
+    });
+    expect(container.querySelector("canvas")).toBeNull();
+    expect(pdfjsState.tasks[0].destroy).not.toHaveBeenCalled();
+  });
+
+  it("destroys the previous document and reloads when the file changes", async () => {
+    const { rerender } = await renderFileAndWaitReady(
+      makeFile("a.pdf"),
+      { w: 800, h: 600 },
+      { w: 600, h: 800 }
+    );
+    expect(pdfjsState.tasks).toHaveLength(1);
+
+    rerender(<ReceiptPreview file={makeFile("b.pdf")} />);
+    const container = screen.getByRole("region");
+
+    await waitFor(() => {
+      expect(pdfjsState.tasks).toHaveLength(2);
+      expect(container.querySelector("canvas")).not.toBeNull();
+      expect(screen.queryByText(/loading receipt/i)).toBeNull();
+    });
+
+    expect(pdfjsState.tasks[0].destroy).toHaveBeenCalledTimes(1);
+    expect(pdfjsState.tasks[1].destroy).not.toHaveBeenCalled();
+    expect(container.querySelectorAll("canvas")).toHaveLength(1);
+  });
+
+  it("destroys the cached document when unmounted", async () => {
+    const { unmount } = await renderFileAndWaitReady(
+      makeFile("receipt.pdf"),
+      { w: 800, h: 600 },
+      { w: 600, h: 800 }
+    );
+    expect(pdfjsState.tasks[0].destroy).not.toHaveBeenCalled();
+
+    unmount();
+    expect(pdfjsState.tasks[0].destroy).toHaveBeenCalledTimes(1);
   });
 });

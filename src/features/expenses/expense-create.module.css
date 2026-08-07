@@ -600,6 +600,49 @@
   margin: 30px 0 auto;
 }
 
+.captureRailWithPreview .captureSteps {
+  margin-bottom: 0;
+}
+
+.captureRailPreview {
+  border: 1px solid #d7e2df;
+  border-radius: 18px;
+  background: #f6f8f7;
+  box-shadow: 0 14px 34px rgba(13, 41, 38, 0.18);
+  padding: 10px;
+}
+
+.captureRail .captureRailPreview {
+  margin-top: auto;
+}
+
+.splitAside .captureRailPreview {
+  margin-top: 30px;
+}
+
+.wizardSide {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+}
+
+.wizardMain {
+  min-width: 0;
+}
+
+.splitLayout .wizardMain {
+  order: 2;
+}
+
+.splitLayout .wizardSide {
+  order: 1;
+}
+
+.mobileReceiptAction {
+  display: flex;
+  justify-content: center;
+}
+
 .captureStep {
   display: grid;
   grid-template-columns: 28px 1fr;
@@ -719,6 +762,10 @@
 
   .captureRail {
     min-height: 240px;
+  }
+
+  .captureRailPreview {
+    display: none;
   }
 }
 

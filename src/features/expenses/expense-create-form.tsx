@@ -1,8 +1,9 @@
 "use client";
 
-import type { ChangeEvent, FormEvent } from "react";
-import { useRef, useState } from "react";
+import type { ChangeEvent, FormEvent, Ref } from "react";
+import { useEffect, useRef, useState, useSyncExternalStore } from "react";
 import styles from "./expense-create.module.css";
+import { Drawer } from "@/components/motion/drawer";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { receiptValidationError } from "./receipt-file-validation";
 
@@ -23,6 +24,55 @@ const CATEGORY_SUB_CATEGORIES: Record<string, string[]> = {
   Training: ["Course Fee", "Certification", "Conference"],
 };
 
+const MOBILE_QUERY = "(max-width: 820px)";
+
+function subscribeToMobileQuery(onChange: () => void) {
+  if (typeof window === "undefined" || typeof window.matchMedia !== "function") {
+    return () => {};
+  }
+  const query = window.matchMedia(MOBILE_QUERY);
+  if (typeof query.addEventListener === "function") {
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }
+  query.addListener?.(onChange);
+  return () => query.removeListener?.(onChange);
+}
+
+function getMobileSnapshot() {
+  return typeof window !== "undefined" && typeof window.matchMedia === "function"
+    ? window.matchMedia(MOBILE_QUERY).matches
+    : false;
+}
+
+function useIsMobile() {
+  // `null` is the server snapshot so hydration never commits a desktop viewer
+  // before the client has resolved the actual breakpoint.
+  return useSyncExternalStore(subscribeToMobileQuery, getMobileSnapshot, () => null);
+}
+
+type ReceiptSource =
+  | { kind: "local"; file: File; fileName: string }
+  | { kind: "stored"; claimId: string; fileName: string };
+
+function resolveReceiptSource(
+  receipt: File | null,
+  storedReceiptName: string | undefined,
+  claimId: string | null,
+): ReceiptSource | null {
+  if (receipt) return { kind: "local", file: receipt, fileName: receipt.name };
+  if (storedReceiptName && claimId) {
+    return { kind: "stored", claimId, fileName: storedReceiptName };
+  }
+  return null;
+}
+
+function receiptPreviewProps(source: ReceiptSource) {
+  return source.kind === "local"
+    ? { file: source.file, fileName: source.fileName }
+    : { claimId: source.claimId, fileName: source.fileName };
+}
+
 // Pre-filled state when continuing an existing draft; receiptFileName is the
 // name of the receipt already stored with the draft (it cannot be replaced).
 export type ExpenseDraftInitial = {
@@ -38,6 +88,7 @@ export type ExpenseDraftInitial = {
 
 export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftInitial | null }) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
+  const isMobile = useIsMobile();
   const [form, setForm] = useState<FormState>(() => ({
     title: initial?.title ?? "",
     category: initial?.category ?? "Travel",
@@ -52,9 +103,30 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
   const [receipt, setReceipt] = useState<File | null>(null);
   const [claimId, setClaimId] = useState<string | null>(initial?.claimId ?? null);
   const [storedReceiptName, setStoredReceiptName] = useState<string | undefined>(initial?.receiptFileName);
+  const [receiptSourceVersion, setReceiptSourceVersion] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [sheetOpen, setSheetOpen] = useState(false);
+  const viewReceiptButtonRef = useRef<HTMLButtonElement>(null);
+  const receiptCloseButtonRef = useRef<HTMLButtonElement>(null);
+  const sheetWasOpenRef = useRef(false);
+  const receiptSource = resolveReceiptSource(receipt, storedReceiptName, claimId);
+  const receiptPreviewKey = receiptSource
+    ? receiptSource.kind === "local"
+      ? `file-${receiptSourceVersion}`
+      : `claim-${receiptSource.claimId}`
+    : null;
+
+  useEffect(() => {
+    if (sheetOpen) {
+      sheetWasOpenRef.current = true;
+      receiptCloseButtonRef.current?.focus();
+    } else if (sheetWasOpenRef.current) {
+      sheetWasOpenRef.current = false;
+      viewReceiptButtonRef.current?.focus();
+    }
+  }, [receiptPreviewKey, sheetOpen]);
 
   function update<K extends keyof FormState>(key: K, value: FormState[K]) {
     setForm((current) => ({ ...current, [key]: value }));
@@ -68,10 +140,12 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
       // Clear the input so picking the same file again re-triggers change.
       event.target.value = "";
       setReceipt(null);
+      setSheetOpen(false);
       setError(validationError);
       return;
     }
     setReceipt(file);
+    setReceiptSourceVersion((version) => version + 1);
     setError(null);
   }
 
@@ -106,7 +180,10 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
       // clear the picked File so it can never be resubmitted or shown as
       // attached when it is not actually stored. A save without a freshly
       // picked file must never clear a previously stored receipt name.
-      if (receipt) setStoredReceiptName(receipt.name);
+      if (receipt) {
+        setStoredReceiptName(receipt.name);
+        setReceiptSourceVersion((version) => version + 1);
+      }
       setReceipt(null);
       setStep(3);
     } catch (caught) {
@@ -142,155 +219,173 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
         <a className={styles.cancel} href="/expenses">Cancel</a>
       </div>
 
-      {submitted ? <SubmittedState /> : null}
-      {!submitted && step === 1 ? (
-        <ReceiptStep
-          receipt={receipt}
-          existingReceiptName={storedReceiptName}
-          claimId={claimId}
-          chooseReceipt={chooseReceipt}
-          error={error}
-          onSkip={() => setStep(2)}
-          onContinue={() => setStep(2)}
-          onRemove={() => {
-            setReceipt(null);
-            setError(null);
-          }}
-        />
-      ) : null}
-      {!submitted && step === 2 ? (
-        <DetailsStep
-          form={form}
-          receipt={receipt}
-          existingReceiptName={storedReceiptName}
-          update={update}
-          onBack={() => setStep(1)}
-          onReview={saveDraft}
-          busy={busy}
-          error={error}
-        />
-      ) : null}
-      {!submitted && step === 3 ? (
-        <ReviewStep
-          form={form}
-          receipt={receipt}
-          existingReceiptName={storedReceiptName}
-          onBack={() => setStep(2)}
-          onSubmit={submitClaim}
-          busy={busy}
-          error={error}
-        />
-      ) : null}
+      {submitted ? <SubmittedState /> : (
+        <div className={styles.content}>
+          <p className={styles.eyebrow}>
+            {step === 1 ? "STEP 1 OF 3 / RECEIPT" : step === 2 ? "STEP 2 OF 3 / DETAILS" : "STEP 3 OF 3 / REVIEW"}
+          </p>
+          <div className={step === 3 ? styles.splitLayout : styles.receiptLayout}>
+            <div className={styles.wizardMain}>
+              {step === 1 ? (
+                <ReceiptStep
+                  source={receiptSource}
+                  chooseReceipt={chooseReceipt}
+                  error={error}
+                  onSkip={() => setStep(2)}
+                  onContinue={() => setStep(2)}
+                  onRemove={() => {
+                    setReceipt(null);
+                    setSheetOpen(false);
+                    setError(null);
+                  }}
+                />
+              ) : step === 2 ? (
+                <DetailsStep
+                  form={form}
+                  source={receiptSource}
+                  update={update}
+                  onBack={() => setStep(1)}
+                  onReview={saveDraft}
+                  busy={busy}
+                  error={error}
+                />
+              ) : (
+                <ReviewStep
+                  form={form}
+                  source={receiptSource}
+                  onBack={() => setStep(2)}
+                  onSubmit={submitClaim}
+                  busy={busy}
+                  error={error}
+                />
+              )}
+            </div>
+            <aside className={`${styles.wizardSide} ${step === 3 ? styles.splitAside : ""}`}>
+              {step === 1 ? <CaptureRail done={Boolean(receiptSource)} step={1} /> : null}
+              {step === 2 ? <SummaryPanel form={form} label="Claim so far" /> : null}
+              {step === 3 ? <ReviewIntro /> : null}
+              {isMobile === true && receiptSource ? (
+                <div className={styles.mobileReceiptAction}>
+                  <button
+                    ref={viewReceiptButtonRef}
+                    className={`${styles.button} ${styles.buttonSecondary}`}
+                    type="button"
+                    onClick={() => setSheetOpen(true)}
+                  >
+                    View receipt
+                  </button>
+                </div>
+              ) : null}
+              <WizardReceiptCard
+                source={receiptSource}
+                sourceKey={receiptPreviewKey}
+                isMobile={isMobile}
+              />
+            </aside>
+          </div>
+          <Drawer
+            open={sheetOpen && Boolean(receiptSource)}
+            onOpenChange={setSheetOpen}
+            ariaLabel="Receipt preview"
+            className="w-full !max-w-full"
+          >
+            <div className="flex h-full min-h-0 flex-col p-3">
+              {receiptSource ? (
+                <ReceiptPreviewSurface
+                  source={receiptSource}
+                  sourceKey={receiptPreviewKey}
+                  closeButtonRef={receiptCloseButtonRef}
+                  onClose={() => setSheetOpen(false)}
+                  className="min-h-0 flex-1"
+                />
+              ) : null}
+            </div>
+          </Drawer>
+        </div>
+      )}
     </div>
   );
 }
 
 function ReceiptStep({
-  receipt,
-  existingReceiptName,
-  claimId,
+  source,
   chooseReceipt,
   error,
   onSkip,
   onContinue,
   onRemove,
 }: {
-  receipt: File | null;
-  existingReceiptName?: string;
-  claimId: string | null;
+  source: ReceiptSource | null;
   chooseReceipt: (event: ChangeEvent<HTMLInputElement>) => void;
   error: string | null;
   onSkip: () => void;
   onContinue: () => void;
   onRemove: () => void;
 }) {
-  const attachedName = receipt?.name ?? existingReceiptName;
+  const attachedName = source?.fileName;
+  const stored = source?.kind === "stored";
   const fileInputRef = useRef<HTMLInputElement>(null);
-  const [previewOpen, setPreviewOpen] = useState(false);
+
   return (
-    <div className={styles.content}>
-      <p className={styles.eyebrow}>STEP 1 OF 3 / RECEIPT</p>
-      <div className={styles.receiptLayout}>
-        <section className={styles.receiptStage}>
-          <span className={styles.uploadIcon} aria-hidden>↑</span>
-          <h1>{existingReceiptName ? "Your proof is already in." : "Start with the proof."}</h1>
-          <p>
-            {existingReceiptName
-              ? "The receipt attached to this draft is stored and protected. It cannot be replaced here."
-              : "Take a photo or choose a receipt. We'll ask for only the details we can't get from the document."}
-          </p>
-          {!existingReceiptName ? (
-            <div className={styles.uploadActions}>
-              <label className={styles.button}>
-                Add receipt
-                <input
-                  ref={fileInputRef}
-                  className={styles.fileInput}
-                  type="file"
-                  accept=".pdf,application/pdf"
-                  onChange={chooseReceipt}
-                />
-              </label>
-              <button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onSkip}>Skip for now</button>
-              {receipt && !existingReceiptName ? (
-                <button
-                  className={`${styles.button} ${styles.buttonSecondary}`}
-                  type="button"
-                  onClick={() => {
-                    // Reset the input so picking the same file again fires a
-                    // change event after the removal.
-                    if (fileInputRef.current) fileInputRef.current.value = "";
-                    onRemove();
-                  }}
-                >
-                  Remove
-                </button>
-              ) : null}
-            </div>
+    <section className={styles.receiptStage}>
+      <span className={styles.uploadIcon} aria-hidden>↑</span>
+      <h1>{stored ? "Your proof is already in." : "Start with the proof."}</h1>
+      <p>
+        {stored
+          ? "The receipt attached to this draft is stored and protected. It cannot be replaced here."
+          : "Take a photo or choose a receipt. We'll ask for only the details we can't get from the document."}
+      </p>
+      {!stored ? (
+        <div className={styles.uploadActions}>
+          <label className={styles.button}>
+            Add receipt
+            <input
+              ref={fileInputRef}
+              className={styles.fileInput}
+              type="file"
+              accept=".pdf,application/pdf"
+              onChange={chooseReceipt}
+            />
+          </label>
+          <button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onSkip}>Skip for now</button>
+          {source?.kind === "local" ? (
+            <button
+              className={`${styles.button} ${styles.buttonSecondary}`}
+              type="button"
+              onClick={() => {
+                // Reset the input so picking the same file again fires a
+                // change event after the removal.
+                if (fileInputRef.current) fileInputRef.current.value = "";
+                onRemove();
+              }}
+            >
+              Remove
+            </button>
           ) : null}
-          {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
-          {attachedName ? (
-            <div className={styles.receiptPreview}>
-              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
-                <span>
-                  {existingReceiptName && !receipt ? `Receipt already attached: ${attachedName}` : `Receipt ready: ${attachedName}`}
-                </span>
-                {existingReceiptName && claimId ? (
-                  <button
-                    className={`${styles.button} ${styles.buttonSecondary}`}
-                    type="button"
-                    aria-expanded={previewOpen}
-                    onClick={() => setPreviewOpen((open) => !open)}
-                  >
-                    {previewOpen ? "Hide preview" : "Preview"}
-                  </button>
-                ) : null}
-              </div>
-            </div>
-          ) : null}
-          {previewOpen && existingReceiptName && claimId ? (
-            <div style={{ marginTop: 14 }}>
-              <ReceiptPreview claimId={claimId} fileName={existingReceiptName} />
-            </div>
-          ) : null}
-          {attachedName ? (
-            <div style={{ marginTop: 28 }}>
-              <button className={styles.button} type="button" onClick={onContinue}>
-                Continue with receipt <span aria-hidden>→</span>
-              </button>
-            </div>
-          ) : null}
-        </section>
-        <CaptureRail done={Boolean(attachedName)} step={1} />
-      </div>
-    </div>
+        </div>
+      ) : null}
+      {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
+      {attachedName ? (
+        <div className={styles.receiptPreview}>
+          <span>
+            {stored ? `Receipt already attached: ${attachedName}` : `Receipt ready: ${attachedName}`}
+          </span>
+        </div>
+      ) : null}
+      {attachedName ? (
+        <div style={{ marginTop: 28 }}>
+          <button className={styles.button} type="button" onClick={onContinue}>
+            Continue with receipt <span aria-hidden>→</span>
+          </button>
+        </div>
+      ) : null}
+    </section>
   );
 }
 
 function DetailsStep({
   form,
-  receipt,
-  existingReceiptName,
+  source,
   update,
   onBack,
   onReview,
@@ -298,97 +393,94 @@ function DetailsStep({
   error,
 }: {
   form: FormState;
-  receipt: File | null;
-  existingReceiptName?: string;
+  source: ReceiptSource | null;
   update: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   onBack: () => void;
   onReview: () => void;
   busy: boolean;
   error: string | null;
 }) {
-  const attached = Boolean(receipt || existingReceiptName);
+  const attached = Boolean(source);
   return (
-    <div className={styles.content}>
-      <p className={styles.eyebrow}>STEP 2 OF 3 / DETAILS</p>
-      <div className={styles.receiptLayout}>
-        <section className={styles.panel} aria-label="Expense details">
-          <div className={styles.panelHeader}>
-            <div><p className={styles.eyebrow}>DETAILS</p><h2>Just fill the gaps</h2></div>
-            <span className={styles.statusChip}>{attached ? "Receipt attached" : "Receipt skipped"}</span>
-          </div>
-          <form className={styles.fieldStack} onSubmit={onReview}>
-            <Field label="What was this expense for?"><input className={styles.textInput} required value={form.title} placeholder="e.g. Client dinner with Acme Corp" onChange={(event) => update("title", event.target.value)} /></Field>
-            <div className={styles.formGrid}>
-              <Field label="Category">
-                <select
-                  className={styles.select}
-                  value={form.category}
-                  onChange={(event) => {
-                    const category = event.target.value;
-                    update("category", category);
-                    update("subCategory", CATEGORY_SUB_CATEGORIES[category]?.[0] ?? "");
-                  }}
-                >
-                  {Object.keys(CATEGORY_SUB_CATEGORIES).map((category) => (
-                    <option key={category}>{category}</option>
-                  ))}
-                </select>
-              </Field>
-              <Field label="Sub category">
-                <select className={styles.select} value={form.subCategory} onChange={(event) => update("subCategory", event.target.value)}>
-                  {(CATEGORY_SUB_CATEGORIES[form.category] ?? []).map((subCategory) => (
-                    <option key={subCategory}>{subCategory}</option>
-                  ))}
-                </select>
-              </Field>
-            </div>
-            <div className={styles.formGrid}>
-              <Field label="Amount" hint="Enter the total in INR."><MoneyInput value={form.amount} onChange={(value) => update("amount", value)} /></Field>
-              <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
-            </div>
-            <Field label="Remark" hint="A short note for Finance."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
-            {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
-            <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Back</button><button className={styles.button} type="submit" disabled={busy}>{busy ? "Saving..." : "Review claim →"}</button></div>
-          </form>
-        </section>
-        <SummaryPanel form={form} label="Claim so far" />
+    <section className={styles.panel} aria-label="Expense details">
+      <div className={styles.panelHeader}>
+        <div><p className={styles.eyebrow}>DETAILS</p><h2>Just fill the gaps</h2></div>
+        <span className={styles.statusChip}>{attached ? "Receipt attached" : "Receipt skipped"}</span>
       </div>
-    </div>
+      <form className={styles.fieldStack} onSubmit={onReview}>
+        <Field label="What was this expense for?"><input className={styles.textInput} required value={form.title} placeholder="e.g. Client dinner with Acme Corp" onChange={(event) => update("title", event.target.value)} /></Field>
+        <div className={styles.formGrid}>
+          <Field label="Category">
+            <select
+              className={styles.select}
+              value={form.category}
+              onChange={(event) => {
+                const category = event.target.value;
+                update("category", category);
+                update("subCategory", CATEGORY_SUB_CATEGORIES[category]?.[0] ?? "");
+              }}
+            >
+              {Object.keys(CATEGORY_SUB_CATEGORIES).map((category) => (
+                <option key={category}>{category}</option>
+              ))}
+            </select>
+          </Field>
+          <Field label="Sub category">
+            <select className={styles.select} value={form.subCategory} onChange={(event) => update("subCategory", event.target.value)}>
+              {(CATEGORY_SUB_CATEGORIES[form.category] ?? []).map((subCategory) => (
+                <option key={subCategory}>{subCategory}</option>
+              ))}
+            </select>
+          </Field>
+        </div>
+        <div className={styles.formGrid}>
+          <Field label="Amount" hint="Enter the total in INR."><MoneyInput value={form.amount} onChange={(value) => update("amount", value)} /></Field>
+          <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
+        </div>
+        <Field label="Remark" hint="A short note for Finance."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
+        {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
+        <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Back</button><button className={styles.button} type="submit" disabled={busy}>{busy ? "Saving..." : "Review claim →"}</button></div>
+      </form>
+    </section>
   );
 }
 
 function ReviewStep({
   form,
-  receipt,
-  existingReceiptName,
+  source,
   onBack,
   onSubmit,
   busy,
   error,
 }: {
   form: FormState;
-  receipt: File | null;
-  existingReceiptName?: string;
+  source: ReceiptSource | null;
   onBack: () => void;
   onSubmit: () => void;
   busy: boolean;
   error: string | null;
 }) {
-  const attachedName = receipt?.name ?? existingReceiptName;
+  const attachedName = source?.fileName;
+  const submitButtonRef = useRef<HTMLButtonElement>(null);
+
+  useEffect(() => {
+    const button = submitButtonRef.current;
+    if (!button) return;
+    if (button.getBoundingClientRect().top <= window.innerHeight) return;
+    const reduceMotion =
+      typeof window.matchMedia === "function" &&
+      window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+    button.scrollIntoView({ behavior: reduceMotion ? "auto" : "smooth", block: "nearest" });
+  }, []);
+
   return (
-    <div className={styles.content}>
-      <p className={styles.eyebrow}>STEP 3 OF 3 / REVIEW</p>
-      <div className={styles.splitLayout}>
-        <aside className={styles.splitAside}><p className={styles.eyebrow}>READY FOR APPROVAL</p><h1>Check it once, then send it on.</h1><p className={styles.intro}>This claim will follow the standard path: Manager → IT → Finance.</p></aside>
-        <section className={styles.panel} aria-label="Review expense claim">
-          <div className={styles.panelHeader}><div><p className={styles.eyebrow}>FINAL CHECK</p><h2>Review before submission</h2></div><span className={styles.statusChip}>Draft</span></div>
-          <SummaryPanel form={form} label="Submission summary" />
-          {attachedName ? <p className={styles.receiptPreview}>Attached: {attachedName}</p> : <p className={styles.hint}>No receipt attached. You can continue with the exception path.</p>}
-          {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
-          <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Edit details</button><button className={styles.button} type="button" disabled={busy} onClick={onSubmit}>{busy ? "Submitting..." : "Submit for approval →"}</button></div>
-        </section>
-      </div>
-    </div>
+    <section className={styles.panel} aria-label="Review expense claim">
+      <div className={styles.panelHeader}><div><p className={styles.eyebrow}>FINAL CHECK</p><h2>Review before submission</h2></div><span className={styles.statusChip}>Draft</span></div>
+      <SummaryPanel form={form} label="Submission summary" />
+      {attachedName ? <p className={styles.receiptPreview}>Attached: {attachedName}</p> : <p className={styles.hint}>No receipt attached. You can continue with the exception path.</p>}
+      {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
+      <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Edit details</button><button ref={submitButtonRef} className={styles.button} type="button" disabled={busy} onClick={onSubmit}>{busy ? "Submitting..." : "Submit for approval →"}</button></div>
+    </section>
   );
 }
 
@@ -396,8 +488,53 @@ function SubmittedState() {
   return <div className={styles.content}><div className={styles.panel}><p className={styles.eyebrow}>CLAIM SUBMITTED</p><h1 className={styles.title}>Your claim is moving.</h1><p className={styles.intro}>It is now with your Manager, followed by Finance. You can track every decision from the dashboard.</p><a className={styles.button} href="/expenses">Back to dashboard →</a></div></div>;
 }
 
+function ReviewIntro() {
+  return <div><p className={styles.eyebrow}>READY FOR APPROVAL</p><h1>Check it once, then send it on.</h1><p className={styles.intro}>This claim will follow the standard path: Manager → IT → Finance.</p></div>;
+}
+
 function CaptureRail({ done, step }: { done: boolean; step: number }) {
   return <aside className={styles.captureRail}><p className={styles.eyebrow}>FAST CAPTURE</p><h2>Three things, then done.</h2><p>The form follows the natural order of expense work: proof, context, submit.</p><div className={styles.captureSteps}><CaptureStep number="1" title="Add proof" detail="Photo, scan, or PDF" done={done} /><CaptureStep number="2" title="Confirm context" detail="Category and payment details" done={step > 1} /><CaptureStep number="3" title="Review & send" detail="See who reviews it next" done={step > 2} /></div></aside>;
+}
+
+function WizardReceiptCard({
+  source,
+  sourceKey,
+  isMobile,
+}: {
+  source: ReceiptSource | null;
+  sourceKey: string | null;
+  isMobile: boolean | null;
+}) {
+  if (isMobile !== false || !source) return null;
+  return (
+    <div className={styles.captureRailPreview}>
+      <ReceiptPreviewSurface source={source} sourceKey={sourceKey} />
+    </div>
+  );
+}
+
+function ReceiptPreviewSurface({
+  source,
+  sourceKey,
+  closeButtonRef,
+  onClose,
+  className,
+}: {
+  source: ReceiptSource;
+  sourceKey: string | null;
+  closeButtonRef?: Ref<HTMLButtonElement>;
+  onClose?: () => void;
+  className?: string;
+}) {
+  return (
+    <ReceiptPreview
+      key={sourceKey ?? undefined}
+      {...receiptPreviewProps(source)}
+      ref={closeButtonRef}
+      onClose={onClose}
+      className={className}
+    />
+  );
 }
 
 function SummaryPanel({ form, label }: { form: FormState; label: string }) {

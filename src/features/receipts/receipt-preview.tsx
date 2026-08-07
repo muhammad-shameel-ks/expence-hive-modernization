@@ -1,6 +1,6 @@
 "use client";
 
-import { useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import { forwardRef, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
 import { FileText, Loader2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -68,25 +68,40 @@ function resolveContentSize(
       };
 }
 
-// Lazily-loaded PDF document, cached per claim so zoom re-renders do not
-// re-download the bytes; replaced (and destroyed) when the claim changes.
+// Lazily-loaded PDF document, cached per source so zoom re-renders do not
+// re-download the bytes; replaced (and destroyed) when the source changes.
+// The source key is the claim id in fetch mode and the File object itself
+// in local-file mode, so the two modes can never collide.
 type CachedDocument = {
-  claimId: string;
+  sourceKey: string | File;
   task: PDFDocumentLoadingTask;
   pdf: PDFDocumentProxy;
 };
 
-export function ReceiptPreview({
-  claimId,
-  fileName,
-  className,
-  onClose,
-}: {
-  claimId: string;
-  fileName?: string;
-  className?: string;
-  onClose?: () => void;
-}) {
+// Exactly one source is required: a stored receipt by claimId (fetched via
+// the authorized proxy) or a locally picked File (read client-side).
+type ReceiptPreviewProps =
+  | {
+      claimId: string;
+      file?: never;
+      fileName?: string;
+      className?: string;
+      onClose?: () => void;
+    }
+  | {
+      claimId?: never;
+      file: File;
+      fileName?: string;
+      className?: string;
+      onClose?: () => void;
+    };
+
+export const ReceiptPreview = forwardRef<HTMLButtonElement, ReceiptPreviewProps>(function ReceiptPreview(
+  props,
+  closeButtonRef,
+) {
+  const sourceKey = props.file !== undefined ? props.file : props.claimId;
+  const { fileName, className, onClose } = props;
   const [status, setStatus] = useState<Status>("loading");
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
@@ -99,9 +114,9 @@ export function ReceiptPreview({
   const innerRef = useRef<HTMLDivElement | null>(null);
   const canvasesRef = useRef<HTMLCanvasElement[]>([]);
   const documentRef = useRef<CachedDocument | null>(null);
-  // Tracks which claim's content the current pan was initialized for, so a
-  // fresh claim opens top-center while zoom re-renders keep the pan.
-  const panInitializedForRef = useRef<string | null>(null);
+  // Tracks which source's content the current pan was initialized for, so a
+  // fresh source opens top-center while zoom re-renders keep the pan.
+  const panInitializedForRef = useRef<string | File | null>(null);
   const dragStartRef = useRef<{ x: number; y: number; pan: Point } | null>(null);
   const viewerId = useId();
   // Latest-state mirrors for the native wheel listener, which stays attached
@@ -113,11 +128,11 @@ export function ReceiptPreview({
   const basePageSizeRef = useRef<Size | null>(null);
   const hasUserZoomedRef = useRef(false);
 
-  // Reset zoom and start from loading when the claim changes, without letting
-  // the render effect run twice for one claim change.
-  const [previousClaimId, setPreviousClaimId] = useState(claimId);
-  if (previousClaimId !== claimId) {
-    setPreviousClaimId(claimId);
+  // Reset zoom and start from loading when the source changes, without
+  // letting the render effect run twice for one source change.
+  const [previousSourceKey, setPreviousSourceKey] = useState(sourceKey);
+  if (previousSourceKey !== sourceKey) {
+    setPreviousSourceKey(sourceKey);
     setScale(1);
     setStatus("loading");
   }
@@ -125,11 +140,11 @@ export function ReceiptPreview({
   useEffect(() => {
     hasUserZoomedRef.current = false;
     basePageSizeRef.current = null;
-  }, [claimId]);
+  }, [sourceKey]);
 
-  // Leaving the ready state invalidates the pan's claim association, so the
+  // Leaving the ready state invalidates the pan's source association, so the
   // next loaded content always opens top-center instead of inheriting a
-  // stale pan (e.g. after an error, or the same claim reloaded).
+  // stale pan (e.g. after an error, or the same source reloaded).
   useEffect(() => {
     if (status !== "ready") panInitializedForRef.current = null;
   }, [status]);
@@ -174,17 +189,17 @@ export function ReceiptPreview({
 
   // Once the ready state has committed, the layer is sized to its content
   // (w-max/h-max) with the canvases appended, so this is the first moment a
-  // fresh claim can be measured correctly and placed at top-center. The ref
-  // guard makes this run exactly once per claim; the status effect above
+  // fresh source can be measured correctly and placed at top-center. The ref
+  // guard makes this run exactly once per source; the status effect above
   // invalidates it whenever the viewer leaves the ready state, so a later
-  // claim (or the same claim again after an error) opens top-center rather
+  // source (or the same source again after an error) opens top-center rather
   // than inheriting a stale pan.
   useLayoutEffect(() => {
     if (status !== "ready") return;
-    if (panInitializedForRef.current === claimId) return;
-    panInitializedForRef.current = claimId;
+    if (panInitializedForRef.current === sourceKey) return;
+    panInitializedForRef.current = sourceKey;
     reconcilePan(true);
-  }, [status, claimId, reconcilePan]);
+  }, [status, sourceKey, reconcilePan]);
 
   useEffect(() => {
     const container = innerRef.current;
@@ -193,16 +208,21 @@ export function ReceiptPreview({
     const renderTasks: RenderTask[] = [];
 
     async function load(scrollContainer: HTMLDivElement) {
-      let pdf = documentRef.current?.claimId === claimId ? documentRef.current.pdf : null;
+      let pdf = documentRef.current?.sourceKey === sourceKey ? documentRef.current.pdf : null;
       if (!pdf) {
         try {
-          // The previous receipt is no longer needed once a new claim is shown.
+          // The previous receipt is no longer needed once a new source is shown.
           const stale = documentRef.current;
           documentRef.current = null;
           void stale?.task.destroy();
-          const response = await fetch(`/api/expenses/${encodeURIComponent(claimId)}/receipt`);
-          if (!response.ok) throw new Error(`receipt request failed: ${response.status}`);
-          const bytes = new Uint8Array(await response.arrayBuffer());
+          let bytes: Uint8Array;
+          if (sourceKey instanceof File) {
+            bytes = new Uint8Array(await sourceKey.arrayBuffer());
+          } else {
+            const response = await fetch(`/api/expenses/${encodeURIComponent(sourceKey)}/receipt`);
+            if (!response.ok) throw new Error(`receipt request failed: ${response.status}`);
+            bytes = new Uint8Array(await response.arrayBuffer());
+          }
           if (bytes.byteLength === 0) {
             if (!cancelled) setStatus("empty");
             return;
@@ -213,12 +233,12 @@ export function ReceiptPreview({
           const task = pdfjs.getDocument({ data: bytes });
           const document = await task.promise;
           if (cancelled) {
-            // The claim switched (or the component unmounted) while loading;
+            // The source switched (or the component unmounted) while loading;
             // the document is never needed, so release it immediately.
             void task.destroy();
             return;
           }
-          documentRef.current = { claimId, task, pdf: document };
+          documentRef.current = { sourceKey, task, pdf: document };
           pdf = document;
 
           // A freshly loaded document opens fitted to the viewer (Google
@@ -260,8 +280,8 @@ export function ReceiptPreview({
         for (let pageNumber = 1; pageNumber <= pdf.numPages; pageNumber++) {
           if (cancelled) return;
           const page = await pdf.getPage(pageNumber);
-          // The claim may have switched while the page was loading; a
-          // cancelled render must never append to the new claim's container.
+          // The source may have switched while the page was loading; a
+          // cancelled render must never append to the new source's container.
           if (cancelled) {
             page.cleanup();
             return;
@@ -291,8 +311,8 @@ export function ReceiptPreview({
           // The page layer now holds the freshly rendered canvases at the
           // current scale, so re-clamp the pan against the real content size
           // (a zoom re-render may have resized the page). Opening a fresh
-          // claim at top-center happens in the layout effect above, after the
-          // ready state has committed and the layer is sized to its content.
+          // source at top-center happens in the layout effect above, after
+          // the ready state has committed and the layer is sized to its content.
           reconcilePan(false);
         }
       } catch (error) {
@@ -312,7 +332,7 @@ export function ReceiptPreview({
       for (const canvas of canvasesRef.current) canvas.remove();
       canvasesRef.current = [];
     };
-  }, [claimId, scale, reconcilePan]);
+  }, [sourceKey, scale, reconcilePan]);
 
   // Free the cached document (and its canvases) when the component unmounts.
   useEffect(() => {
@@ -326,7 +346,7 @@ export function ReceiptPreview({
   // Mirror the live container and page-layer sizes into state for the
   // scrollbar math (render must not read refs). Both elements are observed:
   // the container resizes with the pane, and the layer resizes when the
-  // document finishes loading, a claim switches, or a zoom re-render grows
+  // document finishes loading, a source switches, or a zoom re-render grows
   // the canvases. When the container resizes post-transition and the user
   // has not manually zoomed, fitScale re-evaluates dynamically.
   useEffect(() => {
@@ -632,6 +652,7 @@ export function ReceiptPreview({
           </Button>
           {onClose ? (
             <Button
+              ref={closeButtonRef}
               variant="ghost"
               size="icon-sm"
               aria-label="Close receipt preview"
@@ -707,7 +728,7 @@ export function ReceiptPreview({
       </div>
     </div>
   );
-}
+});
 
 // Internal, axis-specific overlay scrollbar. Both bars share the same track
 // and thumb rendering, pointer-capture drag, track click-to-jump, and ARIA

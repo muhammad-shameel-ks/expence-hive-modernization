@@ -12,9 +12,7 @@
 
 ## Current Work
 
-- What: fixed claim verification authorization for claims submitted by Finance Head (`EXP-2026-738A63A8`), removed bank details (`payoutDetails`, account number, IFSC code) across DB, domain ports, forms, and table UI, and added in-drawer post-verification prompt banner ("Mark payment as completed now?") with "Yes, Mark Paid" and "Keep Verified" options.
-- Also: fixed review-maxxing findings via slices 05-06 in `.scratch/expense-hive-fixes/slices/` - renamed stale `maskPayoutDetails`/`canSeePayoutDetails` to `maskClaimComments`/`canSeeClaimComments`, removed unused `index` from `requireTerminalPoolClaim`, fixed stale "eight text fields" comments and "payout details" copy, deleted client-side `buildVerifiedExpense`/`buildPaidExpense` in favor of server-authoritative `resolveUpdatedExpense`, hidden footer action while the post-verify prompt shows, added refresh-on-close-without-choice sync, and focus restore to the close button on prompt dismissal.
-- Plan: executed via slices in `.scratch/expense-hive-fixes/slices/`.
-- Next: review - lint/build green; 512 vitest unit tests passing across 30 test files.
-
+- What: persistent receipt preview surface in the `/expenses/new` wizard - dual-source `ReceiptPreview`, one hoisted viewer across all wizard steps, mobile sheet access on every step, source/focus/mobile hydration polish, and Review-step auto-scroll (ADRs 0006-0007).
+- Plan: sliced in `.scratch/wizard-receipt-preview/slices/`; ADRs `docs/architecture/decisions/0006-dual-source-receipt-preview.md` and `0007-persistent-wizard-receipt-preview.md`; CONTEXT.md updated.
+- Next: review - lint/build green; 538 vitest tests passing across 31 test files (browser verification completed for the wizard surface).
 

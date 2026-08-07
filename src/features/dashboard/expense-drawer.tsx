@@ -263,6 +263,12 @@ export function ExpenseDrawer({
   const [payingPrompt, setPayingPrompt] = useState(false);
   const promptRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  // The prompt's focus effect can be deferred past the dismissal commit
+  // (concurrent scheduling), re-focusing the prompt after "Keep Verified" or
+  // "Yes, Mark Paid" already moved focus to the close button. Re-assert the
+  // close button's focus in the dismissal effect, which always runs after the
+  // prompt's unmount commit.
+  const promptWasShownRef = useRef(false);
 
   const router = useRouter();
   const reduce = useReducedMotion();
@@ -285,7 +291,10 @@ export function ExpenseDrawer({
 
   useEffect(() => {
     if (showPostVerifyPrompt) {
+      promptWasShownRef.current = true;
       promptRef.current?.focus();
+    } else if (promptWasShownRef.current) {
+      closeButtonRef.current?.focus();
     }
   }, [showPostVerifyPrompt]);
 

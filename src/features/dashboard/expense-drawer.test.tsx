@@ -244,7 +244,9 @@ describe("ExpenseDrawer verification and payment workflow", () => {
     expect(screen.getByRole("button", { name: "Keep Verified" })).toBeInTheDocument();
 
     const promptRegion = screen.getByRole("region", { name: "Mark payment prompt" });
-    expect(promptRegion).toHaveFocus();
+    await waitFor(() => {
+      expect(promptRegion).toHaveFocus();
+    });
   });
 
   it("completes payment when 'Yes, Mark Paid' is clicked in prompt", async () => {
@@ -288,7 +290,9 @@ describe("ExpenseDrawer verification and payment workflow", () => {
       expect(screen.queryByRole("region", { name: "Mark payment prompt" })).not.toBeInTheDocument();
     });
     expect(mockRefresh).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Close details" })).toHaveFocus();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Close details" })).toHaveFocus();
+    });
   });
 
   it("dismisses prompt banner and leaves claim as verified when 'Keep Verified' is clicked", async () => {
@@ -322,7 +326,9 @@ describe("ExpenseDrawer verification and payment workflow", () => {
       expect(screen.queryByRole("region", { name: "Mark payment prompt" })).not.toBeInTheDocument();
     });
     expect(mockRefresh).toHaveBeenCalled();
-    expect(screen.getByRole("button", { name: "Close details" })).toHaveFocus();
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Close details" })).toHaveFocus();
+    });
   });
 
   it("leaves earlier approved steps untouched after verify - only the terminal pending step is stamped", async () => {

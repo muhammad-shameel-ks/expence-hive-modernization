@@ -27,3 +27,13 @@ _Avoid_: Upload flow, new claim form
 A claim saved but not yet submitted, owned only by its requester.
 Drafts can be continued (fields edited and a receipt added) or deleted; both actions are requester-only and disappear once the claim is submitted.
 _Avoid_: Saved claim, working copy
+
+**Receipt preview**:
+The live PDF view of a claim's receipt in `ReceiptPreview`, with two sources: a locally picked `File` rendered client-side before any upload, or a stored receipt fetched through the authorized server proxy by claimId.
+A preview is never a download: bytes stay in the client or behind the server's authorization and integrity checks.
+_Avoid_: Viewer, PDF view, thumbnail
+
+**Preview surface**:
+The persistent receipt-preview area of the receipt-first flow: embedded in the CaptureRail on desktop, a "View receipt" button opening a full-screen sheet on mobile.
+It materializes only when a receipt exists (picked file or stored receipt); it is never an empty placeholder.
+_Avoid_: Preview panel, receipt pane
