@@ -3,6 +3,7 @@
 import type { ChangeEvent, FormEvent } from "react";
 import { useRef, useState } from "react";
 import styles from "./expense-create.module.css";
+import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { receiptValidationError } from "./receipt-file-validation";
 
 type FormState = {
@@ -154,6 +155,7 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
         <ReceiptStep
           receipt={receipt}
           existingReceiptName={storedReceiptName}
+          claimId={claimId}
           chooseReceipt={chooseReceipt}
           error={error}
           onSkip={() => setStep(2)}
@@ -194,6 +196,7 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
 function ReceiptStep({
   receipt,
   existingReceiptName,
+  claimId,
   chooseReceipt,
   error,
   onSkip,
@@ -202,6 +205,7 @@ function ReceiptStep({
 }: {
   receipt: File | null;
   existingReceiptName?: string;
+  claimId: string | null;
   chooseReceipt: (event: ChangeEvent<HTMLInputElement>) => void;
   error: string | null;
   onSkip: () => void;
@@ -210,6 +214,7 @@ function ReceiptStep({
 }) {
   const attachedName = receipt?.name ?? existingReceiptName;
   const fileInputRef = useRef<HTMLInputElement>(null);
+  const [previewOpen, setPreviewOpen] = useState(false);
   return (
     <div className={styles.content}>
       <p className={styles.eyebrow}>STEP 1 OF 3 / RECEIPT</p>
@@ -230,7 +235,7 @@ function ReceiptStep({
                   ref={fileInputRef}
                   className={styles.fileInput}
                   type="file"
-                  accept="image/*,.pdf"
+                  accept=".pdf,application/pdf"
                   onChange={chooseReceipt}
                 />
               </label>
@@ -254,7 +259,26 @@ function ReceiptStep({
           {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
           {attachedName ? (
             <div className={styles.receiptPreview}>
-              {existingReceiptName && !receipt ? `Receipt already attached: ${attachedName}` : `Receipt ready: ${attachedName}`}
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "center", gap: 12, flexWrap: "wrap" }}>
+                <span>
+                  {existingReceiptName && !receipt ? `Receipt already attached: ${attachedName}` : `Receipt ready: ${attachedName}`}
+                </span>
+                {existingReceiptName && claimId ? (
+                  <button
+                    className={`${styles.button} ${styles.buttonSecondary}`}
+                    type="button"
+                    aria-expanded={previewOpen}
+                    onClick={() => setPreviewOpen((open) => !open)}
+                  >
+                    {previewOpen ? "Hide preview" : "Preview"}
+                  </button>
+                ) : null}
+              </div>
+            </div>
+          ) : null}
+          {previewOpen && existingReceiptName && claimId ? (
+            <div style={{ marginTop: 14 }}>
+              <ReceiptPreview claimId={claimId} fileName={existingReceiptName} />
             </div>
           ) : null}
           {attachedName ? (

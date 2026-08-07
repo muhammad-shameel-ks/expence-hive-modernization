@@ -15,6 +15,7 @@ import {
   type TimelineTone,
 } from "@/components/motion/timeline";
 import { Button } from "@/components/ui/button";
+import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
 import {
   Dialog,
@@ -227,7 +228,19 @@ export function ExpenseDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [receiptOpen, setReceiptOpen] = useState(false);
   const router = useRouter();
+
+  // Close the inline receipt preview whenever the drawer switches to a
+  // different expense so stale documents are never shown. The id is
+  // normalized to null so an unselected drawer (expense undefined) does
+  // not re-trigger this every render (undefined !== null would loop).
+  const currentExpenseId = expense?.id ?? null;
+  const [previousExpenseId, setPreviousExpenseId] = useState<string | null>(currentExpenseId);
+  if (currentExpenseId !== previousExpenseId) {
+    setPreviousExpenseId(currentExpenseId);
+    setReceiptOpen(false);
+  }
 
   const statusMeta = expense ? STATUS_META[expense.status] : null;
   const terminal = expense ? isTerminal(expense.status) : false;
@@ -489,12 +502,26 @@ export function ExpenseDrawer({
                   ))}
                 </ul>
                 {expense.attachmentAvailable !== false ? (
-                  <Button asChild variant="outline" size="sm" className="mt-3">
-                    <a href={`/api/expenses/${expense.id}/receipt`} target="_blank" rel="noopener noreferrer">
-                      View receipt
-                      <ArrowUpRight className="h-3.5 w-3.5" />
-                    </a>
-                  </Button>
+                  <>
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="mt-3"
+                      aria-expanded={receiptOpen}
+                      onClick={() => setReceiptOpen((open) => !open)}
+                    >
+                      {receiptOpen ? "Hide receipt" : "View receipt"}
+                    </Button>
+                    {receiptOpen ? (
+                      <div className="mt-3">
+                        <ReceiptPreview
+                          key={expense.id}
+                          claimId={expense.id}
+                          fileName={expense.attachments[0]}
+                        />
+                      </div>
+                    ) : null}
+                  </>
                 ) : null}
               </section>
             ) : null}

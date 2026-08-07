@@ -287,7 +287,7 @@ export function createExpenseCommands({
   ): Promise<ExpenseAttachment> {
     const contentType = resolveReceiptContentType(input.contentType, input.data);
     if (contentType === null) {
-      throw new ExpenseError("validation", "Receipts must be a JPEG, PNG, or PDF file.");
+      throw new ExpenseError("validation", "Receipts must be a PDF file.");
     }
     if (input.data.byteLength > MAX_RECEIPT_SIZE_BYTES) {
       throw new ExpenseError("too-large", `The receipt is larger than ${receiptSizeLimitLabel()}.`);

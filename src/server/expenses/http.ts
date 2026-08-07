@@ -121,7 +121,7 @@ export async function handleGetReceiptRequest(
   try {
     const receipt = await commands.getReceipt(actorId, claimId);
     // Response bodies require an ArrayBuffer-backed view; the blob bytes are
-    // copied into one (the 10 MB cap keeps the copy cheap).
+    // copied into one (the 25 MB cap keeps the copy cheap).
     return new Response(new Uint8Array(receipt.data), {
       headers: {
         "content-type": receipt.contentType,

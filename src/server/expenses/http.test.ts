@@ -125,7 +125,7 @@ describe("expense HTTP boundary", () => {
           accountNumber: "32534240620",
           ifscCode: "SBIN0012861",
         },
-        { name: "receipt.jpg", type: "image/jpeg", data: JPEG_RECEIPT },
+        { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT },
       ),
       commands,
       "emp-shameel",
@@ -139,7 +139,7 @@ describe("expense HTTP boundary", () => {
         currency: "INR",
         subCategory: "Client Meeting",
         remark: "Dinner with Acme Corp",
-        attachment: { fileName: "receipt.jpg" },
+        attachment: { fileName: "receipt.pdf" },
         payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
       },
     });
@@ -236,10 +236,10 @@ describe("expense HTTP boundary", () => {
     expect(payload.claim.attachment).toBeUndefined();
   });
 
-  it("persists a valid JPEG file part as an available attachment with a server-derived key", async () => {
+  it("persists a valid PDF file part as an available attachment with a server-derived key", async () => {
     const { commands, blobStore } = build();
     const response = await handleCreateExpenseRequest(
-      createRequest(BASE_FIELDS, { name: "boarding-pass.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      createRequest(BASE_FIELDS, { name: "boarding-pass.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -247,16 +247,16 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(201);
     const payload = await response.json();
     expect(payload.claim.attachment).toMatchObject({
-      fileName: "boarding-pass.jpg",
-      contentType: "image/jpeg",
-      storageKey: "org-1/claim-1/attachment-1.jpg",
+      fileName: "boarding-pass.pdf",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
       status: "available",
-      sizeBytes: JPEG_RECEIPT.byteLength,
+      sizeBytes: PDF_RECEIPT.byteLength,
     });
-    expect(payload.claim.attachment.contentSha256).toBe(createHash("sha256").update(JPEG_RECEIPT).digest("hex"));
-    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.jpg")).resolves.toEqual({
-      data: JPEG_RECEIPT,
-      contentType: "image/jpeg",
+    expect(payload.claim.attachment.contentSha256).toBe(createHash("sha256").update(PDF_RECEIPT).digest("hex"));
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
     });
   });
 
@@ -303,8 +303,51 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(422);
     await expect(response.json()).resolves.toEqual({
       error: "validation",
-      message: "Receipts must be a JPEG, PNG, or PDF file.",
+      message: "Receipts must be a PDF file.",
     });
+  });
+
+  it("rejects a JPEG-magic receipt whose declared type is image/jpeg", async () => {
+    const { commands } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "photo.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "validation",
+      message: "Receipts must be a PDF file.",
+    });
+  });
+
+  it("rejects a spoofed PDF declaration carrying JPEG magic bytes", async () => {
+    const { commands } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "fake.pdf", type: "application/pdf", data: JPEG_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "validation",
+      message: "Receipts must be a PDF file.",
+    });
+  });
+
+  it("accepts an empty declared type carrying PDF magic bytes", async () => {
+    const { commands } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "scan.pdf", type: "", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(201);
+    const { claim } = await response.json();
+    expect(claim.attachment.contentType).toBe("application/pdf");
   });
 
   it("rejects an oversized receipt file part from a body without content-length with a message-bearing too-large response", async () => {
@@ -323,7 +366,7 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toEqual({
       error: "too-large",
-      message: "The receipt is larger than 10 MB.",
+      message: "The receipt is larger than 25 MB.",
     });
   });
 
@@ -357,7 +400,7 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toMatchObject({
       error: "too-large",
-      message: "The receipt is larger than 10 MB.",
+      message: "The receipt is larger than 25 MB.",
     });
     expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
@@ -365,7 +408,7 @@ describe("expense HTTP boundary", () => {
   it("serves the receipt bytes to the requester with the right headers", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      createRequest(BASE_FIELDS, { name: "boarding-pass.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      createRequest(BASE_FIELDS, { name: "boarding-pass.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -379,11 +422,11 @@ describe("expense HTTP boundary", () => {
     );
 
     expect(response.status).toBe(200);
-    expect(response.headers.get("content-type")).toBe("image/jpeg");
-    expect(response.headers.get("content-length")).toBe(String(JPEG_RECEIPT.byteLength));
-    expect(response.headers.get("content-disposition")).toBe('inline; filename="boarding-pass.jpg"');
+    expect(response.headers.get("content-type")).toBe("application/pdf");
+    expect(response.headers.get("content-length")).toBe(String(PDF_RECEIPT.byteLength));
+    expect(response.headers.get("content-disposition")).toBe('inline; filename="boarding-pass.pdf"');
     expect(response.headers.get("cache-control")).toContain("no-store");
-    await expect(response.arrayBuffer()).resolves.toEqual(JPEG_RECEIPT.buffer);
+    await expect(response.arrayBuffer()).resolves.toEqual(PDF_RECEIPT.buffer);
   });
 
   it("denies the receipt to an employee of another organization", async () => {
@@ -415,7 +458,7 @@ describe("expense HTTP boundary", () => {
       now: () => new Date("2026-08-04T10:00:00.000Z"),
     });
     const createResponse = await handleCreateExpenseRequest(
-      createRequest(BASE_FIELDS, { name: "receipt.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -434,7 +477,7 @@ describe("expense HTTP boundary", () => {
   it("returns 404 when the receipt blob is missing from the store", async () => {
     const { commands, blobStore } = build();
     const createResponse = await handleCreateExpenseRequest(
-      createRequest(BASE_FIELDS, { name: "receipt.jpg", type: "image/jpeg", data: JPEG_RECEIPT }),
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );

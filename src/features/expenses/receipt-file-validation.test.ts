@@ -6,12 +6,16 @@ function receiptFile(overrides: Partial<File> = {}): File {
 }
 
 describe("receiptValidationError", () => {
-  it("returns null for a small image/jpeg file", () => {
-    expect(receiptValidationError(receiptFile({ type: "image/jpeg" }))).toBeNull();
+  it("rejects image/jpeg with the type message", () => {
+    expect(receiptValidationError(receiptFile({ type: "image/jpeg" }))).toBe(
+      "Receipts must be a PDF file.",
+    );
   });
 
-  it("returns null for a small image/png file", () => {
-    expect(receiptValidationError(receiptFile({ type: "image/png" }))).toBeNull();
+  it("rejects image/png with the type message", () => {
+    expect(receiptValidationError(receiptFile({ type: "image/png" }))).toBe(
+      "Receipts must be a PDF file.",
+    );
   });
 
   it("returns null for a small application/pdf file", () => {
@@ -20,19 +24,19 @@ describe("receiptValidationError", () => {
 
   it("rejects image/heic with the type message", () => {
     expect(receiptValidationError(receiptFile({ type: "image/heic" }))).toBe(
-      "Receipts must be a JPEG, PNG, or PDF file.",
+      "Receipts must be a PDF file.",
     );
   });
 
   it("rejects image/webp with the type message", () => {
     expect(receiptValidationError(receiptFile({ type: "image/webp" }))).toBe(
-      "Receipts must be a JPEG, PNG, or PDF file.",
+      "Receipts must be a PDF file.",
     );
   });
 
   it("rejects video/mp4 with the type message", () => {
     expect(receiptValidationError(receiptFile({ type: "video/mp4" }))).toBe(
-      "Receipts must be a JPEG, PNG, or PDF file.",
+      "Receipts must be a PDF file.",
     );
   });
 
@@ -44,14 +48,14 @@ describe("receiptValidationError", () => {
     expect(receiptValidationError(receiptFile({ type: "" }))).toBeNull();
   });
 
-  it("rejects files larger than 10 MB with the size message", () => {
+  it("rejects files larger than 25 MB with the size message", () => {
     const oversized = new File([new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1)], "big.pdf", {
       type: "application/pdf",
     });
-    expect(receiptValidationError(oversized)).toBe("The receipt is larger than 10 MB.");
+    expect(receiptValidationError(oversized)).toBe("The receipt is larger than 25 MB.");
   });
 
-  it("accepts a file exactly at the 10 MB cap", () => {
+  it("accepts a file exactly at the 25 MB cap", () => {
     const atCap = new File([new Uint8Array(MAX_RECEIPT_SIZE_BYTES)], "big.pdf", {
       type: "application/pdf",
     });

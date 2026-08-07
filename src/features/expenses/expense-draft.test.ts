@@ -30,7 +30,7 @@ describe("draftAttachmentFileName", () => {
       attachment: {
         id: "attachment-1",
         fileName: "receipt.jpg",
-        contentType: "image/jpeg",
+        contentType: "application/pdf",
         storageKey: "org-1/claim-1/attachment-1.jpg",
         status: "available",
         contentSha256: "abc123",
@@ -51,7 +51,7 @@ describe("draftAttachmentFileName", () => {
       attachment: {
         id: "attachment-1",
         fileName: "legacy-receipt.jpg",
-        contentType: "image/jpeg",
+        contentType: "application/pdf",
         storageKey: "org-1/claim-1/attachment-1.jpg",
         status: "available",
         contentSha256: "",

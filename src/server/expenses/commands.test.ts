@@ -242,12 +242,12 @@ describe("expense commands", () => {
       }),
     ).rejects.toMatchObject({
       code: "too-large",
-      message: "The receipt is larger than 10 MB.",
+      message: "The receipt is larger than 25 MB.",
     });
     await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
 
-  it("rejects a declared PNG whose bytes are actually a JPEG", async () => {
+  it("rejects JPEG receipt bytes, which are no longer an accepted receipt format", async () => {
     const { commands, blobStore } = buildCommands();
 
     await expect(
@@ -257,11 +257,11 @@ describe("expense commands", () => {
         amountMinor: 240000,
         currency: "INR",
         expenseDate: "2026-08-04",
-        attachment: { fileName: "photo.png", contentType: "image/png", data: JPEG_RECEIPT },
+        attachment: { fileName: "photo.jpg", contentType: "image/jpeg", data: JPEG_RECEIPT },
       }),
     ).rejects.toMatchObject({
       code: "validation",
-      message: "Receipts must be a JPEG, PNG, or PDF file.",
+      message: "Receipts must be a PDF file.",
     });
     await expect(blobStore.getBlob("org-1/claim-1/attachment-1.jpg")).resolves.toBeNull();
   });
@@ -284,7 +284,7 @@ describe("expense commands", () => {
       }),
     ).rejects.toMatchObject({
       code: "validation",
-      message: "Receipts must be a JPEG, PNG, or PDF file.",
+      message: "Receipts must be a PDF file.",
     });
     await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
