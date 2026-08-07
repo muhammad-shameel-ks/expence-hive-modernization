@@ -115,9 +115,9 @@ export class PostgresExpenseStore implements ExpenseStore {
       await client.query("BEGIN");
       const result = await client.query(
         `UPDATE reimbursement_claims
-         SET title = $2, category = $3, sub_category = $4, remark = $5, amount_minor = $6, expense_date = $7, account_number = $8, ifsc_code = $9,
-             status = $10, current_stage = $11, current_actor_id = $12, current_stage_since = $13, version = $14, submitted_at = $15, comments = $16, updated_at = now()
-         WHERE id = $1 AND version < $14`,
+         SET title = $2, category = $3, sub_category = $4, remark = $5, amount_minor = $6, expense_date = $7,
+             status = $8, current_stage = $9, current_actor_id = $10, current_stage_since = $11, version = $12, submitted_at = $13, comments = $14, updated_at = now()
+         WHERE id = $1 AND version < $12`,
         [
           claim.id,
           claim.title,
@@ -126,8 +126,6 @@ export class PostgresExpenseStore implements ExpenseStore {
           claim.remark,
           claim.amountMinor,
           claim.expenseDate,
-          claim.payoutDetails?.accountNumber ?? null,
-          claim.payoutDetails?.ifscCode ?? null,
           claim.status,
           claim.currentStage ?? null,
           claim.currentActorId ?? null,
@@ -313,12 +311,10 @@ function employeeFromRow(row: Row): ExpenseEmployee {
 async function insertClaim(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, claim: ExpenseClaim): Promise<void> {
   await client.query(
     `INSERT INTO reimbursement_claims
-      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, account_number, ifsc_code)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)`,
+      (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)`,
     [
       claim.id, claim.organizationId, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory, claim.remark, claim.amountMinor, claim.currency, claim.expenseDate, claim.status, claim.currentStage ?? null, claim.currentActorId ?? null, claim.currentStageSince ?? null, claim.version, claim.createdAt, claim.submittedAt ?? null,
-      claim.payoutDetails?.accountNumber ?? null,
-      claim.payoutDetails?.ifscCode ?? null,
     ],
   );
 }
@@ -368,9 +364,6 @@ function claimFromRow(row: Row): ExpenseClaim {
     version: Number(row.version),
     createdAt: new Date(String(row.created_at)).toISOString(),
     submittedAt: row.submitted_at ? new Date(String(row.submitted_at)).toISOString() : undefined,
-    payoutDetails: row.account_number && row.ifsc_code
-      ? { accountNumber: String(row.account_number), ifscCode: String(row.ifsc_code) }
-      : undefined,
     comments: row.comments ? String(row.comments) : undefined,
   };
 }

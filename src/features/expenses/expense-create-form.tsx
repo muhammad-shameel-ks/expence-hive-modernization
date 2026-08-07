@@ -13,8 +13,6 @@ type FormState = {
   remark: string;
   amount: string;
   expenseDate: string;
-  accountNumber: string;
-  ifscCode: string;
 };
 
 const CATEGORY_SUB_CATEGORIES: Record<string, string[]> = {
@@ -35,8 +33,6 @@ export type ExpenseDraftInitial = {
   remark: string;
   amount: string;
   expenseDate: string;
-  accountNumber: string;
-  ifscCode: string;
   receiptFileName?: string;
 };
 
@@ -52,8 +48,6 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
     remark: initial?.remark ?? "",
     amount: initial?.amount ?? "",
     expenseDate: initial?.expenseDate ?? new Date().toISOString().slice(0, 10),
-    accountNumber: initial?.accountNumber ?? "",
-    ifscCode: initial?.ifscCode ?? "",
   }));
   const [receipt, setReceipt] = useState<File | null>(null);
   const [claimId, setClaimId] = useState<string | null>(initial?.claimId ?? null);
@@ -93,8 +87,6 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
       body.set("remark", form.remark);
       body.set("amount", form.amount);
       body.set("expenseDate", form.expenseDate);
-      body.set("accountNumber", form.accountNumber);
-      body.set("ifscCode", form.ifscCode);
       if (receipt) body.set("receipt", receipt);
       const response = await fetch(claimId ? `/api/expenses/${claimId}` : "/api/expenses", {
         method: claimId ? "PATCH" : "POST",
@@ -355,10 +347,6 @@ function DetailsStep({
               <Field label="Expense date"><input className={styles.textInput} required type="date" value={form.expenseDate} onChange={(event) => update("expenseDate", event.target.value)} /></Field>
             </div>
             <Field label="Remark" hint="A short note for Finance."><input className={styles.textInput} required value={form.remark} placeholder="e.g. IT travel expenses" onChange={(event) => update("remark", event.target.value)} /></Field>
-            <div className={styles.formGrid}>
-              <Field label="Account number" hint="Only Finance can see this."><input className={styles.textInput} required value={form.accountNumber} placeholder="Bank account number" onChange={(event) => update("accountNumber", event.target.value)} /></Field>
-              <Field label="IFSC code" hint="Only Finance can see this."><input className={styles.textInput} required value={form.ifscCode} placeholder="e.g. SBIN0012861" onChange={(event) => update("ifscCode", event.target.value.toUpperCase())} /></Field>
-            </div>
             {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
             <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Back</button><button className={styles.button} type="submit" disabled={busy}>{busy ? "Saving..." : "Review claim →"}</button></div>
           </form>

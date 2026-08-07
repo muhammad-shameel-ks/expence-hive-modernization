@@ -59,7 +59,7 @@ export default async function FinancePaymentsPage() {
           Payment queue
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-          Claims at or past Finance verification, with the payout details needed to pay them.
+          Claims at or past Finance verification, ready to be marked paid.
         </p>
 
         <div className="mt-8">

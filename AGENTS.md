@@ -12,8 +12,9 @@
 
 ## Current Work
 
-- What: fixed review-maxxing findings on PR #45 - `basePageSizeRef` is now actually populated so fit-on-open container resize re-evaluation works (was dead code despite being claimed fixed), wheel handler no longer hijacks scroll when already clamped at MIN/MAX scale, deduped the repeated content-size estimate into `resolveContentSize`, and documented why the payment-queue comment-save spinner doesn't use the shared Button `loading` prop (no discrete save trigger).
-  Prior work: fixed PDF overlay scrollbars, fit-on-open zoom, and UX polish via slices in `.scratch/pdf-scrollbar-fixes/slices/`, `.scratch/ux-bugfixes/slices/`, `.scratch/pdf-preview-zoom-layout/slices/`.
-- Plan: executed via slices in `.scratch/review-fixes/slices/`.
-- Next: review - lint/build green; 508 vitest unit tests passing across 29 test files.
+- What: fixed claim verification authorization for claims submitted by Finance Head (`EXP-2026-738A63A8`), removed bank details (`payoutDetails`, account number, IFSC code) across DB, domain ports, forms, and table UI, and added in-drawer post-verification prompt banner ("Mark payment as completed now?") with "Yes, Mark Paid" and "Keep Verified" options.
+- Also: fixed review-maxxing findings via slices 05-06 in `.scratch/expense-hive-fixes/slices/` - renamed stale `maskPayoutDetails`/`canSeePayoutDetails` to `maskClaimComments`/`canSeeClaimComments`, removed unused `index` from `requireTerminalPoolClaim`, fixed stale "eight text fields" comments and "payout details" copy, deleted client-side `buildVerifiedExpense`/`buildPaidExpense` in favor of server-authoritative `resolveUpdatedExpense`, hidden footer action while the post-verify prompt shows, added refresh-on-close-without-choice sync, and focus restore to the close button on prompt dismissal.
+- Plan: executed via slices in `.scratch/expense-hive-fixes/slices/`.
+- Next: review - lint/build green; 512 vitest unit tests passing across 30 test files.
+
 

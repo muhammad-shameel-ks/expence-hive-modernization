@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { formatMoney, submittedLabel } from "./journey-meta";
+import { Clock } from "lucide-react";
+import { formatMoney, submittedLabel, KIND_META } from "./journey-meta";
 import { getJourneyFlowItems } from "./expense-drawer";
 
 describe("formatMoney", () => {
@@ -278,6 +279,39 @@ describe("getJourneyFlowItems", () => {
 
     expect(getJourneyFlowItems(expense, "Ada Lovelace")[0].isMine).toBe(true);
     expect(getJourneyFlowItems(expense, "Someone Else")[0].isMine).toBe(false);
+  });
+
+  it("uses a neutral clock icon for pending steps and completion icons only for completed history", () => {
+    const expense = {
+      id: "ex-icons",
+      ref: "EXP-ICONS",
+      title: "Icon check",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 5",
+      submittedAt: "2026-08-05T10:00:00Z",
+      status: "in-finance" as const,
+      nextStage: "Finance verification",
+      nextActor: "Finance Officer",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 5", actor: "Sanil Davis", kind: "approved" as const },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Manager", assignedActorName: "Sanil Davis", status: "pending" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    const pending = steps.filter((s) => s.pending);
+    expect(pending.length).toBeGreaterThan(0);
+    for (const step of pending) {
+      expect(step.icon).toBe(Clock);
+    }
+    expect(steps[1]).toMatchObject({ label: "Approved", pending: false });
+    expect(steps[1].icon).toBe(KIND_META.approved.icon);
   });
 });
 

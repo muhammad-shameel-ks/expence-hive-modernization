@@ -17,7 +17,6 @@ function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
     expenseDate: "2026-08-04",
     status: "in-finance",
     currentStage: "finance",
-    payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     steps: [],
     history: [],
     version: 1,

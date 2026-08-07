@@ -1,0 +1,17 @@
+# 06 - Drawer Verify/Pay Workflow Rework for Review Findings
+
+**What to build:** The drawer must render exactly what the server returned for verify/pay mutations - no client-side fabrication of workflow state - with the post-verify prompt as the single payment-action surface, correct focus handling, and no stale queue data when the drawer closes without choosing.
+
+**Blocked by:** None - can start immediately (disjoint files from 05).
+
+**Status:** ready-for-agent
+
+**Context:** `src/features/dashboard/expense-drawer.tsx` currently contains `buildVerifiedExpense`/`buildPaidExpense` which fabricate step/history state client-side. This violates AGENTS.md ("do not put workflow authority in client components"), over-stamps EVERY finance/treasury step as `verified` (falsifying prior approvals - only the terminal pending step is stamped by the server), uses unstable `verified-${Date.now()}` ids, and is unreachable in production because `http.ts` verify/pay handlers always return `{ claim }` (a domain `ExpenseClaim`, which always has `amountMinor`). The existing tests mock the response as an `Expense`-shaped object (with `amount` instead of `amountMinor`), which is what the speculative `"status" in body.claim` + `as Expense` branch exists for.
+
+^- [x] Delete `buildVerifiedExpense` and `buildPaidExpense` from `src/features/dashboard/expense-drawer.tsx`.
+^- [x] Add one small helper `resolveUpdatedExpense(body): Expense | null` that returns `claimToExpense(body.claim, [])` only when `body.claim` is an object with `amountMinor` (the server's domain claim); otherwise null. Use it in `performAction` (verify branch and pay branch) and in `handleMarkPaidFromPrompt` - removing the three copy-pasted parsing blocks and the speculative `"status" in body.claim` / `as Expense` branch entirely. When the helper returns null, treat it like a server error ("The action could not be completed. Please try again.").
+^- [x] While `showPostVerifyPrompt` is true, do not render the footer primary action Button ("Mark as paid" would show disabled for pool actors via `next.mine`, creating two apparently-equivalent controls with different outcomes - the prompt is the only payment action surface in this drawer pass).
+^- [x] Close-without-choice sync: when the drawer closes (via the X button or `onOpenChange`) while `overrideExpense` is set, call `router.refresh()` so the payment queue behind is not stale. Route the header X button through `handleOpenChange(false)` so this path is shared.
+^- [x] Focus restore: keep a ref on the header close button; when the post-verify prompt is dismissed ("Keep Verified" or after "Yes, Mark Paid"), restore focus to the close button (the prompt region had focus).
+^- [x] Update `src/features/dashboard/expense-drawer.test.tsx`: mock fetch responses with real domain `ExpenseClaim` shapes (including `amountMinor`, `steps`, `history`, `currentActorId` etc. - model them on the seed claims in `scripts/seed.mjs`), so the drawer's only supported response shape is exercised. Add tests: (a) after "Verify for payment" with a claim whose terminal step is now `verified`, the journey shows the earlier approved steps untouched (only terminal stamped); (b) closing the drawer via the X button after verifying triggers `router.refresh()`; (c) the footer "Mark as paid" button is not rendered while the prompt is visible.
+^- [x] Tests written and passing for this slice (a slice is not done without them).

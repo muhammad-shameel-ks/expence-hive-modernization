@@ -45,8 +45,6 @@ export default async function NewExpensePage({
         remark: claim.remark,
         amount: (claim.amountMinor / 100).toFixed(2),
         expenseDate: claim.expenseDate,
-        accountNumber: claim.payoutDetails?.accountNumber ?? "",
-        ifscCode: claim.payoutDetails?.ifscCode ?? "",
         receiptFileName: draftAttachmentFileName(claim),
       };
     } catch (error) {

@@ -289,68 +289,7 @@ describe("expense commands", () => {
     await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
 
-  it("lets the requester see their own payout details on their claim", async () => {
-    const { commands } = buildCommands();
-    const draft = await commands.createDraft(employee.id, {
-      title: "Bengaluru client flight",
-      category: "Travel",
-      amountMinor: 1250000,
-      currency: "INR",
-      expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
-    });
 
-    await expect(commands.getClaim(employee.id, draft.id)).resolves.toMatchObject({
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
-    });
-  });
-
-  it("hides payout details from an approver the claim is assigned to", async () => {
-    const { commands } = buildCommands();
-    const draft = await commands.createDraft(employee.id, {
-      title: "Bengaluru client flight",
-      category: "Travel",
-      amountMinor: 1250000,
-      currency: "INR",
-      expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
-    });
-    await commands.submitClaim(employee.id, draft.id);
-
-    const managerClaims = await commands.listClaims("emp-ada");
-
-    expect(managerClaims.find((claim) => claim.id === draft.id)?.payoutDetails).toBeUndefined();
-  });
-
-  it("shows payout details to Finance roles from their stage on, but not to ordinary approvers", async () => {
-    const { commands } = buildCommands();
-    const draft = await commands.createDraft(employee.id, {
-      title: "Bengaluru client flight",
-      category: "Travel",
-      amountMinor: 1250000,
-      currency: "INR",
-      expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
-    });
-    await commands.submitClaim(employee.id, draft.id);
-    await commands.approveStage("emp-ada", draft.id);
-
-    const managerClaims = await commands.listClaims("emp-ada");
-    expect(managerClaims.find((claim) => claim.id === draft.id)?.payoutDetails).toBeUndefined();
-
-    const financeHeadClaims = await commands.listClaims("emp-pramod");
-    expect(financeHeadClaims.find((claim) => claim.id === draft.id)?.payoutDetails).toEqual({
-      accountNumber: "32534240620",
-      ifscCode: "SBIN0012861",
-    });
-
-    await commands.approveStage("emp-pramod", draft.id);
-    const financeClaims = await commands.listClaims("emp-finance");
-    expect(financeClaims.find((claim) => claim.id === draft.id)?.payoutDetails).toEqual({
-      accountNumber: "32534240620",
-      ifscCode: "SBIN0012861",
-    });
-  });
 
   it("submits a draft into the flow published for the requester's role", async () => {
     const { commands } = buildCommands();
@@ -747,7 +686,163 @@ describe("expense commands", () => {
     expect(paid.history.map((event) => event.kind)).toEqual(["draft", "submitted", "approved", "approved", "verified", "paid"]);
   });
 
-  it("lists claims at or past the finance stage with payout details for Finance, and rejects everyone else", async () => {
+  describe("finance verification pool authorization", () => {
+    it("allows any active Finance Executive to verify and mark paid a claim submitted by Finance Head", async () => {
+      const financeHead = emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" });
+      const financeExec1 = emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+      const financeExec2 = emp("emp-rishikesh", "Rishikesh 2", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+
+      const financeHeadFlow: ExpenseFlow = {
+        id: "flow-finance-head",
+        roleId: ROLE_FINANCE_HEAD.id,
+        steps: [roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+      };
+
+      const { commands } = buildCommands({
+        employees: [financeHead, financeExec1, financeExec2],
+        flows: [financeHeadFlow],
+      });
+
+      const draft = await commands.createDraft(financeHead.id, {
+        title: "Finance Head Conference Fee",
+        category: "Training",
+        amountMinor: 500000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+
+      const submitted = await commands.submitClaim(financeHead.id, draft.id);
+      expect(submitted.status).toBe("in-finance");
+
+      // First executive verifies the claim
+      const verified = await commands.verifyClaim(financeExec1.id, submitted.id);
+      expect(verified.steps[0].status).toBe("verified");
+
+      // Second executive marks the claim paid
+      const paid = await commands.markPaid(financeExec2.id, submitted.id);
+      expect(paid.status).toBe("paid");
+    });
+
+    it("allows any eligible pool member to verify and mark paid even if currentActorId was assigned to another pool member", async () => {
+      const execUser = emp("emp-shameel", "Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" });
+      const managerUser = emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" });
+      const financeHead = emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" });
+      const financeExec1 = emp("emp-finance", "Rishikesh 1", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+      const financeExec2 = emp("emp-rishikesh", "Rishikesh 2", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+
+      const { commands } = buildCommands({
+        employees: [execUser, managerUser, financeHead, financeExec1, financeExec2],
+        flows: [STANDARD_FLOW],
+      });
+
+      const draft = await commands.createDraft(execUser.id, {
+        title: "Software license",
+        category: "Software",
+        amountMinor: 150000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+
+      const submitted = await commands.submitClaim(execUser.id, draft.id);
+      await commands.approveStage(managerUser.id, submitted.id);
+      await commands.approveStage(financeHead.id, submitted.id);
+
+      const inFinanceClaim = await commands.getClaim(execUser.id, submitted.id);
+      expect(inFinanceClaim.status).toBe("in-finance");
+      // Current actor defaults to financeExec1
+      expect(inFinanceClaim.currentActorId).toBe(financeExec1.id);
+
+      // financeExec2 (not currentActorId) verifies the claim
+      const verified = await commands.verifyClaim(financeExec2.id, submitted.id);
+      expect(verified.steps[2].status).toBe("verified");
+
+      // financeExec2 marks paid
+      const paid = await commands.markPaid(financeExec2.id, submitted.id);
+      expect(paid.status).toBe("paid");
+    });
+
+    it("prevents the requester (Finance Head or Finance Executive) from verifying or paying their own claim", async () => {
+      const financeHead = emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" });
+      const financeExec = emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+      const financeExec2 = emp("emp-rishikesh", "Rishikesh 2", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+
+      const financeHeadFlow: ExpenseFlow = {
+        id: "flow-finance-head",
+        roleId: ROLE_FINANCE_HEAD.id,
+        steps: [roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+      };
+
+      const financeExecFlow: ExpenseFlow = {
+        id: "flow-finance-exec",
+        roleId: ROLE_FINANCE_EXECUTIVE.id,
+        steps: [roleStep(ROLE_FINANCE_HEAD.id), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+      };
+
+      const { commands } = buildCommands({
+        employees: [financeHead, financeExec, financeExec2],
+        flows: [financeHeadFlow, financeExecFlow],
+      });
+
+      // Scenario 1: Finance Head submits own claim
+      const draftHead = await commands.createDraft(financeHead.id, {
+        title: "Finance Head taxi",
+        category: "Travel",
+        amountMinor: 20000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      const headClaim = await commands.submitClaim(financeHead.id, draftHead.id);
+
+      // Finance Head attempts to verify own claim -> rejected
+      await expect(commands.verifyClaim(financeHead.id, headClaim.id)).rejects.toMatchObject({
+        code: "unauthorized",
+      });
+
+      // Finance Executive verifies it
+      await commands.verifyClaim(financeExec.id, headClaim.id);
+
+      // Finance Head attempts to mark own claim paid -> rejected
+      await expect(commands.markPaid(financeHead.id, headClaim.id)).rejects.toMatchObject({
+        code: "unauthorized",
+      });
+
+      // Finance Executive pays it -> succeeds
+      await expect(commands.markPaid(financeExec.id, headClaim.id)).resolves.toMatchObject({
+        status: "paid",
+      });
+
+      // Scenario 2: Finance Executive submits own claim
+      const draftExec = await commands.createDraft(financeExec.id, {
+        title: "Finance Exec office supplies",
+        category: "Supplies",
+        amountMinor: 10000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      const execClaim = await commands.submitClaim(financeExec.id, draftExec.id);
+      await commands.approveStage(financeHead.id, execClaim.id);
+
+      // Finance Exec attempts to verify own claim -> rejected
+      await expect(commands.verifyClaim(financeExec.id, execClaim.id)).rejects.toMatchObject({
+        code: "unauthorized",
+      });
+
+      // Second Finance Exec verifies it
+      await commands.verifyClaim(financeExec2.id, execClaim.id);
+
+      // Finance Exec attempts to pay own claim -> rejected
+      await expect(commands.markPaid(financeExec.id, execClaim.id)).rejects.toMatchObject({
+        code: "unauthorized",
+      });
+
+      // Second Finance Exec pays it -> succeeds
+      await expect(commands.markPaid(financeExec2.id, execClaim.id)).resolves.toMatchObject({
+        status: "paid",
+      });
+    });
+  });
+
+  it("lists claims at or past the finance stage for Finance, and rejects everyone else", async () => {
     const { commands } = buildCommands();
     const draft = await commands.createDraft(employee.id, {
       title: "Bengaluru client flight",
@@ -755,17 +850,13 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
     await commands.submitClaim(employee.id, draft.id);
     await commands.approveStage("emp-ada", draft.id);
     await commands.approveStage("emp-pramod", draft.id);
 
     const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
-    expect(financeQueue.find((claim) => claim.id === draft.id)?.payoutDetails).toEqual({
-      accountNumber: "32534240620",
-      ifscCode: "SBIN0012861",
-    });
+    expect(financeQueue.find((claim) => claim.id === draft.id)).toBeDefined();
 
     await expect(commands.listFinancePaymentQueue(employee.id)).rejects.toMatchObject({ code: "unauthorized" });
     await expect(commands.listFinancePaymentQueue("emp-ada")).rejects.toMatchObject({ code: "unauthorized" });
@@ -782,7 +873,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
 
     expect(draft).toMatchObject({ subCategory: "Airfare", remark: "Round trip for the Bengaluru client kickoff" });
@@ -808,7 +898,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
 
     const updated = await commands.updateComments("emp-finance", draft.id, "Awaiting invoice copy before payout");
@@ -849,7 +938,6 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
-      payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     });
     await commands.updateComments("emp-finance", draft.id, "Awaiting invoice copy before payout");
     await commands.submitClaim(employee.id, draft.id);
@@ -1329,7 +1417,7 @@ describe("expense commands", () => {
       await expect(commands.listOrganizationActivity(employee.id)).rejects.toMatchObject({ code: "unauthorized" });
     });
 
-    it("gives Finance Head the same standing oversight as Finance: payout details, comments, and any employee's activity", async () => {
+    it("gives Finance Head the same standing oversight as Finance: comments and any employee's activity", async () => {
       const { commands } = buildWithFinanceHead();
       const draft = await commands.createDraft(employee.id, {
         title: "Bengaluru client flight",
@@ -1337,12 +1425,10 @@ describe("expense commands", () => {
         amountMinor: 1250000,
         currency: "INR",
         expenseDate: "2026-08-04",
-        payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
       });
 
       const commented = await commands.updateComments("emp-pramod", draft.id, "Approved for payout");
       expect(commented.comments).toBe("Approved for payout");
-      expect(commented.payoutDetails).toEqual({ accountNumber: "32534240620", ifscCode: "SBIN0012861" });
 
       await commands.submitClaim(employee.id, draft.id);
       await commands.rejectClaim("emp-ada", draft.id, "Missing itemized receipt");
@@ -1467,7 +1553,6 @@ describe("updateDraft", () => {
     amountMinor: 99900,
     currency: "INR",
     expenseDate: "2026-08-05",
-    payoutDetails: { accountNumber: "99999999999", ifscCode: "HDFC0001234" },
   };
 
   async function buildDraftWithReceipt() {
@@ -1497,7 +1582,6 @@ describe("updateDraft", () => {
       remark: "Edited remark",
       amountMinor: 99900,
       expenseDate: "2026-08-05",
-      payoutDetails: { accountNumber: "99999999999", ifscCode: "HDFC0001234" },
       version: draft.version + 1,
     });
     expect(updated.attachment).toEqual(draft.attachment);

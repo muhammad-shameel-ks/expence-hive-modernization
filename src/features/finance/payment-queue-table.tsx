@@ -380,8 +380,6 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                 {sortHeader("status", "Status")}
                 <th className="px-4 py-3 font-medium">Payment status</th>
                 <th className="hidden px-4 py-3 font-medium xl:table-cell">Approved on</th>
-                <th className="px-4 py-3 font-medium">Account number</th>
-                <th className="px-4 py-3 font-medium">IFSC code</th>
                 <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
                 <th className="min-w-[220px] px-4 py-3 font-medium">Comments</th>
               </tr>
@@ -389,7 +387,7 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-muted-foreground" colSpan={14}>
+                  <td className="px-4 py-6 text-muted-foreground" colSpan={12}>
                     No claims match your search.
                   </td>
                 </tr>
@@ -463,8 +461,6 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                       <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">
                         {approvedOn ? approvedOn.slice(0, 10) : "-"}
                       </td>
-                      <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
-                      <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
                       <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
                       <td className="px-4 py-3">
                         <div className="relative">
