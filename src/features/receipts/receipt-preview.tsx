@@ -48,6 +48,26 @@ function scrollbarTrack(viewport: Size): Size {
   };
 }
 
+// The content size at a new scale is best estimated from the base (scale=1)
+// page size, which is exact and independent of any rounding the canvas
+// layout introduced at the previously measured scale. When the base size is
+// not yet known (e.g. before the first document has finished loading),
+// fall back to scaling the currently measured content by the ratio of the
+// new scale to the current one.
+function resolveContentSize(
+  basePageSize: Size | null,
+  measuredContent: Size,
+  currentScale: number,
+  newScale: number
+): Size {
+  return basePageSize
+    ? estimateContentSize(basePageSize, newScale)
+    : {
+        w: Math.round((measuredContent.w / currentScale) * newScale),
+        h: Math.round((measuredContent.h / currentScale) * newScale),
+      };
+}
+
 // Lazily-loaded PDF document, cached per claim so zoom re-renders do not
 // re-download the bytes; replaced (and destroyed) when the claim changes.
 type CachedDocument = {
@@ -213,6 +233,7 @@ export function ReceiptPreview({
             const firstPage = await pdf.getPage(1);
             const baseViewport = firstPage.getViewport({ scale: 1 });
             firstPage.cleanup();
+            basePageSizeRef.current = { w: baseViewport.width, h: baseViewport.height };
             const containerEl = containerRef.current;
             const containerWidth = containerEl?.clientWidth ?? 0;
             const containerHeight = containerEl?.clientHeight ?? 0;
@@ -321,8 +342,27 @@ export function ReceiptPreview({
       if (!hasUserZoomedRef.current && basePageSizeRef.current) {
         const newFit = fitScale(viewport, basePageSizeRef.current);
         if (Math.abs(newFit - scaleRef.current) > 0.001) {
+          // The canvases still hold the previous scale's layout until the
+          // render effect below (keyed on `scale`) re-renders them, so the
+          // content size for this tick is estimated from the base page size
+          // rather than read from the (stale) layer measurement.
+          const estimatedContent = resolveContentSize(
+            basePageSizeRef.current,
+            content,
+            scaleRef.current,
+            newFit
+          );
           scaleRef.current = newFit;
           setScale(newFit);
+          setMeasuredSize((current) =>
+            current &&
+            current.viewport.w === viewport.w &&
+            current.viewport.h === viewport.h &&
+            current.content.w === estimatedContent.w &&
+            current.content.h === estimatedContent.h
+              ? current
+              : { viewport, content: estimatedContent }
+          );
           return;
         }
       } else {
@@ -373,6 +413,13 @@ export function ReceiptPreview({
       // one ZOOM_STEP per notch, within the same MIN_SCALE/MAX_SCALE bounds
       // as the toolbar. Panning is reserved for drag, touch, and keyboard.
       // zoomWithAnchor returns raw values, so the result is always clamped.
+      const newScale = nextScale(scaleRef.current, event.deltaY < 0 ? 1 : -1);
+      // Already clamped at MIN_SCALE/MAX_SCALE with the wheel direction
+      // pushing further past the bound: nothing to zoom, so leave the event
+      // unprevented and let it fall through to the surrounding scrollable
+      // container (drawer/form) instead of hijacking scroll.
+      if (newScale === scaleRef.current) return;
+
       event.preventDefault();
       hasUserZoomedRef.current = true;
 
@@ -381,14 +428,13 @@ export function ReceiptPreview({
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
       };
-      const newScale = nextScale(scaleRef.current, event.deltaY < 0 ? 1 : -1);
 
-      const estimatedContent = basePageSizeRef.current
-        ? estimateContentSize(basePageSizeRef.current, newScale)
-        : {
-            w: Math.round((measured.content.w / scaleRef.current) * newScale),
-            h: Math.round((measured.content.h / scaleRef.current) * newScale),
-          };
+      const estimatedContent = resolveContentSize(
+        basePageSizeRef.current,
+        measured.content,
+        scaleRef.current,
+        newScale
+      );
 
       const nextPan = zoomWithAnchor(
         panRef.current,
@@ -423,12 +469,7 @@ export function ReceiptPreview({
       return;
     }
     const { viewport, content } = measured;
-    const estimatedContent = basePageSizeRef.current
-      ? estimateContentSize(basePageSizeRef.current, newScale)
-      : {
-          w: Math.round((content.w / scale) * newScale),
-          h: Math.round((content.h / scale) * newScale),
-        };
+    const estimatedContent = resolveContentSize(basePageSizeRef.current, content, scale, newScale);
 
     const anchor = { x: viewport.w / 2, y: viewport.h / 2 };
     const nextPan = zoomWithAnchor(pan, scale, newScale, anchor);

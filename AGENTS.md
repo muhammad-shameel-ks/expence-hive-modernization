@@ -12,8 +12,8 @@
 
 ## Current Work
 
-- What: fixed PDF overlay scrollbars (direction math, track click jump, ARIA 1.2 non-negative scroll semantics), fit-on-open container size re-evaluation on drawer expansion, wheel zoom state synchronization, and React 19 Button composition via Radix Slottable.
-  Prior work: fixed PDF preview pane squeeze and UX polish across timeline, attention list, and drawer actions via slices in `.scratch/pdf-scrollbar-fixes/slices/`.
-- Plan: executed via slices in `.scratch/pdf-scrollbar-fixes/slices/`.
-- Next: review - lint/build green; 502 vitest unit tests passing across 27 test files.
+- What: fixed review-maxxing findings on PR #45 - `basePageSizeRef` is now actually populated so fit-on-open container resize re-evaluation works (was dead code despite being claimed fixed), wheel handler no longer hijacks scroll when already clamped at MIN/MAX scale, deduped the repeated content-size estimate into `resolveContentSize`, and documented why the payment-queue comment-save spinner doesn't use the shared Button `loading` prop (no discrete save trigger).
+  Prior work: fixed PDF overlay scrollbars, fit-on-open zoom, and UX polish via slices in `.scratch/pdf-scrollbar-fixes/slices/`, `.scratch/ux-bugfixes/slices/`, `.scratch/pdf-preview-zoom-layout/slices/`.
+- Plan: executed via slices in `.scratch/review-fixes/slices/`.
+- Next: review - lint/build green; 508 vitest unit tests passing across 29 test files.
 

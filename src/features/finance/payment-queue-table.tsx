@@ -486,6 +486,13 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                               savingCommentFor === claim.id && "pr-7",
                             )}
                           />
+                          {/*
+                           * The shared Button `loading` prop is not used here because there is no
+                           * discrete save trigger to attach it to: the comment save fires on blur/Enter
+                           * of this plain text input, with no adjacent button. `aria-busy` on the input
+                           * (above) carries the loading semantics for assistive tech; this spinner is a
+                           * purely visual affordance layered on top of the input itself.
+                           */}
                           {savingCommentFor === claim.id ? (
                             <LoaderCircle
                               aria-hidden
