@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, List, Network, Search, Users, X } from "lucide-react";
+import { ChevronDown, List, LoaderCircle, Network, Search, Users, X } from "lucide-react";
 import type { AdminDepartment, AdminEmployee, AdminRole } from "@/server/admin/ports";
 import { initials } from "./initials";
 import { OrgTree } from "./org-tree";
@@ -556,9 +556,11 @@ function PersonDrawer({
                 ref={setActiveButtonRef}
                 type="button"
                 disabled={saving || deactivationBlocked}
+                aria-busy={saving}
                 onClick={() => onSetActive(false)}
-                className="h-10 w-full rounded-lg bg-[#a8384d] px-4 text-xs font-bold text-white transition-colors hover:bg-[#8f2f42] disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#a8384d] px-4 text-xs font-bold text-white transition-colors hover:bg-[#8f2f42] disabled:cursor-not-allowed disabled:opacity-50"
               >
+                {saving ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
                 Deactivate account
               </button>
               {blockReason ? (
@@ -572,9 +574,11 @@ function PersonDrawer({
               ref={setActiveButtonRef}
               type="button"
               disabled={saving}
+              aria-busy={saving}
               onClick={() => onSetActive(true)}
-              className="h-10 w-full rounded-lg bg-[#23706b] px-4 text-xs font-bold text-white transition-colors hover:bg-[#1c5a56] disabled:cursor-not-allowed disabled:opacity-50"
+              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#23706b] px-4 text-xs font-bold text-white transition-colors hover:bg-[#1c5a56] disabled:cursor-not-allowed disabled:opacity-50"
             >
+              {saving ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
               Reactivate account
             </button>
           )}

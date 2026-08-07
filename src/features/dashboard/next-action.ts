@@ -10,7 +10,7 @@ export interface NextAction {
 // expense's assigned actor is named (the expense directory) and where the
 // current user's name comes from (e.g. a dev-login label like "Sanil Davis /
 // Manager (IT)"), which would otherwise make "mine" silently false.
-function isCurrentActor(expense: Expense, me: string, meId?: string): boolean {
+export function isCurrentActor(expense: Expense, me: string, meId?: string): boolean {
   if (meId && expense.nextActorId) return expense.nextActorId === meId;
   return !!expense.nextActor && expense.nextActor === me;
 }

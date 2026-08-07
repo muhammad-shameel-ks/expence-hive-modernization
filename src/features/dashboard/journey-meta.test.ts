@@ -156,6 +156,88 @@ describe("getJourneyFlowItems", () => {
     expect(steps[4].actor).toBe("Rishikesh");
   });
 
+  it("marks only the last history event as current and the first pending step as next", () => {
+    const customFlowExpense = {
+      id: "ex-custom",
+      ref: "EXP-CUSTOM",
+      title: "Custom flow claim",
+      category: "Software",
+      amount: 2500,
+      currency: "INR",
+      date: "Aug 5",
+      submittedAt: "2026-08-05T10:00:00Z",
+      status: "in-approval" as const,
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Team Lead", assignedActorName: "Abilash", status: "pending" as const },
+        { id: "s2", roleId: "r2", roleName: "Manager", assignedActorName: "Sanil Davis", status: "pending" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(customFlowExpense);
+    expect(steps[0]).toMatchObject({ isCurrent: true, isNext: false });
+    expect(steps[1]).toMatchObject({ id: "pending-step-s1", isCurrent: false, isNext: true, pending: true });
+    expect(steps[2]).toMatchObject({ id: "pending-step-s2", isCurrent: false, isNext: false, pending: true });
+    expect(steps[3]).toMatchObject({ id: "pending-payment", isCurrent: false, isNext: false, pending: true });
+    expect(steps.filter((s) => s.isCurrent).length).toBe(1);
+    expect(steps.filter((s) => s.isNext).length).toBe(1);
+  });
+
+  it("marks the first synthetic pending step as next in the fallback branch", () => {
+    const expense = {
+      id: "ex-fallback",
+      ref: "EXP-FALLBACK",
+      title: "Fallback flow",
+      category: "Travel",
+      amount: 400,
+      currency: "INR",
+      date: "Aug 4",
+      submittedAt: "2026-08-04T10:00:00Z",
+      status: "in-finance" as const,
+      nextStage: "Finance verification",
+      nextActor: "Finance Officer",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 4", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 4", actor: "Manager", kind: "approved" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    expect(steps[1]).toMatchObject({ isCurrent: true, isNext: false });
+    expect(steps[2]).toMatchObject({ id: "pending-verification", isCurrent: false, isNext: true, pending: true });
+    expect(steps[3]).toMatchObject({ id: "pending-payment", isCurrent: false, isNext: false, pending: true });
+    expect(steps.filter((s) => s.isNext).length).toBe(1);
+  });
+
+  it("marks no step as current or next for terminal expenses", () => {
+    const paidExpense = {
+      id: "ex-paid",
+      ref: "EXP-PAID",
+      title: "Paid claim",
+      category: "Travel",
+      amount: 500,
+      currency: "INR",
+      date: "Aug 1",
+      submittedAt: "2026-08-01T10:00:00Z",
+      status: "paid" as const,
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 1", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 1", actor: "Manager", kind: "approved" as const },
+        { id: "h3", date: "Aug 2", actor: "Finance", kind: "verified" as const },
+        { id: "h4", date: "Aug 2", actor: "Finance", kind: "paid" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(paidExpense);
+    expect(steps.length).toBe(4);
+    expect(steps.every((s) => !s.isCurrent && !s.isNext)).toBe(true);
+  });
+
   it("marks a history entry as isMine by actor id even when the display name differs", () => {
     const expense = {
       id: "ex-mine",

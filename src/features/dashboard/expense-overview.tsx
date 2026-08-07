@@ -23,10 +23,12 @@ const RECENT_COUNT = 5;
 
 export function ExpenseOverview({
   expenses,
+  currentUser,
   currentUserId,
   onOpen,
 }: {
   expenses: Expense[];
+  currentUser: string;
   currentUserId?: string;
   onOpen: (expense: Expense) => void;
 }) {
@@ -46,7 +48,10 @@ export function ExpenseOverview({
     [ownExpenses],
   );
 
-  const { pending } = useMemo(() => groupAttentionItems(expenses), [expenses]);
+  const { pending } = useMemo(
+    () => groupAttentionItems(expenses, currentUser, currentUserId),
+    [expenses, currentUser, currentUserId],
+  );
   const attentionItems = useMemo(
     () => [...pending].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0)),
     [pending],

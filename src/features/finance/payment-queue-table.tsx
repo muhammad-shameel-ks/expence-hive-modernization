@@ -4,7 +4,7 @@
 // filterable by awaiting-payment/paid, category, amount range, and submitted date range.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, FileText, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowUpDown, FileText, LoaderCircle, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
@@ -467,20 +467,32 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                       <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
                       <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
                       <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          defaultValue={commentValue}
-                          placeholder="Add a comment…"
-                          aria-label={`Comment for ${claim.ref}`}
-                          disabled={savingCommentFor === claim.id}
-                          onBlur={(e) => {
-                            if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                          }}
-                          className="h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            defaultValue={commentValue}
+                            placeholder="Add a comment…"
+                            aria-label={`Comment for ${claim.ref}`}
+                            aria-busy={savingCommentFor === claim.id || undefined}
+                            disabled={savingCommentFor === claim.id}
+                            onBlur={(e) => {
+                              if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                            }}
+                            className={cn(
+                              "h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30",
+                              savingCommentFor === claim.id && "pr-7",
+                            )}
+                          />
+                          {savingCommentFor === claim.id ? (
+                            <LoaderCircle
+                              aria-hidden
+                              className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 animate-spin text-muted-foreground"
+                            />
+                          ) : null}
+                        </div>
                       </td>
                     </tr>
                   );

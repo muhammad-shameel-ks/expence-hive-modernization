@@ -87,7 +87,12 @@ export function ExpenseDashboard({
         ))}
       </section>
 
-      <ExpenseOverview expenses={expenses} currentUserId={currentUserId} onOpen={openExpense} />
+      <ExpenseOverview
+        expenses={expenses}
+        currentUser={currentUser}
+        currentUserId={currentUserId}
+        onOpen={openExpense}
+      />
 
       <MyActivity items={activity} onOpen={openActivityClaim} loadingClaimId={loadingClaimId} />
 

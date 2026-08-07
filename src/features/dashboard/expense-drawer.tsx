@@ -3,9 +3,11 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { motion, useReducedMotion } from "motion/react";
 import { AlertTriangle, ArrowUpRight, Paperclip, X, type LucideIcon } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { EASE_OUT } from "@/lib/ease";
 import {
   Timeline,
   TimelineContent,
@@ -27,6 +29,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ME, STATUS_META, type Expense } from "./mock-data";
 import { isTerminal, nextActionFor } from "./next-action";
+import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
 import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 
 export interface JourneyFlowStep {
@@ -38,6 +41,7 @@ export interface JourneyFlowStep {
   tone: TimelineTone;
   icon: LucideIcon;
   isCurrent: boolean;
+  isNext: boolean;
   pending: boolean;
   isMine: boolean;
 }
@@ -60,6 +64,7 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
       tone: meta.tone,
       icon: meta.icon,
       isCurrent,
+      isNext: false,
       pending: false,
       isMine: isMine(event.actor, event.actorId),
     };
@@ -81,6 +86,7 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
       tone: "info",
       icon: KIND_META.submitted.icon,
       isCurrent: false,
+      isNext: false,
       pending: true,
       isMine: false,
     });
@@ -88,7 +94,7 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
 
   if (expense.steps && expense.steps.length > 0) {
     const remaining = expense.steps.filter((s) => s.status === "pending" || s.status === "verified");
-    remaining.forEach((step, idx) => {
+    remaining.forEach((step) => {
       const isFinance = step.roleName.toLowerCase().includes("finance") || step.roleName.toLowerCase().includes("treasury");
       pendingSteps.push({
         id: `pending-step-${step.id}`,
@@ -98,7 +104,8 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
         detail: isFinance ? `Pending ${step.roleName} verification` : `Pending ${step.roleName} decision`,
         tone: isFinance ? "primary" : "success",
         icon: isFinance ? KIND_META.verified.icon : KIND_META.approved.icon,
-        isCurrent: idx === 0,
+        isCurrent: false,
+        isNext: false,
         pending: true,
         isMine: false,
       });
@@ -114,85 +121,91 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
         tone: "success",
         icon: KIND_META.paid.icon,
         isCurrent: false,
+        isNext: false,
+        pending: true,
+        isMine: false,
+      });
+    }
+  } else {
+    const needsApprovalStep =
+      expense.status === "in-approval" ||
+      expense.status === "submitted" ||
+      expense.status === "draft" ||
+      (!historyKinds.has("approved") &&
+        !historyKinds.has("takeover") &&
+        expense.status !== "approved" &&
+        expense.status !== "in-finance" &&
+        expense.status !== "paid" &&
+        expense.status !== "rejected");
+
+    if (needsApprovalStep) {
+      pendingSteps.push({
+        id: "pending-approval",
+        label:
+          expense.nextStage && (expense.status === "in-approval" || expense.status === "submitted")
+            ? expense.nextStage
+            : "Manager approval",
+        date: "Pending",
+        actor:
+          expense.nextActor && (expense.status === "in-approval" || expense.status === "submitted")
+            ? expense.nextActor
+            : "Approver",
+        detail: "Pending approval decision",
+        tone: "success",
+        icon: KIND_META.approved.icon,
+        isCurrent: false,
+        isNext: false,
         pending: true,
         isMine: false,
       });
     }
 
-    return [...historySteps, ...pendingSteps];
-  }
-
-  const needsApprovalStep =
-    expense.status === "in-approval" ||
-    expense.status === "submitted" ||
-    expense.status === "draft" ||
-    (!historyKinds.has("approved") &&
-      !historyKinds.has("takeover") &&
-      expense.status !== "approved" &&
-      expense.status !== "in-finance" &&
+    const needsVerificationStep =
       expense.status !== "paid" &&
-      expense.status !== "rejected");
+      expense.status !== "rejected" &&
+      (!historyKinds.has("verified") || expense.status === "in-finance");
 
-  if (needsApprovalStep) {
-    pendingSteps.push({
-      id: "pending-approval",
-      label:
-        expense.nextStage && (expense.status === "in-approval" || expense.status === "submitted")
-          ? expense.nextStage
-          : "Manager approval",
-      date: "Pending",
-      actor:
-        expense.nextActor && (expense.status === "in-approval" || expense.status === "submitted")
-          ? expense.nextActor
-          : "Approver",
-      detail: "Pending approval decision",
-      tone: "success",
-      icon: KIND_META.approved.icon,
-      isCurrent: false,
-      pending: true,
-      isMine: false,
-    });
+    if (needsVerificationStep) {
+      pendingSteps.push({
+        id: "pending-verification",
+        label:
+          expense.nextStage && expense.status === "in-finance"
+            ? expense.nextStage
+            : "Finance verification",
+        date: "Pending",
+        actor:
+          expense.nextActor && expense.status === "in-finance"
+            ? expense.nextActor
+            : "Finance Officer",
+        detail: "Pending Finance verification",
+        tone: "primary",
+        icon: KIND_META.verified.icon,
+        isCurrent: false,
+        isNext: false,
+        pending: true,
+        isMine: false,
+      });
+    }
+
+    if (!historyKinds.has("paid") && expense.status !== "rejected") {
+      pendingSteps.push({
+        id: "pending-payment",
+        label: "Paid",
+        date: "Pending",
+        actor: "Finance / Treasury",
+        detail: "Pending payment disbursement",
+        tone: "success",
+        icon: KIND_META.paid.icon,
+        isCurrent: false,
+        isNext: false,
+        pending: true,
+        isMine: false,
+      });
+    }
   }
 
-  const needsVerificationStep =
-    expense.status !== "paid" &&
-    expense.status !== "rejected" &&
-    (!historyKinds.has("verified") || expense.status === "in-finance");
-
-  if (needsVerificationStep) {
-    pendingSteps.push({
-      id: "pending-verification",
-      label:
-        expense.nextStage && expense.status === "in-finance"
-          ? expense.nextStage
-          : "Finance verification",
-      date: "Pending",
-      actor:
-        expense.nextActor && expense.status === "in-finance"
-          ? expense.nextActor
-          : "Finance Officer",
-      detail: "Pending Finance verification",
-      tone: "primary",
-      icon: KIND_META.verified.icon,
-      isCurrent: false,
-      pending: true,
-      isMine: false,
-    });
-  }
-
-  if (!historyKinds.has("paid") && expense.status !== "rejected") {
-    pendingSteps.push({
-      id: "pending-payment",
-      label: "Paid",
-      date: "Pending",
-      actor: "Finance / Treasury",
-      detail: "Pending payment disbursement",
-      tone: "success",
-      icon: KIND_META.paid.icon,
-      isCurrent: false,
-      pending: true,
-      isMine: false,
-    });
+  if (pendingSteps.length > 0) {
+    pendingSteps[0].isNext = true;
   }
 
   return [...historySteps, ...pendingSteps];
@@ -228,8 +241,12 @@ export function ExpenseDrawer({
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [acting, setActing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [navigatingDraft, setNavigatingDraft] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
   const router = useRouter();
+  const reduce = useReducedMotion();
 
   // Close the inline receipt preview whenever the drawer switches to a
   // different expense so stale documents are never shown. The id is
@@ -240,7 +257,19 @@ export function ExpenseDrawer({
   if (currentExpenseId !== previousExpenseId) {
     setPreviousExpenseId(currentExpenseId);
     setReceiptOpen(false);
+    setActionError(null);
   }
+
+  function handleOpenChange(next: boolean) {
+    if (!next) setActionError(null);
+    onOpenChange(next);
+  }
+
+  // Expenses with an available PDF receipt get the two-pane drawer with the
+  // receipt auto-mounted on the left; everything else keeps the single
+  // column and the manual "View receipt" toggle.
+  const pdfAttachment = expense ? firstPdfAttachment(expense.attachments) : undefined;
+  const hasPdf = expense ? hasAvailablePdf(expense.attachments, expense.attachmentAvailable) : false;
 
   const statusMeta = expense ? STATUS_META[expense.status] : null;
   const terminal = expense ? isTerminal(expense.status) : false;
@@ -261,16 +290,33 @@ export function ExpenseDrawer({
     !!next?.mine && (expense?.primaryAction === "approve" || expense?.primaryAction === "verify");
 
   async function performAction() {
-    if (!expense?.primaryAction || !next?.mine) return;
-    const response = await fetch(`/api/expenses/${expense.id}/${expense.primaryAction}`, { method: "POST" });
-    if (response.ok) window.location.reload();
+    if (!expense?.primaryAction || !next?.mine || acting) return;
+    setActing(true);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/expenses/${expense.id}/${expense.primaryAction}`, { method: "POST" });
+      if (response.ok) {
+        window.location.reload();
+        return;
+      }
+      const body = await response.json().catch(() => null);
+      setActionError(body?.message ?? "The action could not be completed. Please try again.");
+    } catch {
+      setActionError("Could not reach the server. Check your connection and try again.");
+    } finally {
+      setActing(false);
+    }
   }
 
   // Drafts are not routed to any stage: the primary action resumes the
   // receipt-first flow with the draft pre-filled.
   function continueDraft() {
-    if (!expense) return;
-    router.push(`/expenses/new?id=${encodeURIComponent(expense.id)}`);
+    if (!expense || navigatingDraft) return;
+    setNavigatingDraft(true);
+    // Safety net: if navigation is interrupted, the button must not stay
+    // stuck in its loading state forever.
+    window.setTimeout(() => setNavigatingDraft(false), 3000);
+    void router.push(`/expenses/new?id=${encodeURIComponent(expense.id)}`);
   }
 
   function openDeleteDraft() {
@@ -329,13 +375,191 @@ export function ExpenseDrawer({
     }
   }
 
+  // The amount, facts, next action, journey, and attachment chips shared by
+  // both layouts. Only the non-PDF layout additionally renders the "View
+  // receipt" toggle below the chips.
+  const detailsColumn = expense ? (
+    <>
+      <div className="flex items-end justify-between gap-4">
+        <div>
+          <p className="text-xs font-medium text-muted-foreground">Amount</p>
+          <p className="mt-1 text-3xl font-semibold tracking-tight text-foreground">
+            {formatMoney(expense.amount, expense.currency)}
+          </p>
+        </div>
+        <div className="text-right text-xs text-muted-foreground">
+          <p>Submitted {submittedLabel(expense.submittedAt)}</p>
+          <p className="mt-1">
+            {expense.permission ? `Linked to ${expense.permission}` : "No pre-approval"}
+          </p>
+        </div>
+      </div>
+
+      <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 rounded-xl border border-border bg-muted/40 p-4 text-sm">
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Category</dt>
+          <dd className="mt-1 font-medium text-foreground">{expense.category}</dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Current stage</dt>
+          <dd className="mt-1 font-medium text-foreground">
+            {expense.nextStage ?? statusMeta!.label}
+          </dd>
+        </div>
+        <div>
+          <dt className="text-xs font-medium text-muted-foreground">Responsible</dt>
+          <dd className="mt-1 flex items-center gap-2 font-medium text-foreground">
+            {expense.nextActor ? (
+              <>
+                <Avatar className="h-5 w-5">
+                  <AvatarFallback className="bg-primary/10 text-[9px] text-primary">
+                    {initials(expense.nextActor)}
+                  </AvatarFallback>
+                </Avatar>
+                {expense.nextActor}
+              </>
+            ) : (
+              "None"
+            )}
+          </dd>
+        </div>
+      </dl>
+
+      <section className="mt-6" aria-label="What happens next">
+        <h3 className="text-sm font-semibold text-foreground">What happens next</h3>
+        {terminal ? (
+          <div className="mt-2 rounded-xl border border-border bg-card p-4 text-sm">
+            <p className="text-muted-foreground">
+              {expense.status === "rejected"
+                ? "This claim was rejected and cannot be edited or resubmitted. Submit a new claim if the expense is still valid."
+                : `This expense is ${statusMeta!.label.toLowerCase()}. No action is required.`}
+            </p>
+            {expense.status === "rejected" && expense.blockingReason ? (
+              <p className="mt-2 flex gap-2 text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                {expense.blockingReason}
+              </p>
+            ) : null}
+          </div>
+        ) : (
+          <div
+            className={cn(
+              "mt-2 rounded-xl border p-4 text-sm",
+              next!.mine
+                ? "border-amber-300/60 bg-amber-50/70"
+                : "border-border bg-card",
+            )}
+          >
+            <p className="font-medium text-foreground">{next!.label}</p>
+            <p className="mt-1 text-muted-foreground">
+              {next!.mine
+                ? "Waiting on you."
+                : `Waiting on ${next!.actor ?? "the next approver"}.`}
+            </p>
+            {expense.blockingReason ? (
+              <p className="mt-2 flex gap-2 text-amber-700 dark:text-amber-400">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                {expense.blockingReason}
+              </p>
+            ) : null}
+          </div>
+        )}
+      </section>
+
+      <section className="mt-6" aria-label="Expense journey">
+        <h3 className="text-sm font-semibold text-foreground">Journey</h3>
+        <Timeline position="right" className="mt-4">
+          {getJourneyFlowItems(expense, currentUser, currentUserId).map((step) => {
+            const Icon = step.icon;
+            const isPendingStep = step.pending && !step.isNext;
+            return (
+              <TimelineItem key={step.id} pending={isPendingStep}>
+                <TimelineSeparator>
+                  <TimelineDot
+                    tone={step.tone}
+                    current={step.isCurrent}
+                    next={step.isNext}
+                    pending={isPendingStep}
+                  >
+                    <Icon />
+                  </TimelineDot>
+                </TimelineSeparator>
+                <TimelineContent>
+                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
+                    <div className="flex items-center gap-1.5">
+                      <p className={cn("text-sm font-medium", isPendingStep ? "text-muted-foreground" : "text-foreground")}>
+                        {step.label}
+                      </p>
+                      {step.isMine ? (
+                        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
+                          You
+                        </span>
+                      ) : null}
+                    </div>
+                    <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
+                  </div>
+                  <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
+                  {step.detail ? (
+                    <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
+                  ) : null}
+                </TimelineContent>
+              </TimelineItem>
+            );
+          })}
+        </Timeline>
+      </section>
+
+      {expense.attachments.length > 0 ? (
+        <section className="mt-6" aria-label="Attachments">
+          <h3 className="text-sm font-semibold text-foreground">Attachments</h3>
+          <ul className="mt-2 flex flex-wrap gap-2">
+            {expense.attachments.map((file) => (
+              <li key={file}>
+                <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
+                  <Paperclip className="h-3 w-3" />
+                  {file}
+                </span>
+              </li>
+            ))}
+          </ul>
+          {!hasPdf && hasAvailableAttachment(expense.attachmentAvailable) ? (
+            <>
+              <Button
+                variant="outline"
+                size="sm"
+                className="mt-3"
+                aria-expanded={receiptOpen}
+                onClick={() => setReceiptOpen((open) => !open)}
+              >
+                {receiptOpen ? "Hide receipt" : "View receipt"}
+              </Button>
+              {receiptOpen ? (
+                <div className="mt-3">
+                  <ReceiptPreview
+                    key={expense.id}
+                    claimId={expense.id}
+                    fileName={expense.attachments[0]}
+                  />
+                </div>
+              ) : null}
+            </>
+          ) : null}
+        </section>
+      ) : null}
+    </>
+  ) : null;
+
   return (
     <Drawer
       open={open}
-      onOpenChange={onOpenChange}
+      onOpenChange={handleOpenChange}
       side="right"
       ariaLabel={expense ? `Expense details: ${expense.title}` : "Expense details"}
-      className="w-full sm:w-[560px] sm:max-w-[94vw]"
+      className={
+        hasPdf
+          ? "w-full transition-[width] duration-300 ease-out sm:w-[560px] sm:max-w-[94vw] lg:w-[1040px] lg:max-w-[96vw]"
+          : "w-full transition-[width] duration-300 ease-out sm:w-[560px] sm:max-w-[94vw]"
+      }
     >
       {expense && statusMeta && next ? (
         <>
@@ -364,194 +588,78 @@ export function ExpenseDrawer({
             </button>
           </header>
 
-          <div className="flex-1 overflow-y-auto px-6 py-6">
-            <div className="flex items-end justify-between gap-4">
-              <div>
-                <p className="text-xs font-medium text-muted-foreground">Amount</p>
-                <p className="mt-1 text-3xl font-semibold tracking-tight text-foreground">
-                  {formatMoney(expense.amount, expense.currency)}
-                </p>
-              </div>
-              <div className="text-right text-xs text-muted-foreground">
-                <p>Submitted {submittedLabel(expense.submittedAt)}</p>
-                <p className="mt-1">
-                  {expense.permission ? `Linked to ${expense.permission}` : "No pre-approval"}
-                </p>
-              </div>
-            </div>
-
-            <dl className="mt-6 grid grid-cols-2 gap-x-6 gap-y-4 rounded-xl border border-border bg-muted/40 p-4 text-sm">
-              <div>
-                <dt className="text-xs font-medium text-muted-foreground">Category</dt>
-                <dd className="mt-1 font-medium text-foreground">{expense.category}</dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium text-muted-foreground">Current stage</dt>
-                <dd className="mt-1 font-medium text-foreground">
-                  {expense.nextStage ?? statusMeta.label}
-                </dd>
-              </div>
-              <div>
-                <dt className="text-xs font-medium text-muted-foreground">Responsible</dt>
-                <dd className="mt-1 flex items-center gap-2 font-medium text-foreground">
-                  {expense.nextActor ? (
-                    <>
-                      <Avatar className="h-5 w-5">
-                        <AvatarFallback className="bg-primary/10 text-[9px] text-primary">
-                          {initials(expense.nextActor)}
-                        </AvatarFallback>
-                      </Avatar>
-                      {expense.nextActor}
-                    </>
-                  ) : (
-                    "None"
-                  )}
-                </dd>
-              </div>
-            </dl>
-
-            <section className="mt-6" aria-label="What happens next">
-              <h3 className="text-sm font-semibold text-foreground">What happens next</h3>
-              {terminal ? (
-                <div className="mt-2 rounded-xl border border-border bg-card p-4 text-sm">
-                  <p className="text-muted-foreground">
-                    {expense.status === "rejected"
-                      ? "This claim was rejected and cannot be edited or resubmitted. Submit a new claim if the expense is still valid."
-                      : `This expense is ${statusMeta.label.toLowerCase()}. No action is required.`}
-                  </p>
-                  {expense.status === "rejected" && expense.blockingReason ? (
-                    <p className="mt-2 flex gap-2 text-amber-700 dark:text-amber-400">
-                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                      {expense.blockingReason}
-                    </p>
-                  ) : null}
-                </div>
-              ) : (
-                <div
-                  className={cn(
-                    "mt-2 rounded-xl border p-4 text-sm",
-                    next.mine
-                      ? "border-amber-300/60 bg-amber-50/70"
-                      : "border-border bg-card",
-                  )}
-                >
-                  <p className="font-medium text-foreground">{next.label}</p>
-                  <p className="mt-1 text-muted-foreground">
-                    {next.mine
-                      ? "Waiting on you."
-                      : `Waiting on ${next.actor ?? "the next approver"}.`}
-                  </p>
-                  {expense.blockingReason ? (
-                    <p className="mt-2 flex gap-2 text-amber-700 dark:text-amber-400">
-                      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                      {expense.blockingReason}
-                    </p>
-                  ) : null}
-                </div>
-              )}
-            </section>
-
-            <section className="mt-6" aria-label="Expense journey">
-              <h3 className="text-sm font-semibold text-foreground">Journey</h3>
-              <Timeline position="right" className="mt-4">
-                {getJourneyFlowItems(expense, currentUser, currentUserId).map((step) => {
-                  const Icon = step.icon;
-                  return (
-                    <TimelineItem key={step.id} pending={step.pending}>
-                      <TimelineSeparator>
-                        <TimelineDot tone={step.tone} current={step.isCurrent} pending={step.pending}>
-                          <Icon />
-                        </TimelineDot>
-                      </TimelineSeparator>
-                      <TimelineContent>
-                        <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-                          <div className="flex items-center gap-1.5">
-                            <p className={cn("text-sm font-medium", step.pending ? "text-muted-foreground" : "text-foreground")}>
-                              {step.label}
-                            </p>
-                            {step.isMine ? (
-                              <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                                You
-                              </span>
-                            ) : null}
-                          </div>
-                          <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
-                        </div>
-                        <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
-                        {step.detail ? (
-                          <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
-                        ) : null}
-                      </TimelineContent>
-                    </TimelineItem>
-                  );
-                })}
-              </Timeline>
-            </section>
-
-            {expense.attachments.length > 0 ? (
-              <section className="mt-6" aria-label="Attachments">
-                <h3 className="text-sm font-semibold text-foreground">Attachments</h3>
-                <ul className="mt-2 flex flex-wrap gap-2">
-                  {expense.attachments.map((file) => (
-                    <li key={file}>
-                      <span className="inline-flex items-center gap-1.5 rounded-full border border-border bg-card px-3 py-1.5 text-xs font-medium text-muted-foreground">
-                        <Paperclip className="h-3 w-3" />
-                        {file}
-                      </span>
-                    </li>
-                  ))}
-                </ul>
-                {expense.attachmentAvailable !== false ? (
-                  <>
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      className="mt-3"
-                      aria-expanded={receiptOpen}
-                      onClick={() => setReceiptOpen((open) => !open)}
-                    >
-                      {receiptOpen ? "Hide receipt" : "View receipt"}
-                    </Button>
-                    {receiptOpen ? (
-                      <div className="mt-3">
-                        <ReceiptPreview
-                          key={expense.id}
-                          claimId={expense.id}
-                          fileName={expense.attachments[0]}
-                        />
-                      </div>
-                    ) : null}
-                  </>
-                ) : null}
-              </section>
-            ) : null}
-          </div>
-
-          <footer className="flex items-center gap-3 border-t border-border bg-card px-6 py-4">
-            {expense.status === "draft" ? (
+          <div
+            className={cn(
+              "flex-1 px-6 py-6",
+              hasPdf
+                ? "overflow-y-auto lg:flex lg:flex-row lg:gap-5 lg:overflow-hidden"
+                : "overflow-y-auto",
+            )}
+          >
+            {hasPdf && pdfAttachment ? (
               <>
-                <Button className="flex-1" onClick={continueDraft}>
-                  Continue draft
-                  <ArrowUpRight className="h-3.5 w-3.5" />
-                </Button>
-                <Button variant="destructive" onClick={openDeleteDraft}>
-                  Delete draft
-                </Button>
+                <motion.section
+                  aria-label="Receipt preview"
+                  initial={reduce ? { opacity: 0 } : { x: 24, opacity: 0 }}
+                  animate={reduce ? { opacity: 1 } : { x: 0, opacity: 1 }}
+                  transition={
+                    reduce ? { duration: 0.2, ease: EASE_OUT } : { duration: 0.3, ease: EASE_OUT }
+                  }
+                  className="lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-1"
+                >
+                  <ReceiptPreview
+                    key={expense.id}
+                    claimId={expense.id}
+                    fileName={pdfAttachment}
+                    className="h-[45vh] lg:h-full"
+                  />
+                </motion.section>
+                <div className="lg:h-full lg:min-h-0 lg:min-w-0 lg:flex-1 lg:overflow-y-auto">
+                  {detailsColumn}
+                </div>
               </>
             ) : (
-              <>
-                <Button className="flex-1" disabled={!expense.primaryAction || !next.mine} onClick={performAction}>{actionLabel}</Button>
-                {canReject ? (
-                  <Button variant="destructive" onClick={openReject}>
-                    Reject
-                  </Button>
-                ) : null}
-              </>
+              detailsColumn
             )}
-            <Button variant="outline" className="gap-1.5">
-              Full record
-              <ArrowUpRight className="h-3.5 w-3.5" />
-            </Button>
+          </div>
+
+          <footer className="border-t border-border bg-card px-6 py-4">
+            {actionError ? (
+              <p role="status" className="mb-3 text-xs text-destructive">{actionError}</p>
+            ) : null}
+            <div className="flex items-center gap-3">
+              {expense.status === "draft" ? (
+                <>
+                  <Button className="flex-1" loading={navigatingDraft} onClick={continueDraft}>
+                    Continue draft
+                    <ArrowUpRight className="h-3.5 w-3.5" />
+                  </Button>
+                  <Button variant="destructive" onClick={openDeleteDraft}>
+                    Delete draft
+                  </Button>
+                </>
+              ) : (
+                <>
+                  <Button
+                    className="flex-1"
+                    disabled={!expense.primaryAction || !next.mine || acting}
+                    loading={acting}
+                    onClick={performAction}
+                  >
+                    {actionLabel}
+                  </Button>
+                  {canReject ? (
+                    <Button variant="destructive" onClick={openReject}>
+                      Reject
+                    </Button>
+                  ) : null}
+                </>
+              )}
+              <Button variant="outline" className="gap-1.5">
+                Full record
+                <ArrowUpRight className="h-3.5 w-3.5" />
+              </Button>
+            </div>
           </footer>
         </>
       ) : null}
@@ -583,8 +691,8 @@ export function ExpenseDrawer({
             <Button variant="outline" onClick={() => setRejectOpen(false)} disabled={rejecting}>
               Cancel
             </Button>
-            <Button variant="destructive" onClick={performReject} disabled={rejecting}>
-              {rejecting ? "Rejecting…" : "Reject permanently"}
+            <Button variant="destructive" onClick={performReject} loading={rejecting}>
+              Reject permanently
             </Button>
           </div>
         </DialogContent>
@@ -604,8 +712,8 @@ export function ExpenseDrawer({
             <Button variant="outline" onClick={() => setDeleteOpen(false)} disabled={deleting}>
               Keep draft
             </Button>
-            <Button variant="destructive" onClick={performDeleteDraft} disabled={deleting}>
-              {deleting ? "Deleting…" : "Delete permanently"}
+            <Button variant="destructive" onClick={performDeleteDraft} loading={deleting}>
+              Delete permanently
             </Button>
           </div>
         </DialogContent>
