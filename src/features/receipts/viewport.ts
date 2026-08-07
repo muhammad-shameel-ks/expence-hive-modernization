@@ -13,7 +13,7 @@ export const MIN_SCALE = 0.25;
 export const MAX_SCALE = 3;
 export const ZOOM_STEP = 0.25;
 
-function clamp(value: number, min: number, max: number): number {
+export function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
@@ -30,6 +30,13 @@ export function fitScale(viewport: Size, page: Size): number {
     MIN_SCALE,
     MAX_SCALE
   );
+}
+
+export function estimateContentSize(basePageSize: Size, scale: number): Size {
+  return {
+    w: Math.round(basePageSize.w * scale),
+    h: Math.round(basePageSize.h * scale),
+  };
 }
 
 export function initialPan(viewport: Size, content: Size): Point {
@@ -77,13 +84,13 @@ function axisScrollbarMetrics(
   contentDim: number,
   margin: number,
   trackLength: number
-): { minPan: number; rangeLength: number; size: number; travel: number } {
+): { minPan: number; maxPan: number; rangeLength: number; size: number; travel: number } {
   const minPan = margin - contentDim;
   const maxPan = viewportDim - margin;
   const rangeLength = maxPan - minPan;
   const size =
     rangeLength <= 0 ? trackLength : (trackLength * viewportDim) / (viewportDim + rangeLength);
-  return { minPan, rangeLength, size, travel: trackLength - size };
+  return { minPan, maxPan, rangeLength, size, travel: trackLength - size };
 }
 
 export function scrollbarThumb(
@@ -100,7 +107,7 @@ export function scrollbarThumb(
       metrics.rangeLength <= 0
         ? 0
         : clamp(
-            ((clamped[axis] - metrics.minPan) / metrics.rangeLength) * metrics.travel,
+            (1 - (clamped[axis] - metrics.minPan) / metrics.rangeLength) * metrics.travel,
             0,
             metrics.travel
           );
@@ -123,13 +130,34 @@ export function panFromThumb(
 ): Point {
   const perAxis = (dim: "w" | "h", offset: number): number => {
     const metrics = axisScrollbarMetrics(viewport[dim], content[dim], margin, track[dim]);
-    if (metrics.rangeLength <= 0 || metrics.travel <= 0) return metrics.minPan;
+    if (metrics.rangeLength <= 0 || metrics.travel <= 0) return metrics.maxPan;
     return (
-      metrics.minPan + (clamp(offset, 0, metrics.travel) / metrics.travel) * metrics.rangeLength
+      metrics.maxPan - (clamp(offset, 0, metrics.travel) / metrics.travel) * metrics.rangeLength
     );
   };
   return {
     x: perAxis("w", thumb.offsetX),
     y: perAxis("h", thumb.offsetY),
   };
+}
+
+export interface AriaScrollMetrics {
+  min: number;
+  max: number;
+  now: number;
+}
+
+export function ariaScrollMetrics(
+  viewportDim: number,
+  contentDim: number,
+  pan: number,
+  margin = PAN_MARGIN
+): AriaScrollMetrics {
+  const minPan = margin - contentDim;
+  const maxPan = viewportDim - margin;
+  const range = maxPan - minPan;
+  const max = Math.round(Math.max(0, range));
+  const clampedPan = clamp(pan, minPan, maxPan);
+  const now = Math.round(clamp(maxPan - clampedPan, 0, max));
+  return { min: 0, max, now };
 }

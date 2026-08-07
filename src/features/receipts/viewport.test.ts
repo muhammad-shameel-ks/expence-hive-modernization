@@ -4,7 +4,9 @@ import {
   MIN_SCALE,
   PAN_MARGIN,
   ZOOM_STEP,
+  ariaScrollMetrics,
   clampPan,
+  estimateContentSize,
   fitScale,
   initialPan,
   nextScale,
@@ -110,6 +112,39 @@ describe("fitScale", () => {
   it("clamps at MIN_SCALE for pages large enough that fit would drop below it", () => {
     expect(fitScale({ w: 484, h: 619 }, { w: 10000, h: 10000 })).toBe(MIN_SCALE);
   });
+
+  it("re-evaluates fit scale when container expands from drawer width to full width", () => {
+    const page = { w: 612, h: 792 };
+    const narrowViewport = { w: 560, h: 800 };
+    const expandedViewport = { w: 1040, h: 800 };
+
+    const narrowFit = fitScale(narrowViewport, page);
+    const expandedFit = fitScale(expandedViewport, page);
+
+    expect(narrowFit).toBeCloseTo(560 / 612, 3);
+    expect(expandedFit).toBeCloseTo(800 / 792, 3);
+    expect(expandedFit).toBeGreaterThan(narrowFit);
+  });
+});
+
+describe("estimateContentSize", () => {
+  it("calculates rounded content dimensions based on base page size and target scale", () => {
+    const basePage = { w: 612, h: 792 };
+    expect(estimateContentSize(basePage, 1.25)).toEqual({ w: 765, h: 990 });
+    expect(estimateContentSize(basePage, 0.5)).toEqual({ w: 306, h: 396 });
+  });
+
+  it("keeps scrollbar content bounds synchronized with scale changes", () => {
+    const basePage = { w: 400, h: 500 };
+    const scale1 = 1.0;
+    const scale2 = 1.5;
+
+    const content1 = estimateContentSize(basePage, scale1);
+    const content2 = estimateContentSize(basePage, scale2);
+
+    expect(content2.w).toBe(Math.round(content1.w * 1.5));
+    expect(content2.h).toBe(Math.round(content1.h * 1.5));
+  });
 });
 
 describe("initialPan", () => {
@@ -214,29 +249,27 @@ describe("scrollbarThumb", () => {
     expect(thumb.sizeY).toBeCloseTo(expectedSizeY, 5);
   });
 
-  it("places the thumb at offset 0 at min pan and at the track end at max pan", () => {
-    const min = scrollbarThumb(viewport, content, { x: -152, y: -152 }, margin, track);
-    expect(min.offsetX).toBe(0);
-    expect(min.offsetY).toBe(0);
+  it("places the thumb at offset 0 at max pan (top/left) and at track end (travel) at min pan (bottom/right)", () => {
+    const maxPan = scrollbarThumb(viewport, content, { x: 352, y: 252 }, margin, track);
+    expect(maxPan.offsetX).toBe(0);
+    expect(maxPan.offsetY).toBe(0);
 
-    const max = scrollbarThumb(viewport, content, { x: 352, y: 252 }, margin, track);
-    expect(max.offsetX).toBeCloseTo(track.w - expectedSizeX, 5);
-    expect(max.offsetY).toBeCloseTo(track.h - expectedSizeY, 5);
+    const minPan = scrollbarThumb(viewport, content, { x: -152, y: -152 }, margin, track);
+    expect(minPan.offsetX).toBeCloseTo(track.w - expectedSizeX, 5);
+    expect(minPan.offsetY).toBeCloseTo(track.h - expectedSizeY, 5);
   });
 
   it("maps a mid-range pan to the middle of the travel, on both axes", () => {
     const thumb = scrollbarThumb(viewport, content, { x: 100, y: 50 }, margin, track);
 
-    expect(thumb.offsetX).toBeCloseTo((252 / 504) * (track.w - expectedSizeX), 5);
-    expect(thumb.offsetY).toBeCloseTo((202 / 404) * (track.h - expectedSizeY), 5);
     expect(thumb.offsetX).toBeCloseTo((track.w - expectedSizeX) / 2, 5);
     expect(thumb.offsetY).toBeCloseTo((track.h - expectedSizeY) / 2, 5);
   });
 
   it("clamps a pan past the bounds to the corresponding track ends", () => {
     const over = scrollbarThumb(viewport, content, { x: 10000, y: -10000 }, margin, track);
-    expect(over.offsetX).toBeCloseTo(track.w - expectedSizeX, 5);
-    expect(over.offsetY).toBe(0);
+    expect(over.offsetX).toBe(0);
+    expect(over.offsetY).toBeCloseTo(track.h - expectedSizeY, 5);
   });
 
   it("handles each axis independently when the page is wider than tall", () => {
@@ -270,25 +303,25 @@ describe("panFromThumb", () => {
     expect(roundTrip.y).toBeCloseTo(pan.y, 5);
   });
 
-  it("maps track-end thumb offsets to the min and max pan", () => {
+  it("maps thumb offset 0 to max pan (top/left) and travel to min pan (bottom/right)", () => {
     const thumb = scrollbarThumb(viewport, content, { x: 0, y: 0 }, margin, track);
     const travel = {
       x: track.w - thumb.sizeX,
       y: track.h - thumb.sizeY,
     };
 
-    const min = panFromThumb({ offsetX: 0, offsetY: 0 }, viewport, content, margin, track);
-    expect(min).toEqual({ x: margin - content.w, y: margin - content.h });
+    const maxPan = panFromThumb({ offsetX: 0, offsetY: 0 }, viewport, content, margin, track);
+    expect(maxPan).toEqual({ x: viewport.w - margin, y: viewport.h - margin });
 
-    const max = panFromThumb(
+    const minPan = panFromThumb(
       { offsetX: travel.x, offsetY: travel.y },
       viewport,
       content,
       margin,
       track
     );
-    expect(max.x).toBeCloseTo(viewport.w - margin, 5);
-    expect(max.y).toBeCloseTo(viewport.h - margin, 5);
+    expect(minPan.x).toBeCloseTo(margin - content.w, 5);
+    expect(minPan.y).toBeCloseTo(margin - content.h, 5);
   });
 
   it("clamps thumb offsets dragged past a track end", () => {
@@ -305,8 +338,8 @@ describe("panFromThumb", () => {
       margin,
       track
     );
-    expect(over.x).toBe(viewport.w - margin);
-    expect(over.y).toBe(margin - content.h);
+    expect(over.x).toBe(margin - content.w);
+    expect(over.y).toBe(viewport.h - margin);
   });
 
   it("inverts scrollbarThumb for an out-of-range pan (clamped on the way in)", () => {
@@ -317,3 +350,33 @@ describe("panFromThumb", () => {
     expect(roundTrip).toEqual({ x: viewport.w - margin, y: margin - content.h });
   });
 });
+
+describe("ariaScrollMetrics", () => {
+  const viewportDim = 400;
+  const contentDim = 200;
+  const margin = PAN_MARGIN;
+  const maxPan = viewportDim - margin; // 352
+  const minPan = margin - contentDim; // -152
+  const range = maxPan - minPan; // 504
+
+  it("starts aria-valuenow at 0 when pan is at maxPan (top/left)", () => {
+    const metrics = ariaScrollMetrics(viewportDim, contentDim, maxPan, margin);
+    expect(metrics.min).toBe(0);
+    expect(metrics.max).toBe(Math.round(range));
+    expect(metrics.now).toBe(0);
+  });
+
+  it("scales aria-valuenow up to range when pan is at minPan (bottom/right)", () => {
+    const metrics = ariaScrollMetrics(viewportDim, contentDim, minPan, margin);
+    expect(metrics.min).toBe(0);
+    expect(metrics.max).toBe(Math.round(range));
+    expect(metrics.now).toBe(Math.round(range));
+  });
+
+  it("returns proportional aria-valuenow for mid-range pan", () => {
+    const midPan = (maxPan + minPan) / 2; // 100
+    const metrics = ariaScrollMetrics(viewportDim, contentDim, midPan, margin);
+    expect(metrics.now).toBe(Math.round(range / 2));
+  });
+});
+

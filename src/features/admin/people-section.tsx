@@ -1,7 +1,8 @@
 "use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, List, LoaderCircle, Network, Search, Users, X } from "lucide-react";
+import { ChevronDown, List, Network, Search, Users, X } from "lucide-react";
+import { Button } from "@/components/ui/button";
 import type { AdminDepartment, AdminEmployee, AdminRole } from "@/server/admin/ports";
 import { initials } from "./initials";
 import { OrgTree } from "./org-tree";
@@ -552,17 +553,16 @@ function PersonDrawer({
         <div className="border-t border-[#eef2f6] p-6">
           {person.active ? (
             <>
-              <button
+              <Button
                 ref={setActiveButtonRef}
                 type="button"
-                disabled={saving || deactivationBlocked}
-                aria-busy={saving}
+                loading={saving}
+                disabled={deactivationBlocked}
                 onClick={() => onSetActive(false)}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#a8384d] px-4 text-xs font-bold text-white transition-colors hover:bg-[#8f2f42] disabled:cursor-not-allowed disabled:opacity-50"
+                className="h-10 w-full bg-[#a8384d] px-4 text-xs font-bold text-white hover:bg-[#8f2f42]"
               >
-                {saving ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
                 Deactivate account
-              </button>
+              </Button>
               {blockReason ? (
                 <p className="mt-2 text-xs font-medium text-[#a8384d]" role="note">
                   {blockReason}
@@ -570,17 +570,15 @@ function PersonDrawer({
               ) : null}
             </>
           ) : (
-            <button
+            <Button
               ref={setActiveButtonRef}
               type="button"
-              disabled={saving}
-              aria-busy={saving}
+              loading={saving}
               onClick={() => onSetActive(true)}
-              className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-[#23706b] px-4 text-xs font-bold text-white transition-colors hover:bg-[#1c5a56] disabled:cursor-not-allowed disabled:opacity-50"
+              className="h-10 w-full bg-[#23706b] px-4 text-xs font-bold text-white hover:bg-[#1c5a56]"
             >
-              {saving ? <LoaderCircle aria-hidden className="size-3.5 animate-spin" /> : null}
               Reactivate account
-            </button>
+            </Button>
           )}
         </div>
       </aside>

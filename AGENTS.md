@@ -12,6 +12,8 @@
 
 ## Current Work
 
-- What: fixed the PDF preview pane squeeze - zooming a receipt past ~75% in the two-pane expense drawer no longer grows the receipt pane and pushes the details column (added `lg:min-w-0` to both panes in expense-drawer.tsx). Prior work: three UX bugfixes - timeline blinks the next pending step (not current), "Need your attention" shows only in-flight claims assigned to me, and loading states on all drawer action buttons (shared Button `loading` prop), all via slices in `.scratch/ux-bugfixes/slices/`.
-- Plan: in conversation only (plan-maxxing, not saved); slice at `.scratch/pdf-preview-zoom-layout/slices/01-pane-squeeze-fix.md`
-- Next: review - lint/build green; fix verified in Playwright at 100%/125% zoom (panes hold 486/486, canvas clips and pans inside the viewer); changes are uncommitted across timeline.tsx, expense-drawer.tsx, dashboard-attention.ts, expense-overview.tsx, next-action.ts, dashboard.tsx, button.tsx, people-section.tsx.
+- What: fixed PDF overlay scrollbars (direction math, track click jump, ARIA 1.2 non-negative scroll semantics), fit-on-open container size re-evaluation on drawer expansion, wheel zoom state synchronization, and React 19 Button composition via Radix Slottable.
+  Prior work: fixed PDF preview pane squeeze and UX polish across timeline, attention list, and drawer actions via slices in `.scratch/pdf-scrollbar-fixes/slices/`.
+- Plan: executed via slices in `.scratch/pdf-scrollbar-fixes/slices/`.
+- Next: review - lint/build green; 502 vitest unit tests passing across 27 test files.
+

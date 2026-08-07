@@ -58,34 +58,6 @@ function Button({
   }) {
   const Comp = asChild ? Slot.Root : "button"
 
-  const loadingContent = () => {
-    if (!loading) return children
-    const spinnerIcon = (
-      <LoaderCircle data-icon="inline-start" aria-hidden className="animate-spin" />
-    )
-    if (!asChild) {
-      return (
-        <>
-          {spinnerIcon}
-          {children}
-        </>
-      )
-    }
-    // Slot requires exactly one element child, so with asChild the spinner is
-    // injected into the child's own children instead of rendered as a sibling.
-    const child = React.Children.only(children) as React.ReactElement<{
-      children?: React.ReactNode
-    }>
-    return React.cloneElement(child, {
-      children: (
-        <>
-          {spinnerIcon}
-          {child.props.children}
-        </>
-      ),
-    })
-  }
-
   return (
     <Comp
       data-slot="button"
@@ -96,7 +68,10 @@ function Button({
       disabled={disabled || loading}
       {...props}
     >
-      {loadingContent()}
+      {loading && (
+        <LoaderCircle data-icon="inline-start" aria-hidden className="animate-spin" />
+      )}
+      {asChild ? <Slot.Slottable>{children}</Slot.Slottable> : children}
     </Comp>
   )
 }

@@ -9,7 +9,9 @@ import {
   MAX_SCALE,
   MIN_SCALE,
   PAN_MARGIN,
+  ariaScrollMetrics,
   clampPan,
+  estimateContentSize,
   fitScale,
   initialPan,
   nextScale,
@@ -88,6 +90,8 @@ export function ReceiptPreview({
   const statusRef = useRef<Status>(status);
   const panRef = useRef(pan);
   const scaleRef = useRef(scale);
+  const basePageSizeRef = useRef<Size | null>(null);
+  const hasUserZoomedRef = useRef(false);
 
   // Reset zoom and start from loading when the claim changes, without letting
   // the render effect run twice for one claim change.
@@ -97,6 +101,11 @@ export function ReceiptPreview({
     setScale(1);
     setStatus("loading");
   }
+
+  useEffect(() => {
+    hasUserZoomedRef.current = false;
+    basePageSizeRef.current = null;
+  }, [claimId]);
 
   // Leaving the ready state invalidates the pan's claim association, so the
   // next loaded content always opens top-center instead of inheriting a
@@ -293,21 +302,12 @@ export function ReceiptPreview({
     };
   }, []);
 
-  // Re-clamp the pan when the viewer resizes, so a resized viewer never
-  // leaves the page stranded off-screen.
-  useEffect(() => {
-    const container = containerRef.current;
-    if (!container) return;
-    const observer = new ResizeObserver(() => reconcilePan(false));
-    observer.observe(container);
-    return () => observer.disconnect();
-  }, [reconcilePan]);
-
   // Mirror the live container and page-layer sizes into state for the
   // scrollbar math (render must not read refs). Both elements are observed:
   // the container resizes with the pane, and the layer resizes when the
   // document finishes loading, a claim switches, or a zoom re-render grows
-  // the canvases.
+  // the canvases. When the container resizes post-transition and the user
+  // has not manually zoomed, fitScale re-evaluates dynamically.
   useEffect(() => {
     const container = containerRef.current;
     const layer = innerRef.current;
@@ -317,6 +317,18 @@ export function ReceiptPreview({
       const viewport = { w: container.clientWidth, h: container.clientHeight };
       const content = { w: layer.offsetWidth, h: layer.offsetHeight };
       if (viewport.w <= 0 || viewport.h <= 0 || content.w <= 0 || content.h <= 0) return;
+
+      if (!hasUserZoomedRef.current && basePageSizeRef.current) {
+        const newFit = fitScale(viewport, basePageSizeRef.current);
+        if (Math.abs(newFit - scaleRef.current) > 0.001) {
+          scaleRef.current = newFit;
+          setScale(newFit);
+          return;
+        }
+      } else {
+        reconcilePan(false);
+      }
+
       setMeasuredSize((current) =>
         current &&
         current.viewport.w === viewport.w &&
@@ -337,7 +349,7 @@ export function ReceiptPreview({
       containerObserver.disconnect();
       layerObserver.disconnect();
     };
-  }, []);
+  }, [reconcilePan]);
 
   // Native wheel handling: React registers onWheel handlers as passive at the
   // root, so preventDefault inside them would silently fail. Attaching the
@@ -362,12 +374,22 @@ export function ReceiptPreview({
       // as the toolbar. Panning is reserved for drag, touch, and keyboard.
       // zoomWithAnchor returns raw values, so the result is always clamped.
       event.preventDefault();
+      hasUserZoomedRef.current = true;
+
       const rect = container.getBoundingClientRect();
       const anchor = {
         x: event.clientX - rect.left,
         y: event.clientY - rect.top,
       };
       const newScale = nextScale(scaleRef.current, event.deltaY < 0 ? 1 : -1);
+
+      const estimatedContent = basePageSizeRef.current
+        ? estimateContentSize(basePageSizeRef.current, newScale)
+        : {
+            w: Math.round((measured.content.w / scaleRef.current) * newScale),
+            h: Math.round((measured.content.h / scaleRef.current) * newScale),
+          };
+
       const nextPan = zoomWithAnchor(
         panRef.current,
         scaleRef.current,
@@ -378,12 +400,13 @@ export function ReceiptPreview({
       // The refs are written synchronously (not just by the effect below) so
       // rapid successive notches always step from the latest value, even if
       // the render and effect flush later.
-      const clampedPan = clampPan(nextPan, measured.viewport, measured.content);
+      const clampedPan = clampPan(nextPan, measured.viewport, estimatedContent);
       panRef.current = clampedPan;
       scaleRef.current = newScale;
       setPan(clampedPan);
       setScale(newScale);
-    }
+      setMeasuredSize({ viewport: measured.viewport, content: estimatedContent });
+    };
 
     container.addEventListener("wheel", handleWheel, { passive: false });
     return () => container.removeEventListener("wheel", handleWheel);
@@ -393,16 +416,28 @@ export function ReceiptPreview({
   // center stationary (anchored, never content-centered), then clamping.
   function zoomTo(newScale: number) {
     if (newScale === scale) return;
+    hasUserZoomedRef.current = true;
     const measured = measure();
     if (!measured) {
       setScale(newScale);
       return;
     }
     const { viewport, content } = measured;
+    const estimatedContent = basePageSizeRef.current
+      ? estimateContentSize(basePageSizeRef.current, newScale)
+      : {
+          w: Math.round((content.w / scale) * newScale),
+          h: Math.round((content.h / scale) * newScale),
+        };
+
     const anchor = { x: viewport.w / 2, y: viewport.h / 2 };
     const nextPan = zoomWithAnchor(pan, scale, newScale, anchor);
-    setPan(clampPan(nextPan, viewport, content));
+    const clampedPan = clampPan(nextPan, viewport, estimatedContent);
+    panRef.current = clampedPan;
+    scaleRef.current = newScale;
+    setPan(clampedPan);
     setScale(newScale);
+    setMeasuredSize({ viewport, content: estimatedContent });
   }
 
   function zoomBy(step: number) {
@@ -672,9 +707,10 @@ function Scrollbar({
       : thumb.sizeX
     : (track?.[dim] ?? 0) * 0.4;
   const thumbOffset = thumb ? (isVertical ? thumb.offsetY : thumb.offsetX) : 0;
-  const now = thumb ? Math.round(isVertical ? pan.y : pan.x) : 0;
-  const min = thumb ? Math.round(PAN_MARGIN - content![dim]) : 0;
-  const max = thumb ? Math.round(viewport![dim] - PAN_MARGIN) : 0;
+  const aria =
+    ready && viewport && content
+      ? ariaScrollMetrics(viewport[dim], content[dim], isVertical ? pan.y : pan.x, PAN_MARGIN)
+      : { min: 0, max: 0, now: 0 };
 
   // Drag state: the pointer that owns the drag, where it started, and the
   // thumb offsets at drag start (so panning follows the pointer delta
@@ -772,9 +808,9 @@ function Scrollbar({
         role="scrollbar"
         aria-orientation={axis}
         aria-controls={controlsId}
-        aria-valuenow={now}
-        aria-valuemin={min}
-        aria-valuemax={max}
+        aria-valuenow={aria.now}
+        aria-valuemin={aria.min}
+        aria-valuemax={aria.max}
         onPointerDown={handleThumbPointerDown}
         onPointerMove={handleThumbPointerMove}
         onPointerUp={handleThumbPointerEnd}
