@@ -400,9 +400,40 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(413);
     await expect(response.json()).resolves.toMatchObject({
       error: "too-large",
-      message: "The receipt is larger than 25 MB.",
+      message: "The form or receipt is larger than 25 MB.",
     });
-    expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+  });
+
+  it("rejects an oversized chunked request body without content-length header during stream reading", async () => {
+    const { commands, blobStore } = build();
+    const chunk = new Uint8Array(1024 * 1024);
+    const stream = new ReadableStream({
+      start(controller) {
+        // 27 MB total (exceeds MAX_RECEIPT_SIZE_BYTES + MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 26 MB)
+        for (let i = 0; i < 27; i++) {
+          controller.enqueue(chunk);
+        }
+        controller.close();
+      },
+    });
+    const response = await handleCreateExpenseRequest(
+      new Request("http://localhost/api/expenses", {
+        method: "POST",
+        headers: { "content-type": "multipart/form-data; boundary=----WebKitFormBoundary" },
+        body: stream,
+        duplex: "half",
+      }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(413);
+    await expect(response.json()).resolves.toEqual({
+      error: "too-large",
+      message: "The form or receipt is larger than 25 MB.",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
   });
 
   it("serves the receipt bytes to the requester with the right headers", async () => {

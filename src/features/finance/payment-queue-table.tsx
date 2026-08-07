@@ -159,7 +159,11 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
 
   function sortHeader(sortKey: PaymentQueueSortKey, label: string, className?: string) {
     return (
-      <th key={sortKey} className={cn("px-4 py-3 font-medium", className)}>
+      <th
+        key={sortKey}
+        aria-sort={sort.key === sortKey ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
+        className={cn("px-4 py-3 font-medium", className)}
+      >
         <button
           type="button"
           onClick={() => toggleSort(sortKey)}
@@ -269,7 +273,7 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                   aria-label="Minimum amount"
                   className="h-9 w-24 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
-                <span className="text-muted-foreground">–</span>
+                <span aria-hidden="true" className="text-muted-foreground">–</span>
                 <input
                   type="number"
                   inputMode="decimal"
@@ -295,7 +299,7 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                   aria-label="Submitted from date"
                   className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
                 />
-                <span className="text-muted-foreground">–</span>
+                <span aria-hidden="true" className="text-muted-foreground">–</span>
                 <input
                   type="date"
                   value={dateTo}
@@ -316,8 +320,47 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
         </div>
       ) : null}
 
-      <div className="flex w-full items-start">
-        <div className="min-w-0 flex-1">
+      <div className="flex w-full items-start gap-4 xl:gap-6">
+        <aside
+          ref={panelRef}
+          tabIndex={-1}
+          aria-hidden={!selected}
+          inert={!selected}
+          aria-label={selected ? `Receipt preview for ${selected.ref}` : "Receipt preview"}
+          onKeyDown={handlePanelKeyDown}
+          className={cn(
+            "fixed inset-y-0 left-0 z-50 flex flex-col bg-card shadow-2xl transition-all duration-300 ease-in-out border-r border-border w-full sm:w-[480px] outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50",
+            "lg:static lg:z-auto lg:h-[70vh] lg:shadow-none lg:rounded-xl lg:border lg:border-border",
+            selected
+              ? "translate-x-0 opacity-100 lg:w-[420px] xl:w-[460px] lg:shrink-0"
+              : "-translate-x-full opacity-0 pointer-events-none lg:translate-x-0 lg:w-0 lg:p-0 lg:border-0 lg:overflow-hidden lg:shrink-0"
+          )}
+        >
+          {selected ? (
+            selectedHasReceipt ? (
+              <ReceiptPreview
+                claimId={selected.id}
+                fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
+                onClose={closePanel}
+                className="h-full flex-1 border-0 rounded-none lg:rounded-xl bg-card"
+              />
+            ) : (
+              <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card">
+                <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+                  <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
+                  <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
+                    <X />
+                  </Button>
+                </div>
+                <div className="m-auto flex items-center justify-center p-6 text-sm text-muted-foreground">
+                  No receipt attached to this claim.
+                </div>
+              </div>
+            )
+          ) : null}
+        </aside>
+
+        <div className="min-w-0 flex-1 transition-all duration-300 ease-in-out">
           <div
             tabIndex={selectedClaimId ? 0 : undefined}
             aria-label={selectedClaimId ? "Payment queue, arrow keys move selection" : undefined}
@@ -447,72 +490,6 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
           </table>
           </div>
         </div>
-        {selected ? (
-          <aside
-            ref={panelRef}
-            tabIndex={-1}
-            aria-label={`Receipt cross-check for ${selected.ref}`}
-            onKeyDown={handlePanelKeyDown}
-            className="fixed inset-0 z-40 flex flex-col overflow-hidden bg-card outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/50 lg:static lg:z-auto lg:h-[70vh] lg:w-[min(440px,38vw)] lg:shrink-0 lg:rounded-xl lg:border lg:border-border"
-          >
-            <header className="flex shrink-0 items-center justify-between gap-3 border-b border-black/10 px-4 py-3">
-              <div className="flex min-w-0 items-center gap-2">
-                <p className="truncate font-mono text-sm font-medium text-foreground">{selected.ref}</p>
-                <span
-                  className={cn(
-                    "shrink-0 rounded-full px-2 py-0.5 text-xs font-medium",
-                    paymentStatusFor(selected) === "Paid"
-                      ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                      : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-                  )}
-                >
-                  {paymentStatusFor(selected)}
-                </span>
-              </div>
-              <Button variant="ghost" size="icon-sm" aria-label="Close receipt panel" onClick={closePanel}>
-                <X />
-              </Button>
-            </header>
-
-            <dl className="shrink-0 space-y-1.5 border-b border-black/10 px-4 py-3">
-              {(
-                [
-                  ["Title", selected.title],
-                  ["Category", selected.category],
-                  ["Expense date", selected.expenseDate],
-                  ["Amount", `₹${(selected.amountMinor / 100).toFixed(2)}`],
-                  ["Requester", employeeNameById.get(selected.requesterId) ?? "-"],
-                  ["Account number", selected.payoutDetails?.accountNumber ?? "-"],
-                  ["IFSC code", selected.payoutDetails?.ifscCode ?? "-"],
-                  ["Remark", selected.remark || "-"],
-                ] as const
-              ).map(([label, value]) => (
-                <div key={label} className="flex items-baseline gap-3">
-                  <dt className="w-28 shrink-0 text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-                    {label}
-                  </dt>
-                  <dd className="min-w-0 break-words text-sm text-foreground" title={value}>
-                    {value}
-                  </dd>
-                </div>
-              ))}
-            </dl>
-
-            {selectedHasReceipt ? (
-              <div className="flex min-h-0 flex-1 flex-col p-4 lg:p-3">
-                <ReceiptPreview
-                  claimId={selected.id}
-                  fileName={selected.attachment?.fileName}
-                  className="min-h-0 flex-1"
-                />
-              </div>
-            ) : (
-              <p className="px-4 py-6 text-sm text-muted-foreground">
-                No receipt attached.
-              </p>
-            )}
-          </aside>
-        ) : null}
       </div>
     </div>
   );

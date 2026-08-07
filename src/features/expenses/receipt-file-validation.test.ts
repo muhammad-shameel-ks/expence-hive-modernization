@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MAX_RECEIPT_SIZE_BYTES, receiptValidationError } from "./receipt-file-validation";
+import {
+  MAX_RECEIPT_SIZE_BYTES,
+  receiptSizeLimitLabel,
+  receiptValidationError,
+} from "./receipt-file-validation";
 
 function receiptFile(overrides: Partial<File> = {}): File {
   return new File([new Uint8Array(64)], "receipt.pdf", { type: "application/pdf", ...overrides });
@@ -48,14 +52,16 @@ describe("receiptValidationError", () => {
     expect(receiptValidationError(receiptFile({ type: "" }))).toBeNull();
   });
 
-  it("rejects files larger than 25 MB with the size message", () => {
+  it("rejects files larger than cap with the size message", () => {
     const oversized = new File([new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1)], "big.pdf", {
       type: "application/pdf",
     });
-    expect(receiptValidationError(oversized)).toBe("The receipt is larger than 25 MB.");
+    expect(receiptValidationError(oversized)).toBe(
+      `The receipt is larger than ${receiptSizeLimitLabel()}.`,
+    );
   });
 
-  it("accepts a file exactly at the 25 MB cap", () => {
+  it("accepts a file exactly at the cap", () => {
     const atCap = new File([new Uint8Array(MAX_RECEIPT_SIZE_BYTES)], "big.pdf", {
       type: "application/pdf",
     });

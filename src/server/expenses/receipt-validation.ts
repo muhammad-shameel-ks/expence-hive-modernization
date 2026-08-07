@@ -6,7 +6,7 @@ import { RECEIPT_EXTENSIONS, type ReceiptContentType } from "../blob/keys";
 export const MAX_RECEIPT_SIZE_BYTES = maxReceiptSizeBytes();
 
 function maxReceiptSizeBytes(): number {
-  const raw = process.env.MAX_RECEIPT_SIZE_BYTES;
+  const raw = process.env.NEXT_PUBLIC_MAX_RECEIPT_SIZE_BYTES ?? process.env.MAX_RECEIPT_SIZE_BYTES;
   if (raw === undefined) return 25 * 1024 * 1024;
   const parsed = Number(raw);
   return Number.isInteger(parsed) && parsed > 0 ? parsed : 25 * 1024 * 1024;

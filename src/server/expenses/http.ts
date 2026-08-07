@@ -12,19 +12,59 @@ const MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 1024 * 1024;
 // optional file part named "receipt". Returns null on any malformed part;
 // the size cap and content-type authority live in the command layer.
 async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput | null> {
-  // Reject oversized bodies before formData() buffers them: the command
-  // layer's cap can only run after the whole body is in memory, so the
-  // content-length header is checked first and returns 413 without reading
-  // the bytes. Bodies without a content-length header (chunked encoding)
-  // fall through to the command-layer check.
-  const contentLength = Number(request.headers.get("content-length"));
-  if (
-    Number.isFinite(contentLength) &&
-    contentLength > MAX_RECEIPT_SIZE_BYTES + MULTIPART_ENVELOPE_ALLOWANCE_BYTES
-  ) {
-    throw new ExpenseError("too-large", `The receipt is larger than ${receiptSizeLimitLabel()}.`);
+  // Reject oversized bodies before formData() buffers them: the content-length
+  // header is checked first. Bodies without a content-length header (chunked
+  // transfer encoding) are streamed chunk-by-chunk up to maxAllowedBytes before
+  // formData() parses them.
+  const maxAllowedBytes = MAX_RECEIPT_SIZE_BYTES + MULTIPART_ENVELOPE_ALLOWANCE_BYTES;
+  let parsedRequest = request;
+
+  const contentLengthHeader = request.headers.get("content-length");
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader);
+    if (Number.isFinite(contentLength) && contentLength > maxAllowedBytes) {
+      throw new ExpenseError("too-large", "The form or receipt is larger than " + receiptSizeLimitLabel() + ".");
+    }
+  } else if (request.body) {
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          totalBytes += value.byteLength;
+          if (totalBytes > maxAllowedBytes) {
+            await reader.cancel();
+            throw new ExpenseError("too-large", "The form or receipt is larger than " + receiptSizeLimitLabel() + ".");
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Lock might already be released on cancel.
+      }
+    }
+
+    const combined = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+
+    parsedRequest = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: combined,
+    });
   }
-  const form = await request.formData();
+
+  const form = await parsedRequest.formData();
   const title = form.get("title");
   const category = form.get("category");
   const subCategory = form.get("subCategory");
