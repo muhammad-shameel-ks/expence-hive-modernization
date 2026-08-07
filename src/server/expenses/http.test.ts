@@ -271,6 +271,42 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(422);
   });
 
+  it("accepts a file part with an empty declared type by sniffing genuine PDF bytes", async () => {
+    const { commands, blobStore } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "scan.pdf", type: "", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(201);
+    const payload = await response.json();
+    expect(payload.claim.attachment).toMatchObject({
+      fileName: "scan.pdf",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
+    });
+  });
+
+  it("rejects an empty declared type whose bytes match no known format", async () => {
+    const { commands } = build();
+    const response = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "scan.bin", type: "", data: new Uint8Array([0x00, 0x01, 0x02, 0x03, 0x04]) }),
+      commands,
+      "emp-shameel",
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "validation",
+      message: "Receipts must be a JPEG, PNG, or PDF file.",
+    });
+  });
+
   it("rejects an oversized receipt file part from a body without content-length with a message-bearing too-large response", async () => {
     const { commands } = build();
     const bigReceipt = new Uint8Array(MAX_RECEIPT_SIZE_BYTES + 1);

@@ -52,7 +52,7 @@ async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput
   let attachment: ReceiptUploadInput | undefined;
   if (receiptFile instanceof File) {
     const data = new Uint8Array(await receiptFile.arrayBuffer());
-    attachment = { fileName: receiptFile.name, contentType: receiptFile.type || "application/octet-stream", data };
+    attachment = { fileName: receiptFile.name, contentType: receiptFile.type, data };
   }
   return {
     title,

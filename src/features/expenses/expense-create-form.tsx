@@ -1,8 +1,9 @@
 "use client";
 
 import type { ChangeEvent, FormEvent } from "react";
-import { useState } from "react";
+import { useRef, useState } from "react";
 import styles from "./expense-create.module.css";
+import { receiptValidationError } from "./receipt-file-validation";
 
 type FormState = {
   title: string;
@@ -22,18 +23,6 @@ const CATEGORY_SUB_CATEGORIES: Record<string, string[]> = {
   Hardware: ["Equipment Purchase", "Repairs & Maintenance"],
   Training: ["Course Fee", "Certification", "Conference"],
 };
-
-// Mirrors the server's default cap so an oversized file fails fast without
-// a round trip. The server stays authoritative (the cap is configurable
-// there); this is a convenience check, not a security boundary.
-const MAX_RECEIPT_SIZE_BYTES = 10 * 1024 * 1024;
-
-function receiptValidationError(file: File): string | null {
-  const acceptedType = file.type === "" || file.type.startsWith("image/") || file.type === "application/pdf";
-  if (!acceptedType) return "Receipts must be a JPEG, PNG, or PDF file.";
-  if (file.size > MAX_RECEIPT_SIZE_BYTES) return "The receipt is larger than 10 MB.";
-  return null;
-}
 
 // Pre-filled state when continuing an existing draft; receiptFileName is the
 // name of the receipt already stored with the draft (it cannot be replaced).
@@ -67,6 +56,7 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
   }));
   const [receipt, setReceipt] = useState<File | null>(null);
   const [claimId, setClaimId] = useState<string | null>(initial?.claimId ?? null);
+  const [storedReceiptName, setStoredReceiptName] = useState<string | undefined>(initial?.receiptFileName);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -119,6 +109,12 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
       }
       if (!response.ok || !payload.claim) throw new Error(payload.message ?? "We could not save this draft.");
       setClaimId(payload.claim.id);
+      // A saved receipt is stored server-side; reflect that in live state and
+      // clear the picked File so it can never be resubmitted or shown as
+      // attached when it is not actually stored. A save without a freshly
+      // picked file must never clear a previously stored receipt name.
+      if (receipt) setStoredReceiptName(receipt.name);
+      setReceipt(null);
       setStep(3);
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : "We could not save this draft.");
@@ -157,18 +153,22 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
       {!submitted && step === 1 ? (
         <ReceiptStep
           receipt={receipt}
-          existingReceiptName={initial?.receiptFileName}
+          existingReceiptName={storedReceiptName}
           chooseReceipt={chooseReceipt}
           error={error}
           onSkip={() => setStep(2)}
           onContinue={() => setStep(2)}
+          onRemove={() => {
+            setReceipt(null);
+            setError(null);
+          }}
         />
       ) : null}
       {!submitted && step === 2 ? (
         <DetailsStep
           form={form}
           receipt={receipt}
-          existingReceiptName={initial?.receiptFileName}
+          existingReceiptName={storedReceiptName}
           update={update}
           onBack={() => setStep(1)}
           onReview={saveDraft}
@@ -180,7 +180,7 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
         <ReviewStep
           form={form}
           receipt={receipt}
-          existingReceiptName={initial?.receiptFileName}
+          existingReceiptName={storedReceiptName}
           onBack={() => setStep(2)}
           onSubmit={submitClaim}
           busy={busy}
@@ -198,6 +198,7 @@ function ReceiptStep({
   error,
   onSkip,
   onContinue,
+  onRemove,
 }: {
   receipt: File | null;
   existingReceiptName?: string;
@@ -205,8 +206,10 @@ function ReceiptStep({
   error: string | null;
   onSkip: () => void;
   onContinue: () => void;
+  onRemove: () => void;
 }) {
   const attachedName = receipt?.name ?? existingReceiptName;
+  const fileInputRef = useRef<HTMLInputElement>(null);
   return (
     <div className={styles.content}>
       <p className={styles.eyebrow}>STEP 1 OF 3 / RECEIPT</p>
@@ -223,9 +226,29 @@ function ReceiptStep({
             <div className={styles.uploadActions}>
               <label className={styles.button}>
                 Add receipt
-                <input className={styles.fileInput} type="file" accept="image/*,.pdf" onChange={chooseReceipt} />
+                <input
+                  ref={fileInputRef}
+                  className={styles.fileInput}
+                  type="file"
+                  accept="image/*,.pdf"
+                  onChange={chooseReceipt}
+                />
               </label>
               <button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onSkip}>Skip for now</button>
+              {receipt && !existingReceiptName ? (
+                <button
+                  className={`${styles.button} ${styles.buttonSecondary}`}
+                  type="button"
+                  onClick={() => {
+                    // Reset the input so picking the same file again fires a
+                    // change event after the removal.
+                    if (fileInputRef.current) fileInputRef.current.value = "";
+                    onRemove();
+                  }}
+                >
+                  Remove
+                </button>
+              ) : null}
             </div>
           ) : null}
           {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}

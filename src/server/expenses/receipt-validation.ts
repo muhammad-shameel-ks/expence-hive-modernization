@@ -38,14 +38,18 @@ export function sniffContentType(data: Uint8Array): ReceiptContentType | null {
 }
 
 // Resolves the authoritative receipt content type: the sniffed format wins
-// only when the declared type is an accepted receipt type that matches the
-// bytes. A spoofed or mismatched declaration is rejected.
+// when the declared type is empty or absent. Browsers omit the type for
+// some files and undici's multipart encoding normalizes that absence to
+// "application/octet-stream" on the wire, so both count as absent. Any
+// other declared type must be an accepted receipt type that matches the
+// bytes; a spoofed or mismatched declaration is rejected.
 export function resolveReceiptContentType(
   declared: string,
   data: Uint8Array,
 ): ReceiptContentType | null {
   const sniffed = sniffContentType(data);
   if (sniffed === null) return null;
+  if (declared === "" || declared === "application/octet-stream") return sniffed;
   if (!(declared in RECEIPT_EXTENSIONS)) return null;
   if (declared !== sniffed) return null;
   return sniffed;

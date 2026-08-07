@@ -138,27 +138,58 @@ describe("expense commands", () => {
     });
   });
 
-  it("rejects a receipt whose declared content type is not an accepted receipt type", async () => {
+  it("sniffs the format when the declared type is the octet-stream absence placeholder", async () => {
     const { commands, blobStore } = buildCommands();
 
-    await expect(
-      commands.createDraft(employee.id, {
-        title: "Client dinner",
-        category: "Meals",
-        amountMinor: 240000,
-        currency: "INR",
-        expenseDate: "2026-08-04",
-        attachment: {
-          fileName: "scan.bin",
-          contentType: "application/octet-stream",
-          data: PDF_RECEIPT,
-        },
-      }),
-    ).rejects.toMatchObject({
-      code: "validation",
-      message: "Receipts must be a JPEG, PNG, or PDF file.",
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: {
+        fileName: "scan.bin",
+        contentType: "application/octet-stream",
+        data: PDF_RECEIPT,
+      },
     });
-    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toBeNull();
+
+    expect(draft.attachment).toMatchObject({
+      fileName: "scan.bin",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
+    });
+  });
+
+  it("sniffs the format for an attachment with an empty declared content type", async () => {
+    const { commands, blobStore } = buildCommands();
+
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: {
+        fileName: "scan.pdf",
+        contentType: "",
+        data: PDF_RECEIPT,
+      },
+    });
+
+    expect(draft.attachment).toMatchObject({
+      fileName: "scan.pdf",
+      contentType: "application/pdf",
+      storageKey: "org-1/claim-1/attachment-1.pdf",
+    });
+    await expect(blobStore.getBlob("org-1/claim-1/attachment-1.pdf")).resolves.toEqual({
+      data: PDF_RECEIPT,
+      contentType: "application/pdf",
+    });
   });
 
   it("persists nothing when the blob write fails", async () => {
