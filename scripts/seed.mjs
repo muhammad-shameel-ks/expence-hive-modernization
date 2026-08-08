@@ -145,8 +145,6 @@ const CLAIMS = [
     currentActorId: "emp-finance",
     createdAt: "2026-07-26T08:55:00Z",
     submittedAt: "2026-07-26T08:55:00Z",
-    accountNumber: "32534240620",
-    ifscCode: "SBIN0012861",
     comments: "Awaiting invoice copy before payout",
     steps: [
       ["step-demo-finance-manager", 0, "manager", "emp-ada", "approved"],
@@ -174,8 +172,6 @@ const CLAIMS = [
     currentActorId: null,
     createdAt: "2026-07-25T16:20:00Z",
     submittedAt: "2026-07-25T16:20:00Z",
-    accountNumber: "32534240620",
-    ifscCode: "SBIN0012861",
     comments: "Paid via NEFT on 30 Apr",
     steps: [
       ["step-demo-paid-manager", 0, "manager", "emp-ada", "approved"],
@@ -320,8 +316,8 @@ async function main() {
     for (const claim of CLAIMS) {
       await client.query(
         `INSERT INTO reimbursement_claims
-          (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, account_number, ifsc_code, comments)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'INR', $10, $11, $12, $13, $14, 1, $15, $16, $17, $18, $19)
+          (id, organization_id, requester_id, reference, title, category, sub_category, remark, amount_minor, currency, expense_date, status, current_stage, current_actor_id, current_stage_since, version, created_at, submitted_at, comments)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, 'INR', $10, $11, $12, $13, $14, 1, $15, $16, $17)
          ON CONFLICT (id) DO UPDATE SET
            requester_id = EXCLUDED.requester_id, reference = EXCLUDED.reference, title = EXCLUDED.title,
            category = EXCLUDED.category, sub_category = EXCLUDED.sub_category, remark = EXCLUDED.remark,
@@ -329,13 +325,13 @@ async function main() {
            expense_date = EXCLUDED.expense_date, status = EXCLUDED.status,
            current_stage = EXCLUDED.current_stage, current_actor_id = EXCLUDED.current_actor_id,
            current_stage_since = EXCLUDED.current_stage_since,
-           submitted_at = EXCLUDED.submitted_at, account_number = EXCLUDED.account_number, ifsc_code = EXCLUDED.ifsc_code,
+           submitted_at = EXCLUDED.submitted_at,
            comments = EXCLUDED.comments, updated_at = now()`,
         [
           claim.id, ORGANIZATION.id, claim.requesterId, claim.ref, claim.title, claim.category, claim.subCategory ?? null, claim.remark ?? null,
           claim.amountMinor, claim.expenseDate, claim.status, claim.currentStage, claim.currentActorId,
           claim.currentStage ? claim.submittedAt : null, claim.createdAt, claim.submittedAt,
-          claim.accountNumber ?? null, claim.ifscCode ?? null, claim.comments ?? null,
+          claim.comments ?? null,
         ],
       );
       await client.query("DELETE FROM claim_approval_steps WHERE claim_id = $1", [claim.id]);

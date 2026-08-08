@@ -1,17 +1,29 @@
 import type { Expense } from "./mock-data";
+import { isCurrentActor, isTerminal, isTerminalPoolEligible } from "./next-action";
 
 export interface AttentionGroups {
   pending: Expense[];
 }
 
-/** Groups claims the current user should pay attention to right now. */
-export function groupAttentionItems(expenses: Expense[]): AttentionGroups {
+/** Groups in-flight claims the current user can act on right now. */
+export function groupAttentionItems(
+  expenses: Expense[],
+  me = "",
+  meId?: string,
+  viewerRoleId?: string,
+): AttentionGroups {
   return {
-    // Awaiting a decision covers approval stages and the finance
-    // verification/payment stage, so a claim parked with a Finance
-    // Executive still surfaces on the dashboard.
+    // A claim surfaces here when the current user can act on it: they are
+    // the assigned actor for the current stage, or - for the terminal
+    // finance stage, which is a pool - they hold the current step's role
+    // (stories 13/14). Claims the user raised but that have moved on to
+    // another approver or finance person are excluded, as are drafts,
+    // rejected, and paid claims.
     pending: expenses.filter(
-      (e) => e.status === "submitted" || e.status === "in-approval" || e.status === "in-finance",
+      (e) =>
+        !isTerminal(e.status) &&
+        e.status !== "draft" &&
+        (isCurrentActor(e, me, meId) || isTerminalPoolEligible(e, meId, viewerRoleId)),
     ),
   };
 }

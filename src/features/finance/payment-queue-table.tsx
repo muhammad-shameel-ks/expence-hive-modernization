@@ -4,10 +4,12 @@
 // filterable by awaiting-payment/paid, category, amount range, and submitted date range.
 
 import { useEffect, useMemo, useRef, useState } from "react";
-import { ArrowUpDown, FileText, Search, SlidersHorizontal, X } from "lucide-react";
+import { useRouter } from "next/navigation";
+import { ArrowUpDown, FileText, LoaderCircle, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { isTerminalPoolEligible } from "@/features/dashboard/next-action";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { hasReceiptAttachment, selectedClaimFor, stepSelection } from "./payment-queue-selection";
 import {
@@ -20,13 +22,57 @@ import {
 
 const FILTERS: PaymentQueueFilter[] = ["All", "Awaiting payment", "Paid"];
 
-export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseClaim[]; employees?: ExpenseEmployee[] }) {
+export function PaymentQueueTable({
+  claims,
+  employees = [],
+  currentUserId,
+  currentUserRoleId,
+}: {
+  claims: ExpenseClaim[];
+  employees?: ExpenseEmployee[];
+  /** Viewer id; the terminal-stage pool gate uses it to exclude self-claims. */
+  currentUserId?: string;
+  /** Viewer role id; the terminal-stage pool gate compares it against the claim's current step role. */
+  currentUserRoleId?: string;
+}) {
   const employeeNameById = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee.name])),
     [employees],
   );
   const [comments, setComments] = useState<Record<string, string>>({});
   const [savingCommentFor, setSavingCommentFor] = useState<string | null>(null);
+  const [actingClaimId, setActingClaimId] = useState<string | null>(null);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const router = useRouter();
+
+  // Verify/pay the terminal stage straight from the queue: any active
+  // reviewer holding the terminal step's role may act, mirroring the
+  // server's requireTerminalPoolClaim (which checks the claim's terminal
+  // step). Success refreshes the queue so the row's state comes back from
+  // the server.
+  async function runTerminalAction(claim: ExpenseClaim) {
+    if (actingClaimId) return;
+    const terminal = claim.steps[claim.steps.length - 1];
+    const action = terminal?.status === "verified" ? "pay" : "verify";
+    setActingClaimId(claim.id);
+    setActionError(null);
+    try {
+      const response = await fetch(`/api/expenses/${claim.id}/${action}`, { method: "POST" });
+      if (!response.ok) {
+        const body = await response.json().catch(() => null);
+        setActionError(
+          (body as { message?: string } | null)?.message ??
+            "The action could not be completed. Please try again.",
+        );
+        return;
+      }
+      router.refresh();
+    } catch {
+      setActionError("Could not reach the server. Check your connection and try again.");
+    } finally {
+      setActingClaimId(null);
+    }
+  }
 
   async function saveComment(claimId: string, value: string) {
     setSavingCommentFor(claimId);
@@ -361,6 +407,11 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
         </aside>
 
         <div className="min-w-0 flex-1 transition-all duration-300 ease-in-out">
+          {actionError ? (
+            <p role="status" className="mb-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-xs text-destructive">
+              {actionError}
+            </p>
+          ) : null}
           <div
             tabIndex={selectedClaimId ? 0 : undefined}
             aria-label={selectedClaimId ? "Payment queue, arrow keys move selection" : undefined}
@@ -380,8 +431,6 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                 {sortHeader("status", "Status")}
                 <th className="px-4 py-3 font-medium">Payment status</th>
                 <th className="hidden px-4 py-3 font-medium xl:table-cell">Approved on</th>
-                <th className="px-4 py-3 font-medium">Account number</th>
-                <th className="px-4 py-3 font-medium">IFSC code</th>
                 <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
                 <th className="min-w-[220px] px-4 py-3 font-medium">Comments</th>
               </tr>
@@ -389,7 +438,7 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
             <tbody>
               {rows.length === 0 ? (
                 <tr>
-                  <td className="px-4 py-6 text-muted-foreground" colSpan={14}>
+                  <td className="px-4 py-6 text-muted-foreground" colSpan={12}>
                     No claims match your search.
                   </td>
                 </tr>
@@ -398,6 +447,17 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                   const approvedOn = approvedOnFor(claim);
                   const commentValue = comments[claim.id] ?? claim.comments ?? "";
                   const rowSelected = selectedClaimId === claim.id;
+                  const terminalStep = claim.steps[claim.steps.length - 1];
+                  const viewerCanAct =
+                    claim.status === "in-finance" &&
+                    !!terminalStep &&
+                    (terminalStep.status === "pending" || terminalStep.status === "verified") &&
+                    isTerminalPoolEligible(claim, currentUserId, currentUserRoleId);
+                  const terminalAction = viewerCanAct
+                    ? terminalStep!.status === "verified"
+                      ? "pay"
+                      : "verify"
+                    : null;
                   return (
                     <tr
                       key={claim.id}
@@ -459,28 +519,59 @@ export function PaymentQueueTable({ claims, employees = [] }: { claims: ExpenseC
                         >
                           {paymentStatusFor(claim)}
                         </span>
+                        {terminalAction ? (
+                          <Button
+                            size="sm"
+                            variant={terminalAction === "pay" ? "default" : "outline"}
+                            loading={actingClaimId === claim.id}
+                            disabled={actingClaimId !== null}
+                            onClick={() => runTerminalAction(claim)}
+                          >
+                            {terminalAction === "pay" ? "Mark paid" : "Verify for payment"}
+                          </Button>
+                        ) : null}
                       </td>
                       <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">
                         {approvedOn ? approvedOn.slice(0, 10) : "-"}
                       </td>
-                      <td className="px-4 py-3">{claim.payoutDetails?.accountNumber ?? "-"}</td>
-                      <td className="px-4 py-3">{claim.payoutDetails?.ifscCode ?? "-"}</td>
                       <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
                       <td className="px-4 py-3">
-                        <input
-                          type="text"
-                          defaultValue={commentValue}
-                          placeholder="Add a comment…"
-                          aria-label={`Comment for ${claim.ref}`}
-                          disabled={savingCommentFor === claim.id}
-                          onBlur={(e) => {
-                            if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
-                          }}
-                          onKeyDown={(e) => {
-                            if (e.key === "Enter") e.currentTarget.blur();
-                          }}
-                          className="h-8 w-full rounded-md border border-input bg-card px-2 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                        />
+                        <div className="relative">
+                          <input
+                            type="text"
+                            defaultValue={commentValue}
+                            placeholder="Add a comment…"
+                            aria-label={`Comment for ${claim.ref}`}
+                            aria-busy={savingCommentFor === claim.id || undefined}
+                            disabled={savingCommentFor === claim.id}
+                            onBlur={(e) => {
+                              if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
+                            }}
+                            onKeyDown={(e) => {
+                              if (e.key === "Enter") e.currentTarget.blur();
+                            }}
+                            // The trailing slot is always reserved so the
+                            // text gutter never shifts while a save is
+                            // pending; the spinner appears inside the fixed
+                            // slot instead of changing the input's padding.
+                            className="h-8 w-full rounded-md border border-input bg-card pl-2 pr-7 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                          />
+                          {/*
+                           * The shared Button `loading` prop is not used here because there is no
+                           * discrete save trigger to attach it to: the comment save fires on blur/Enter
+                           * of this plain text input, with no adjacent button. `aria-busy` on the input
+                           * (above) carries the loading semantics for assistive tech; this spinner is a
+                           * purely visual affordance layered on top of the input itself.
+                           */}
+                          <span
+                            aria-hidden
+                            className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
+                          >
+                            {savingCommentFor === claim.id ? (
+                              <LoaderCircle className="animate-spin" />
+                            ) : null}
+                          </span>
+                        </div>
                       </td>
                     </tr>
                   );

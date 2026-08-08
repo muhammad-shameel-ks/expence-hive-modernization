@@ -46,11 +46,6 @@ export type ReceiptData = {
   data: Uint8Array;
 };
 
-export type ExpensePayoutDetails = {
-  accountNumber: string;
-  ifscCode: string;
-};
-
 export type ExpenseStepStatus = "pending" | "approved" | "rejected" | "skipped" | "verified" | "paid";
 
 export type ExpenseStep = {
@@ -127,7 +122,6 @@ export type ExpenseClaim = {
   currentActorId?: string;
   currentStageSince?: string;
   attachment?: ExpenseAttachment;
-  payoutDetails?: ExpensePayoutDetails;
   comments?: string;
   steps: ExpenseStep[];
   history: ExpenseHistoryEvent[];
@@ -145,7 +139,6 @@ export type CreateExpenseDraftInput = {
   currency: string;
   expenseDate: string;
   attachment?: ReceiptUploadInput;
-  payoutDetails?: ExpensePayoutDetails;
 };
 
 // Editing a draft accepts the same fields as creation. An attachment is

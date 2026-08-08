@@ -3,12 +3,12 @@ import type { CreateExpenseDraftInput, ReceiptUploadInput } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel } from "./receipt-validation";
 
 // The receipt cap applies to the file's own bytes; the whole multipart body
-// additionally carries the envelope (boundaries, part headers, and the eight
+// additionally carries the envelope (boundaries, part headers, and the six
 // text fields). The content-length pre-check allows that much headroom so a
 // file exactly at the cap is not falsely rejected.
 const MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 1024 * 1024;
 
-// Parses the receipt-first form's multipart body: eight text fields plus an
+// Parses the receipt-first form's multipart body: six text fields plus an
 // optional file part named "receipt". Returns null on any malformed part;
 // the size cap and content-type authority live in the command layer.
 async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput | null> {
@@ -71,17 +71,13 @@ async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput
   const remark = form.get("remark");
   const amount = form.get("amount");
   const expenseDate = form.get("expenseDate");
-  const accountNumber = form.get("accountNumber");
-  const ifscCode = form.get("ifscCode");
   if (
     typeof title !== "string" ||
     typeof category !== "string" ||
     typeof subCategory !== "string" ||
     typeof remark !== "string" ||
     typeof amount !== "string" ||
-    typeof expenseDate !== "string" ||
-    typeof accountNumber !== "string" ||
-    typeof ifscCode !== "string"
+    typeof expenseDate !== "string"
   ) {
     return null;
   }
@@ -103,7 +99,6 @@ async function parseDraftForm(request: Request): Promise<CreateExpenseDraftInput
     currency: "INR",
     expenseDate,
     attachment,
-    payoutDetails: { accountNumber, ifscCode },
   };
 }
 
@@ -264,7 +259,13 @@ export async function handleVerifyExpenseRequest(
   claimId: string,
 ): Promise<Response> {
   try {
-    return Response.json({ claim: await commands.verifyClaim(actorId, claimId) });
+    // The employee list rides along so the drawer can render the stamped
+    // claim with real actor names, not "System" placeholders.
+    const [claim, employees] = await Promise.all([
+      commands.verifyClaim(actorId, claimId),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
   } catch (error) {
     return expenseErrorResponse(error);
   }
@@ -277,7 +278,11 @@ export async function handlePayExpenseRequest(
   claimId: string,
 ): Promise<Response> {
   try {
-    return Response.json({ claim: await commands.markPaid(actorId, claimId) });
+    const [claim, employees] = await Promise.all([
+      commands.markPaid(actorId, claimId),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
   } catch (error) {
     return expenseErrorResponse(error);
   }

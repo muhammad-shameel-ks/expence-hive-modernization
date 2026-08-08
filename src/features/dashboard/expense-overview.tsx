@@ -23,11 +23,15 @@ const RECENT_COUNT = 5;
 
 export function ExpenseOverview({
   expenses,
+  currentUser,
   currentUserId,
+  currentUserRoleId,
   onOpen,
 }: {
   expenses: Expense[];
+  currentUser: string;
   currentUserId?: string;
+  currentUserRoleId?: string;
   onOpen: (expense: Expense) => void;
 }) {
   // "Your Expense" is claims this person raised, not claims routed to them
@@ -46,7 +50,10 @@ export function ExpenseOverview({
     [ownExpenses],
   );
 
-  const { pending } = useMemo(() => groupAttentionItems(expenses), [expenses]);
+  const { pending } = useMemo(
+    () => groupAttentionItems(expenses, currentUser, currentUserId, currentUserRoleId),
+    [expenses, currentUser, currentUserId, currentUserRoleId],
+  );
   const attentionItems = useMemo(
     () => [...pending].sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0)),
     [pending],

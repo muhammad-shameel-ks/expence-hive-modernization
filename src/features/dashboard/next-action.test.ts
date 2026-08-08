@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ME, type Expense } from "./mock-data";
-import { isTerminal, nextActionFor } from "./next-action";
+import { isTerminal, isTerminalPoolEligible, nextActionFor } from "./next-action";
 
 function expense(overrides: Partial<Expense>): Expense {
   return {
@@ -119,6 +119,81 @@ describe("nextActionFor", () => {
   it("falls back to name matching when either side has no actor id", () => {
     const assigned = expense({ status: "in-approval", nextStage: "Manager approval", nextActor: "Ada Lovelace" });
     expect(nextActionFor(assigned, "Ada Lovelace", "emp-ada").mine).toBe(true);
+  });
+
+  it("marks finance verification as mine for any holder of the terminal step's role, not just the assigned actor", () => {
+    const inFinance = expense({
+      status: "in-finance",
+      requesterId: "emp-requester",
+      nextActor: "Rishikesh",
+      nextActorId: "emp-finance-1",
+      steps: [
+        {
+          id: "s-1",
+          roleId: "role-finance-executive",
+          roleName: "Finance Executive",
+          status: "pending",
+        },
+      ],
+    });
+    // The assigned actor is eligible.
+    expect(nextActionFor(inFinance, "Rishikesh", "emp-finance-1", "role-finance-executive").mine).toBe(true);
+    // A different active holder of the same role is also eligible (pool).
+    expect(nextActionFor(inFinance, "Rishikesh 2", "emp-finance-2", "role-finance-executive").mine).toBe(true);
+    // A viewer holding a different role is not.
+    expect(nextActionFor(inFinance, "Pramod", "emp-pramod", "role-finance-head").mine).toBe(false);
+    // Without a role id the gate falls back to strict assignment.
+    expect(nextActionFor(inFinance, "Rishikesh 2", "emp-finance-2").mine).toBe(false);
+  });
+
+  it("does not let the requester verify or pay their own claim even when they hold the terminal role", () => {
+    const inFinance = expense({
+      status: "in-finance",
+      requesterId: "emp-finance",
+      nextActorId: "emp-finance-2",
+      steps: [
+        {
+          id: "s-1",
+          roleId: "role-finance-executive",
+          roleName: "Finance Executive",
+          status: "pending",
+        },
+      ],
+    });
+    expect(nextActionFor(inFinance, "Rishikesh", "emp-finance", "role-finance-executive").mine).toBe(false);
+  });
+});
+
+describe("isTerminalPoolEligible", () => {
+  const base = {
+    requesterId: "emp-requester",
+    steps: [{ roleId: "role-finance-executive", status: "pending" }],
+  } as const;
+
+  it("is true for a holder of the current step's role who is not the requester", () => {
+    expect(isTerminalPoolEligible(base, "emp-finance", "role-finance-executive")).toBe(true);
+  });
+
+  it("is false without a viewer id or role id", () => {
+    expect(isTerminalPoolEligible(base)).toBe(false);
+    expect(isTerminalPoolEligible(base, "emp-finance")).toBe(false);
+    expect(isTerminalPoolEligible(base, undefined, "role-finance-executive")).toBe(false);
+  });
+
+  it("is false for the requester of the claim", () => {
+    expect(isTerminalPoolEligible(base, "emp-requester", "role-finance-executive")).toBe(false);
+  });
+
+  it("is false when the viewer holds a different role than the current step", () => {
+    expect(isTerminalPoolEligible(base, "emp-pramod", "role-finance-head")).toBe(false);
+  });
+
+  it("is false when the current step is a team-lead step (no role id)", () => {
+    expect(isTerminalPoolEligible({ ...base, steps: [{ roleId: null, status: "pending" }] }, "emp-finance", "role-finance-executive")).toBe(false);
+  });
+
+  it("is false when no step is waiting on an actor", () => {
+    expect(isTerminalPoolEligible({ requesterId: "emp-requester", steps: [{ roleId: "role-finance-executive", status: "approved" }] }, "emp-finance", "role-finance-executive")).toBe(false);
   });
 });
 

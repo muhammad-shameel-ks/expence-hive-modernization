@@ -9,3 +9,10 @@
 - Business mutations must stay server-side behind authorization and transaction boundaries; do not put workflow authority in client components.
 - UX is a first-class requirement: progressive forms, autosave, clear next actions, actionable approval inboxes, responsive layouts, and WCAG 2.2 AA behavior are specified requirements.
 - No database, authentication, storage, email, realtime, or provider adapter is implemented yet; do not assume those services exist.
+
+## Current Work
+
+- What: persistent receipt preview surface in the `/expenses/new` wizard - dual-source `ReceiptPreview`, one hoisted viewer across all wizard steps, mobile sheet access on every step, source/focus/mobile hydration polish, and Review-step auto-scroll (ADRs 0006-0007).
+- Plan: sliced in `.scratch/wizard-receipt-preview/slices/`; ADRs `docs/architecture/decisions/0006-dual-source-receipt-preview.md` and `0007-persistent-wizard-receipt-preview.md`; CONTEXT.md updated.
+- Next: review - lint/build green; 538 vitest tests passing across 31 test files (browser verification completed for the wizard surface).
+

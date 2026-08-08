@@ -250,8 +250,10 @@ export interface TimelineDotProps {
   tone?: TimelineTone;
   variant?: "filled" | "outlined";
   size?: keyof typeof DOT_SIZES;
-  /** Marks the current stage of a live journey with a pulse ring. */
+  /** Marks the current stage of a live journey with a static ring. */
   current?: boolean;
+  /** Marks the immediate next stage of a live journey with a pulse. */
+  next?: boolean;
   /** Marks a pending stage in the flow visible as greyed out. */
   pending?: boolean;
   /** Icon or other content rendered inside the dot. */
@@ -265,6 +267,7 @@ export function TimelineDot({
   variant = "filled",
   size = "md",
   current = false,
+  next = false,
   pending = false,
   icon,
   children,
@@ -287,7 +290,7 @@ export function TimelineDot({
         className,
       )}
     >
-      {current && !isPending ? (
+      {next && !isPending ? (
         <span
           aria-hidden
           className="absolute inset-0 animate-ping rounded-full bg-current opacity-30 motion-reduce:animate-none"

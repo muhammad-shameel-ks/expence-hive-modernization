@@ -76,6 +76,7 @@ export default async function ExpensesPage() {
           <ExpenseDashboard
             currentUser={workspace.employee.name}
             currentUserId={workspace.employee.id}
+            currentUserRoleId={workspace.employee.role?.id}
             expenses={expenses}
             activity={activity}
           />

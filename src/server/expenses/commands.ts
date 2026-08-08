@@ -30,15 +30,14 @@ function canViewOrganizationActivity(employee: ExpenseEmployee): boolean {
   );
 }
 
-function canSeePayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
+function canSeeClaimComments(claim: ExpenseClaim, viewer: ExpenseEmployee): boolean {
   if (claim.requesterId === viewer.id) return true;
   return canAccessFinance(viewer);
 }
 
-function maskPayoutDetails(claim: ExpenseClaim, viewer: ExpenseEmployee): ExpenseClaim {
-  if (canSeePayoutDetails(claim, viewer)) return claim;
+function maskClaimComments(claim: ExpenseClaim, viewer: ExpenseEmployee): ExpenseClaim {
+  if (canSeeClaimComments(claim, viewer)) return claim;
   const masked = { ...claim };
-  delete masked.payoutDetails;
   delete masked.comments;
   return masked;
 }
@@ -176,7 +175,14 @@ export function createExpenseCommands({
     let changed = false;
     for (;;) {
       const index = claim.steps.findIndex((step) => step.status === "pending");
-      if (index === -1 || isTerminalIndex(claim, index)) break;
+      if (index === -1) break;
+      if (isTerminalIndex(claim, index)) {
+        if (claim.status === "in-approval") {
+          claim.status = "in-finance";
+          changed = true;
+        }
+        break;
+      }
       const step = claim.steps[index];
       const vacant = !step.assignedActorId || !activeEmployeeIds.has(step.assignedActorId);
       const since = claim.currentStageSince ?? claim.submittedAt ?? claim.createdAt;
@@ -258,7 +264,14 @@ export function createExpenseCommands({
     return claim;
   }
 
-  async function requireAssignedClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+  // Shared mutation precondition: an active actor of the claim's organization
+  // acting on a claim they did not raise. The caller adds the stage-specific
+  // authority check (assignment or pool eligibility).
+  async function requireClaimForActor(
+    actorId: string,
+    claimId: string,
+    selfClaimMessage: string,
+  ): Promise<{ actor: ExpenseEmployee; claim: ExpenseClaim }> {
     const actor = await requireEmployee(actorId);
     const claimRow = await store.getClaim(claimId);
     if (!claimRow || claimRow.organizationId !== actor.organizationId) {
@@ -266,12 +279,36 @@ export function createExpenseCommands({
     }
     const claim = await catchUp(claimRow);
     if (claim.requesterId === actorId) {
-      throw new ExpenseError("unauthorized", "You cannot approve your own expense claim.");
+      throw new ExpenseError("unauthorized", selfClaimMessage);
     }
+    return { actor, claim };
+  }
+
+  async function requireAssignedClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+    const { claim } = await requireClaimForActor(actorId, claimId, "You cannot approve your own expense claim.");
     if (claim.currentActorId !== actorId) {
       throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
     }
     return claim;
+  }
+
+  async function requireTerminalPoolClaim(
+    actorId: string,
+    claimId: string,
+  ): Promise<{ actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }> {
+    const { actor, claim } = await requireClaimForActor(
+      actorId,
+      claimId,
+      "You cannot verify or pay your own expense claim.",
+    );
+    const index = terminalIndex(claim);
+    const step = claim.steps[index];
+    const employees = await store.listEmployees(claim.organizationId);
+    const requester = employees.find((candidate) => candidate.id === claim.requesterId);
+    if (!requester || !step || !isEligible(requester, actor, stepTarget(step))) {
+      throw new ExpenseError("unauthorized", "You are not eligible to process this claim's terminal stage.");
+    }
+    return { actor, claim, step };
   }
 
   // Uploads receipt bytes to a claim-scoped key and returns the attachment
@@ -344,7 +381,6 @@ export function createExpenseCommands({
         expenseDate: input.expenseDate,
         status: "draft",
         attachment,
-        payoutDetails: input.payoutDetails ? { ...input.payoutDetails } : undefined,
         steps: [],
         history: [{ id: idFactory("history"), kind: "draft", actorId, createdAt }],
         version: 1,
@@ -391,7 +427,6 @@ export function createExpenseCommands({
       claim.remark = (input.remark ?? "").trim();
       claim.amountMinor = input.amountMinor;
       claim.expenseDate = input.expenseDate;
-      claim.payoutDetails = input.payoutDetails ? { ...input.payoutDetails } : undefined;
       claim.version += 1;
       try {
         await store.updateClaim(claim);
@@ -443,13 +478,13 @@ export function createExpenseCommands({
     async getClaim(actorId, claimId) {
       const employee = await requireEmployee(actorId);
       const claim = await requireViewableClaim(actorId, claimId);
-      return maskPayoutDetails(claim, employee);
+      return maskClaimComments(claim, employee);
     },
 
     async listClaims(actorId) {
       const employee = await requireEmployee(actorId);
       const claims = await catchUpAll(await store.listClaimsForEmployee(employee), employee.organizationId);
-      return claims.map((claim) => maskPayoutDetails(claim, employee));
+      return claims.map((claim) => maskClaimComments(claim, employee));
     },
 
     async getWorkspace(actorId) {
@@ -459,7 +494,7 @@ export function createExpenseCommands({
         store.listClaimsForEmployee(employee),
       ]);
       const claims = await catchUpAll(rawClaims, employee.organizationId);
-      return { employee, employees, claims: claims.map((claim) => maskPayoutDetails(claim, employee)) };
+      return { employee, employees, claims: claims.map((claim) => maskClaimComments(claim, employee)) };
     },
 
     async listEmployees(actorId) {
@@ -491,7 +526,7 @@ export function createExpenseCommands({
           status: "pending" as const,
         };
       });
-      claim.status = "in-approval";
+      claim.status = isTerminalIndex(claim, 0) ? "in-finance" : "in-approval";
       claim.currentStage = claim.steps[0].roleId ?? undefined;
       claim.currentActorId = claim.steps[0].assignedActorId;
       claim.currentStageSince = submittedAt;
@@ -669,12 +704,10 @@ export function createExpenseCommands({
     },
 
     async verifyClaim(actorId, claimId) {
-      const claim = await requireAssignedClaim(actorId, claimId);
-      const index = terminalIndex(claim);
-      if (claim.status !== "in-finance" || claim.steps[index]?.status !== "pending") {
+      const { claim, step } = await requireTerminalPoolClaim(actorId, claimId);
+      if (claim.status !== "in-finance" || step.status !== "pending") {
         throw new ExpenseError("conflict", "This claim is not waiting for Finance verification.");
       }
-      const step = claim.steps[index];
       const verifiedAt = now().toISOString();
       step.status = "verified";
       step.decidedAt = verifiedAt;
@@ -685,13 +718,11 @@ export function createExpenseCommands({
     },
 
     async markPaid(actorId, claimId) {
-      const claim = await requireAssignedClaim(actorId, claimId);
-      const index = terminalIndex(claim);
+      const { claim, step } = await requireTerminalPoolClaim(actorId, claimId);
       if (claim.status !== "in-finance") {
         throw new ExpenseError("conflict", "This claim is not ready for payment.");
       }
-      const step = claim.steps[index];
-      if (!step || step.status !== "verified") throw new ExpenseError("conflict", "Verify the claim before marking payment.");
+      if (step.status !== "verified") throw new ExpenseError("conflict", "Verify the claim before marking payment.");
       const paidAt = now().toISOString();
       step.status = "paid";
       step.decidedAt = paidAt;
@@ -763,8 +794,5 @@ function validateDraft(input: CreateExpenseDraftInput): void {
   if (input.currency !== "INR") throw new ExpenseError("validation", "Expenses must be submitted in INR.");
   if (!/^\d{4}-\d{2}-\d{2}$/.test(input.expenseDate)) {
     throw new ExpenseError("validation", "Choose a valid expense date.");
-  }
-  if (input.payoutDetails && (!input.payoutDetails.accountNumber?.trim() || !input.payoutDetails.ifscCode?.trim())) {
-    throw new ExpenseError("validation", "Enter a valid account number and IFSC code.");
   }
 }

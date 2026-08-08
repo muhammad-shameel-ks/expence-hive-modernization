@@ -34,10 +34,27 @@ export class InMemoryExpenseStore implements ExpenseStore {
   }
 
   async listClaimsForEmployee(employee: ExpenseEmployee): Promise<ExpenseClaim[]> {
+    // Mirrors the pg store: besides claims the employee raised or is
+    // currently assigned to, an active holder of the terminal stage's role
+    // also sees every in-finance claim of that stage (pool semantics,
+    // stories 13/14), so claims assigned to another pool member surface for
+    // the holder to verify or mark paid. The claim's current stage is the
+    // terminal one whenever status is in-finance, so any pending/verified
+    // step with the holder's role is that stage.
     const claims = [...this.claims.values()].filter((claim) => {
       if (claim.organizationId !== employee.organizationId) return false;
       if (claim.requesterId === employee.id) return true;
-      return claim.currentActorId === employee.id;
+      if (claim.currentActorId === employee.id) return true;
+      if (claim.status === "in-finance" && employee.role) {
+        const roleId = employee.role.id;
+        return claim.steps.some(
+          (step) =>
+            (step.status === "pending" || step.status === "verified") &&
+            step.roleId !== null &&
+            step.roleId === roleId,
+        );
+      }
+      return false;
     });
     return claims.map((claim) => structuredClone(claim));
   }

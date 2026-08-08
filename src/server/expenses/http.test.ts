@@ -44,8 +44,6 @@ const BASE_FIELDS: Record<string, string> = {
   remark: "Airport pickup",
   amount: "850.00",
   expenseDate: "2026-08-04",
-  accountNumber: "32534240620",
-  ifscCode: "SBIN0012861",
 };
 
 function multipartBody(fields: Record<string, string>, file?: { name: string; type: string; data: Uint8Array<ArrayBuffer> }): FormData {
@@ -122,8 +120,6 @@ describe("expense HTTP boundary", () => {
           remark: "Dinner with Acme Corp",
           amount: "2400.00",
           expenseDate: "2026-08-04",
-          accountNumber: "32534240620",
-          ifscCode: "SBIN0012861",
         },
         { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT },
       ),
@@ -140,47 +136,8 @@ describe("expense HTTP boundary", () => {
         subCategory: "Client Meeting",
         remark: "Dinner with Acme Corp",
         attachment: { fileName: "receipt.pdf" },
-        payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
       },
     });
-  });
-
-  it("rejects a draft submitted without payout details", async () => {
-    const { commands } = build();
-    const response = await handleCreateExpenseRequest(
-      createRequest({
-        title: "Client dinner",
-        category: "Meals",
-        subCategory: "Client Meeting",
-        remark: "Dinner with Acme Corp",
-        amount: "2400.00",
-        expenseDate: "2026-08-04",
-      }),
-      commands,
-      "emp-shameel",
-    );
-
-    expect(response.status).toBe(422);
-  });
-
-  it("rejects a draft submitted with whitespace-only payout details", async () => {
-    const { commands } = build();
-    const response = await handleCreateExpenseRequest(
-      createRequest({
-        title: "Client dinner",
-        category: "Meals",
-        subCategory: "Client Meeting",
-        remark: "Dinner with Acme Corp",
-        amount: "2400.00",
-        expenseDate: "2026-08-04",
-        accountNumber: "   ",
-        ifscCode: "   ",
-      }),
-      commands,
-      "emp-shameel",
-    );
-
-    expect(response.status).toBe(422);
   });
 
   it("submits a draft through a protected command boundary", async () => {
@@ -193,8 +150,6 @@ describe("expense HTTP boundary", () => {
         remark: "Airport pickup",
         amount: "850.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -224,8 +179,6 @@ describe("expense HTTP boundary", () => {
         remark: "No receipt available",
         amount: "500.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -373,7 +326,7 @@ describe("expense HTTP boundary", () => {
   it("rejects a create request missing a required text field", async () => {
     const { commands } = build();
     const fields = Object.fromEntries(
-      Object.entries(BASE_FIELDS).filter(([key]) => key !== "accountNumber"),
+      Object.entries(BASE_FIELDS).filter(([key]) => key !== "title"),
     );
     const response = await handleCreateExpenseRequest(createRequest(fields), commands, "emp-shameel");
 
@@ -554,8 +507,6 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -596,8 +547,6 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -636,8 +585,6 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -673,8 +620,6 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -711,8 +656,6 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -748,8 +691,6 @@ describe("expense HTTP boundary", () => {
         remark: "Airport pickup",
         amount: "850.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",
@@ -789,8 +730,6 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-        accountNumber: "32534240620",
-        ifscCode: "SBIN0012861",
       }),
       commands,
       "emp-shameel",

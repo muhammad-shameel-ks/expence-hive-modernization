@@ -17,7 +17,6 @@ function buildClaim(): ExpenseClaim {
     currency: "INR",
     expenseDate: "2026-08-04",
     status: "draft",
-    payoutDetails: { accountNumber: "32534240620", ifscCode: "SBIN0012861" },
     steps: [],
     history: [{ id: "history-1", kind: "draft", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" }],
     version: 1,
@@ -26,7 +25,7 @@ function buildClaim(): ExpenseClaim {
 }
 
 describe("PostgresExpenseStore", () => {
-  it("persists payout details and returns them when reading the claim back", async () => {
+  it("persists claim fields when saving a claim", async () => {
     const query = vi.fn().mockResolvedValue(undefined);
     const client = { query, release: vi.fn() };
     const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
@@ -35,12 +34,10 @@ describe("PostgresExpenseStore", () => {
     await store.createClaim(buildClaim());
 
     const insertCall = query.mock.calls.find(([sql]) => typeof sql === "string" && sql.includes("INSERT INTO reimbursement_claims"));
-    expect(insertCall?.[0]).toContain("account_number");
-    expect(insertCall?.[0]).toContain("ifsc_code");
     expect(insertCall?.[0]).toContain("sub_category");
     expect(insertCall?.[0]).toContain("remark");
     expect(insertCall?.[1]).toEqual(
-      expect.arrayContaining(["32534240620", "SBIN0012861", "Airfare", "Round trip for the Bengaluru client kickoff"]),
+      expect.arrayContaining(["Airfare", "Round trip for the Bengaluru client kickoff"]),
     );
   });
 
@@ -60,7 +57,7 @@ describe("PostgresExpenseStore", () => {
     expect(updateCall?.[1]).toEqual(expect.arrayContaining(["Awaiting invoice copy before payout"]));
   });
 
-  it("maps account_number and ifsc_code columns back into payoutDetails", async () => {
+  it("maps sub_category, remark, and comments columns back into claim", async () => {
     const poolQuery = vi.fn().mockImplementation((sql: string) => {
       if (sql.includes("FROM reimbursement_claims")) {
         return Promise.resolve({
@@ -82,8 +79,6 @@ describe("PostgresExpenseStore", () => {
               version: "1",
               created_at: "2026-08-04T10:00:00.000Z",
               submitted_at: null,
-              account_number: "32534240620",
-              ifsc_code: "SBIN0012861",
               comments: "Awaiting invoice copy before payout",
             },
           ],
@@ -96,7 +91,6 @@ describe("PostgresExpenseStore", () => {
 
     const claim = await store.getClaim("claim-1");
 
-    expect(claim?.payoutDetails).toEqual({ accountNumber: "32534240620", ifscCode: "SBIN0012861" });
     expect(claim).toMatchObject({
       subCategory: "Airfare",
       remark: "Round trip for the Bengaluru client kickoff",
@@ -126,8 +120,6 @@ describe("PostgresExpenseStore", () => {
               version: "5",
               created_at: "2026-08-04T10:00:00.000Z",
               submitted_at: "2026-08-04T10:00:00.000Z",
-              account_number: "32534240620",
-              ifsc_code: "SBIN0012861",
             },
           ],
         });
@@ -140,7 +132,35 @@ describe("PostgresExpenseStore", () => {
     const claims = await store.listClaimsForOrganization("org-1");
 
     expect(claims).toHaveLength(1);
-    expect(claims[0].payoutDetails).toEqual({ accountNumber: "32534240620", ifscCode: "SBIN0012861" });
+  });
+
+  it("lists in-finance claims for any holder of the terminal stage's role, not just the assigned actor", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes("FROM reimbursement_claims")) {
+        expect(sql).toContain("rc.status = 'in-finance'");
+        expect(sql).toContain("claim_approval_steps s");
+        expect(sql).toContain("employee_roles er");
+        expect(sql).toContain("s.status IN ('pending', 'verified')");
+        expect(params).toEqual(["org-1", "emp-finance-2"]);
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const employee = {
+      id: "emp-finance-2",
+      organizationId: "org-1",
+      name: "Rishikesh 2",
+      role: { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" },
+      active: true,
+      managerId: null,
+    };
+
+    const claims = await store.listClaimsForEmployee(employee);
+
+    expect(claims).toEqual([]);
   });
 
   it("queries an actor's activity by joining history events to their claims, filtered to the given kinds", async () => {
@@ -441,7 +461,7 @@ describe("PostgresExpenseStore claim lifecycle", () => {
     expect(updateCall?.[0]).toContain("amount_minor");
     expect(updateCall?.[0]).toContain("expense_date");
     expect(updateCall?.[1]).toEqual(
-      expect.arrayContaining(["Bengaluru client flight", 1250000, "2026-08-04", "32534240620", "SBIN0012861"]),
+      expect.arrayContaining(["Bengaluru client flight", 1250000, "2026-08-04"]),
     );
     const attachmentCall = query.mock.calls.find(
       ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO claim_attachments"),
