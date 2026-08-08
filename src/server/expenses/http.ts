@@ -1,6 +1,7 @@
 import { ExpenseError, isExpenseError, type ExpenseCommands } from "./commands";
 import type { CreateExpenseDraftInput, ReceiptUploadInput } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel } from "./receipt-validation";
+import { buildExpenseSummaryPdf } from "./summary-pdf";
 
 // The receipt cap applies to the file's own bytes; the whole multipart body
 // additionally carries the envelope (boundaries, part headers, and the six
@@ -164,6 +165,27 @@ export async function handleGetReceiptRequest(
         "content-disposition": `inline; filename="${sanitizeFileName(receipt.fileName)}"`,
         // Receipt bytes are sensitive, authorization-checked data: never let
         // a shared or on-disk cache serve them without a fresh access check.
+        "cache-control": "private, no-store",
+      },
+    });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleGetExpenseSummaryRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const { claim, employees, receipt } = await commands.getExpenseSummary(actorId, claimId);
+    const pdf = await buildExpenseSummaryPdf({ claim, employees, receipt });
+    return new Response(new Uint8Array(pdf), {
+      headers: {
+        "content-type": "application/pdf",
+        "content-disposition": `attachment; filename="${sanitizeFileName(claim.ref)}-summary.pdf"`,
         "cache-control": "private, no-store",
       },
     });

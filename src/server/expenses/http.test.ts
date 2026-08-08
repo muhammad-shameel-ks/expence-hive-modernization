@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { PDFDocument } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { InMemoryBlobStore } from "../blob/fakes";
 import { createExpenseCommands } from "./commands";
@@ -9,6 +10,7 @@ import {
   handleFinancePaymentQueueRequest,
   handleGetExpenseRequest,
   handleGetReceiptRequest,
+  handleGetExpenseSummaryRequest,
   handleRejectExpenseRequest,
   handleSubmitExpenseRequest,
   handleTakeOverExpenseRequest,
@@ -36,6 +38,11 @@ function emp(
 
 const JPEG_RECEIPT = new Uint8Array([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46, 0x00, 0x01]);
 const PDF_RECEIPT = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a]); // "%PDF-1.4\n"
+
+function isPdfBytes(bytes: Uint8Array): boolean {
+  const header = [0x25, 0x50, 0x44, 0x46, 0x2d]; // "%PDF-"
+  return header.every((byte, index) => bytes[index] === byte);
+}
 
 const BASE_FIELDS: Record<string, string> = {
   title: "Taxi",
@@ -488,6 +495,65 @@ describe("expense HTTP boundary", () => {
     );
     expect(okResponse.status).toBe(200);
     await expect(okResponse.json()).resolves.toMatchObject({ claims: [] });
+
+    const deniedResponse = await handleFinancePaymentQueueRequest(
+      new Request("http://localhost/api/expenses/finance-queue"),
+      commands,
+      "emp-shameel",
+    );
+    expect(deniedResponse.status).toBe(403);
+  });
+
+  it("serves a rejected claim in the finance payment queue to Finance and still denies an employee", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+    await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+    await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-pramod",
+      claim.id,
+    );
+    await handleRejectExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Payout details missing IFSC code" }),
+      }),
+      commands,
+      "emp-finance",
+      claim.id,
+    );
+
+    const okResponse = await handleFinancePaymentQueueRequest(
+      new Request("http://localhost/api/expenses/finance-queue"),
+      commands,
+      "emp-finance",
+    );
+    expect(okResponse.status).toBe(200);
+    await expect(okResponse.json()).resolves.toMatchObject({ claims: [{ id: claim.id, status: "rejected" }] });
 
     const deniedResponse = await handleFinancePaymentQueueRequest(
       new Request("http://localhost/api/expenses/finance-queue"),
@@ -998,5 +1064,156 @@ describe("draft update and delete handlers", () => {
     );
 
     expect(deleteResponse.status).toBe(409);
+  });
+});
+
+describe("expense summary endpoint", () => {
+  function summaryRequest(claimId: string): Request {
+    return new Request(`http://localhost/api/expenses/${claimId}/summary`);
+  }
+
+  async function createSubmittedClaim(
+    commands: ReturnType<typeof build>["commands"],
+    withReceipt = true,
+  ) {
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(
+        BASE_FIELDS,
+        withReceipt ? { name: "boarding-pass.pdf", type: "application/pdf", data: PDF_RECEIPT } : undefined,
+      ),
+      commands,
+      "emp-shameel",
+    );
+    const payload = (await createResponse.json()) as { claim: { id: string } };
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${payload.claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      payload.claim.id,
+    );
+    return payload.claim;
+  }
+
+  it("serves a PDF summary to Finance, the requester, and an assigned approver", async () => {
+    const { commands } = build();
+    const claim = await createSubmittedClaim(commands);
+
+    for (const actorId of ["emp-finance", "emp-shameel", "emp-ada"]) {
+      const response = await handleGetExpenseSummaryRequest(summaryRequest(claim.id), commands, actorId, claim.id);
+
+      expect(response.status).toBe(200);
+      expect(response.headers.get("content-type")).toBe("application/pdf");
+      expect(response.headers.get("content-disposition")).toBe(
+        `attachment; filename="${claim.ref}-summary.pdf"`,
+      );
+      expect(response.headers.get("cache-control")).toContain("no-store");
+      const bytes = new Uint8Array(await response.arrayBuffer());
+      expect(isPdfBytes(bytes)).toBe(true);
+      await expect(PDFDocument.load(bytes)).resolves.toBeInstanceOf(PDFDocument);
+    }
+  });
+
+  it("denies the summary to an employee of another organization", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
+        {
+          id: "emp-outsider",
+          organizationId: "org-2",
+          name: "Outsider",
+          role: ROLE_EXECUTIVE,
+          active: true,
+          managerId: null,
+        },
+      ],
+      flows: [],
+    });
+    const commands = createExpenseCommands({
+      store,
+      blobStore: new InMemoryBlobStore(),
+      idFactory: (() => {
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = (await createResponse.json()) as { claim: { id: string } };
+
+    const response = await handleGetExpenseSummaryRequest(
+      summaryRequest(claim.id),
+      commands,
+      "emp-outsider",
+      claim.id,
+    );
+
+    expect(response.status).toBe(404);
+  });
+
+  it("denies the summary to someone who never touched the claim and is not Finance", async () => {
+    const { commands } = build();
+    const claim = await createSubmittedClaim(commands);
+
+    const response = await handleGetExpenseSummaryRequest(
+      summaryRequest(claim.id),
+      commands,
+      "emp-katherine",
+      claim.id,
+    );
+
+    expect(response.status).toBe(403);
+  });
+
+  it("serves a valid PDF summary for a claim without a receipt", async () => {
+    const { commands } = build();
+    const claim = await createSubmittedClaim(commands, false);
+
+    const response = await handleGetExpenseSummaryRequest(
+      summaryRequest(claim.id),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="${claim.ref}-summary.pdf"`,
+    );
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect(isPdfBytes(bytes)).toBe(true);
+    await expect(PDFDocument.load(bytes)).resolves.toBeInstanceOf(PDFDocument);
+  });
+
+  it("serves a valid PDF summary for a draft claim through the route", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "boarding-pass.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = (await createResponse.json()) as { claim: { id: string } };
+
+    const response = await handleGetExpenseSummaryRequest(
+      summaryRequest(claim.id),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-disposition")).toBe(
+      `attachment; filename="${claim.ref}-summary.pdf"`,
+    );
+    const bytes = new Uint8Array(await response.arrayBuffer());
+    expect(isPdfBytes(bytes)).toBe(true);
+    await expect(PDFDocument.load(bytes)).resolves.toBeInstanceOf(PDFDocument);
   });
 });
