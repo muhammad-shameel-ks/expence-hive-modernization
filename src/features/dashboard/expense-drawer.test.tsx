@@ -4,7 +4,7 @@ import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/re
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { ExpenseDrawer } from "./expense-drawer";
 import type { Expense } from "./mock-data";
-import type { ExpenseClaim } from "@/server/expenses/ports";
+import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 
 const mockRefresh = vi.fn();
 const mockPush = vi.fn();
@@ -15,6 +15,43 @@ vi.mock("next/navigation", () => ({
     push: mockPush,
   }),
 }));
+
+// The verify/pay responses carry the organization's employees so the drawer
+// can render the stamped claim with real actor names.
+const EMPLOYEES: ExpenseEmployee[] = [
+  {
+    id: "emp-user",
+    organizationId: "org-1",
+    name: "Muhammad Shameel",
+    role: { id: "role-executive", code: "executive", displayName: "Executive" },
+    active: true,
+    managerId: null,
+  },
+  {
+    id: "emp-pramod",
+    organizationId: "org-1",
+    name: "Pramod",
+    role: { id: "role-finance-head", code: "finance-head", displayName: "Finance Head" },
+    active: true,
+    managerId: null,
+  },
+  {
+    id: "emp-finance",
+    organizationId: "org-1",
+    name: "Rishikesh",
+    role: { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" },
+    active: true,
+    managerId: null,
+  },
+];
+
+function verifiedResponse(): Response {
+  return new Response(JSON.stringify({ claim: verifiedClaim(), employees: EMPLOYEES }), { status: 200 });
+}
+
+function paidResponse(): Response {
+  return new Response(JSON.stringify({ claim: paidClaim(), employees: EMPLOYEES }), { status: 200 });
+}
 
 const BASE_HISTORY = [
   {
@@ -215,7 +252,7 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ claim: verifiedClaim() }), { status: 200 })),
+      vi.fn().mockResolvedValue(verifiedResponse()),
     );
 
     render(
@@ -256,10 +293,10 @@ describe("ExpenseDrawer verification and payment workflow", () => {
       "fetch",
       vi.fn().mockImplementation((url: string) => {
         if (url.endsWith("/verify")) {
-          return Promise.resolve(new Response(JSON.stringify({ claim: verifiedClaim() }), { status: 200 }));
+          return Promise.resolve(verifiedResponse());
         }
         if (url.endsWith("/pay")) {
-          return Promise.resolve(new Response(JSON.stringify({ claim: paidClaim() }), { status: 200 }));
+          return Promise.resolve(paidResponse());
         }
         return Promise.reject(new Error("Unknown route"));
       }),
@@ -300,7 +337,7 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ claim: verifiedClaim() }), { status: 200 })),
+      vi.fn().mockResolvedValue(verifiedResponse()),
     );
 
     render(
@@ -336,7 +373,7 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ claim: verifiedClaim() }), { status: 200 })),
+      vi.fn().mockResolvedValue(verifiedResponse()),
     );
 
     render(
@@ -357,8 +394,40 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     expect(screen.getByText("Finance Head review complete")).toBeInTheDocument();
     expect(screen.getByText("Finance verified")).toBeInTheDocument();
-    expect(screen.getByText("finance executive")).toBeInTheDocument();
-    expect(screen.queryByText("finance head")).not.toBeInTheDocument();
+    expect(screen.getAllByText("Finance Executive").length).toBeGreaterThan(0);
+    expect(screen.queryByText("Finance Head")).not.toBeInTheDocument();
+  });
+
+  it("renders the stamped claim with real actor names, not System placeholders", async () => {
+    const expense = buildExpense();
+
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(verifiedResponse()));
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Verify for payment" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Mark payment as completed now?")).toBeInTheDocument();
+    });
+
+    // The server-stamped claim resolves history actors and the assigned
+    // finance executive through the employee list in the response.
+    expect(screen.getByText("Muhammad Shameel")).toBeInTheDocument();
+    expect(screen.getByText("Pramod")).toBeInTheDocument();
+    expect(screen.getAllByText("Rishikesh").length).toBeGreaterThan(0);
+    expect(screen.queryByText("System")).not.toBeInTheDocument();
+    // The verified terminal step reads as awaiting payment, not pending
+    // verification.
+    expect(screen.getByText("Awaiting payment confirmation")).toBeInTheDocument();
   });
 
   it("refreshes the queue when the drawer is closed via the X button after verifying", async () => {
@@ -366,7 +435,7 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ claim: verifiedClaim() }), { status: 200 })),
+      vi.fn().mockResolvedValue(verifiedResponse()),
     );
 
     render(
@@ -397,7 +466,7 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     vi.stubGlobal(
       "fetch",
-      vi.fn().mockResolvedValue(new Response(JSON.stringify({ claim: verifiedClaim() }), { status: 200 })),
+      vi.fn().mockResolvedValue(verifiedResponse()),
     );
 
     render(

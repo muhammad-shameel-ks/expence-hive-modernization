@@ -178,15 +178,14 @@ describe("ReceiptPreview close control", () => {
   });
 });
 
-describe("ReceiptPreview wheel zoom at scale bounds", () => {
-  it("does not preventDefault or change scale/pan when already at MIN_SCALE and scrolling further out", async () => {
-    // A tiny 100x100 viewport against the 600x800 base page fits at 0.125,
-    // clamped to MIN_SCALE (0.25) -> the viewer opens already at the floor.
-    const { container } = await renderAndWaitReady({ w: 100, h: 100 }, { w: 150, h: 200 });
-    expect(percentageText()).toBe("25%");
+describe("ReceiptPreview wheel pan and zoom", () => {
+  it("pans the page on plain wheel and does not zoom", async () => {
+    const { container, layer } = await renderAndWaitReady({ w: 800, h: 600 }, { w: 600, h: 800 });
+    expect(percentageText()).toBe("75%");
+    expect(layer.style.transform).toBe("translate3d(100px, 0px, 0)");
 
     const event = new WheelEvent("wheel", {
-      deltaY: 100, // positive deltaY = zoom out further, already at the floor
+      deltaY: 60, // plain wheel scrolls the page content, not the zoom
       clientX: 10,
       clientY: 10,
       bubbles: true,
@@ -196,16 +195,70 @@ describe("ReceiptPreview wheel zoom at scale bounds", () => {
       container.dispatchEvent(event);
     });
 
-    expect(event.defaultPrevented).toBe(false);
-    expect(percentageText()).toBe("25%");
+    expect(event.defaultPrevented).toBe(true);
+    expect(percentageText()).toBe("75%");
+    expect(layer.style.transform).toBe("translate3d(100px, -60px, 0)");
   });
 
-  it("does preventDefault and zooms when the wheel direction moves away from the bound", async () => {
-    const { container } = await renderAndWaitReady({ w: 100, h: 100 }, { w: 150, h: 200 });
-    expect(percentageText()).toBe("25%");
+  it("pans horizontally from wheel deltaX (trackpad swipes)", async () => {
+    const { container, layer } = await renderAndWaitReady({ w: 800, h: 600 }, { w: 600, h: 800 });
+    expect(layer.style.transform).toBe("translate3d(100px, 0px, 0)");
 
     const event = new WheelEvent("wheel", {
-      deltaY: -100, // negative deltaY = zoom in, away from MIN_SCALE
+      deltaX: -40, // swipe right moves the view right
+      clientX: 10,
+      clientY: 10,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      container.dispatchEvent(event);
+    });
+
+    expect(event.defaultPrevented).toBe(true);
+    expect(layer.style.transform).toBe("translate3d(140px, 0px, 0)");
+  });
+
+  it("lets plain wheel fall through to the surrounding container once the pan is at its bound", async () => {
+    const { container } = await renderAndWaitReady({ w: 800, h: 600 }, { w: 600, h: 800 });
+
+    // Drive the pan to its lower vertical bound: content is 600 tall in a
+    // 600 tall viewport with a 48px margin, so a single large delta pins it.
+    const driveEvent = new WheelEvent("wheel", {
+      deltaY: 10000,
+      clientX: 10,
+      clientY: 10,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      container.dispatchEvent(driveEvent);
+    });
+    expect(driveEvent.defaultPrevented).toBe(true);
+
+    // One more in the same direction: nothing left to pan, so the event is
+    // left unprevented and the drawer/form scroll receives it.
+    const fallThroughEvent = new WheelEvent("wheel", {
+      deltaY: 10000,
+      clientX: 10,
+      clientY: 10,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      container.dispatchEvent(fallThroughEvent);
+    });
+
+    expect(fallThroughEvent.defaultPrevented).toBe(false);
+  });
+
+  it("zooms with Ctrl/Cmd + wheel toward the cursor", async () => {
+    const { container } = await renderAndWaitReady({ w: 800, h: 600 }, { w: 600, h: 800 });
+    expect(percentageText()).toBe("75%");
+
+    const event = new WheelEvent("wheel", {
+      ctrlKey: true,
+      deltaY: -100, // negative deltaY = zoom in
       clientX: 10,
       clientY: 10,
       bubbles: true,
@@ -217,8 +270,32 @@ describe("ReceiptPreview wheel zoom at scale bounds", () => {
 
     expect(event.defaultPrevented).toBe(true);
     await waitFor(() => {
-      expect(percentageText()).toBe("50%");
+      expect(percentageText()).toBe("100%");
     });
+  });
+
+  it("always prevents Ctrl/Cmd + wheel over the viewer, even at a scale bound, so browser page zoom never fires", async () => {
+    // A tiny 100x100 viewport against the 150x200 base page fits at 0.125,
+    // clamped to MIN_SCALE (0.25) -> the viewer opens already at the floor.
+    const { container } = await renderAndWaitReady({ w: 100, h: 100 }, { w: 150, h: 200 });
+    expect(percentageText()).toBe("25%");
+
+    const event = new WheelEvent("wheel", {
+      ctrlKey: true,
+      deltaY: 100, // positive deltaY = zoom out, already at the floor
+      clientX: 10,
+      clientY: 10,
+      bubbles: true,
+      cancelable: true,
+    });
+    act(() => {
+      container.dispatchEvent(event);
+    });
+
+    // preventDefault still fires: Ctrl+wheel over the viewer must never fall
+    // through to the browser's page zoom, even with nothing to zoom.
+    expect(event.defaultPrevented).toBe(true);
+    expect(percentageText()).toBe("25%");
   });
 });
 

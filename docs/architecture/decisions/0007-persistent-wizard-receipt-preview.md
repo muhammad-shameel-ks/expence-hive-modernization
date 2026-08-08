@@ -4,7 +4,9 @@ Status: accepted.
 
 ## Context
 
-The `/expenses/new` wizard (receipt-first flow) has three steps - Receipt, Details, Review - plus a CaptureRail side panel that mirrors the steps. Receipts are optional (skip path) and can be a locally picked file or a stored receipt on a resumed draft. Today the wizard shows only a file-name pill for a fresh pick and a conditional "Preview" toggle for stored receipts, so the employee cannot verify the proof they are submitting.
+The `/expenses/new` wizard (receipt-first flow) has three steps - Receipt, Details, Review - plus a CaptureRail side panel that mirrors the steps.
+Receipts are optional (skip path) and can be a locally picked file or a stored receipt on a resumed draft.
+Today the wizard shows only a file-name pill for a fresh pick and a conditional "Preview" toggle for stored receipts, so the employee cannot verify the proof they are submitting.
 
 A UX regression compounds this: on the Review step the submit button sits below the fold once forms are filled, and a preview panel would push it further down.
 
@@ -20,7 +22,10 @@ Make the receipt preview a persistent surface for the whole wizard, built on `Re
 
 ## Consequences
 
-The employee sees the proof beside the decision at every step, satisfying the UX-research requirement that evidence sits beside the decision. One viewer, two mount modes (embedded and sheet) keeps chrome consistent. The dark rail hosts a light viewing surface, so the viewer card needs its own light background treatment. The auto-scroll keeps Review submit reachable despite the taller layout.
+The employee sees the proof beside the decision at every step, satisfying the UX-research requirement that evidence sits beside the decision.
+One viewer, two mount modes (embedded and sheet) keeps chrome consistent.
+The dark rail hosts a light viewing surface, so the viewer card needs its own light background treatment.
+The auto-scroll keeps Review submit reachable despite the taller layout.
 
 ## Revisit When
 

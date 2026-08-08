@@ -1,6 +1,14 @@
 "use client";
 
-import { forwardRef, useCallback, useEffect, useId, useLayoutEffect, useRef, useState } from "react";
+import {
+  useCallback,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useRef,
+  useState,
+  type Ref,
+} from "react";
 import { FileText, Loader2, X, ZoomIn, ZoomOut } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
@@ -96,10 +104,16 @@ type ReceiptPreviewProps =
       onClose?: () => void;
     };
 
-export const ReceiptPreview = forwardRef<HTMLButtonElement, ReceiptPreviewProps>(function ReceiptPreview(
-  props,
-  closeButtonRef,
-) {
+// The close button is reachable via ref (React 19 passes refs as props); the
+// wizard and drawer use it to restore focus after their previews unmount.
+type ReceiptPreviewWithRefProps = ReceiptPreviewProps & { ref?: Ref<HTMLButtonElement> };
+
+// Client components are server pre-rendered, where useLayoutEffect is a no-op
+// with a dev-mode warning; the layout work (measuring and positioning the
+// freshly rendered page) is only meaningful in the browser anyway.
+const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : useLayoutEffect;
+
+export function ReceiptPreview({ ref: closeButtonRef, ...props }: ReceiptPreviewWithRefProps) {
   const sourceKey = props.file !== undefined ? props.file : props.claimId;
   const { fileName, className, onClose } = props;
   const [status, setStatus] = useState<Status>("loading");
@@ -194,7 +208,7 @@ export const ReceiptPreview = forwardRef<HTMLButtonElement, ReceiptPreviewProps>
   // invalidates it whenever the viewer leaves the ready state, so a later
   // source (or the same source again after an error) opens top-center rather
   // than inheriting a stale pan.
-  useLayoutEffect(() => {
+  useIsomorphicLayoutEffect(() => {
     if (status !== "ready") return;
     if (panInitializedForRef.current === sourceKey) return;
     panInitializedForRef.current = sourceKey;
@@ -429,49 +443,58 @@ export const ReceiptPreview = forwardRef<HTMLButtonElement, ReceiptPreviewProps>
       const measured = measure();
       if (!measured) return;
 
-      // Both the plain wheel and Ctrl/Cmd + wheel zoom toward the cursor,
-      // one ZOOM_STEP per notch, within the same MIN_SCALE/MAX_SCALE bounds
-      // as the toolbar. Panning is reserved for drag, touch, and keyboard.
+      // Ctrl/Cmd + wheel zooms toward the cursor (browser page-zoom
+      // convention, also how trackpad pinch arrives). One ZOOM_STEP per
+      // notch, within the same MIN_SCALE/MAX_SCALE bounds as the toolbar.
       // zoomWithAnchor returns raw values, so the result is always clamped.
-      const newScale = nextScale(scaleRef.current, event.deltaY < 0 ? 1 : -1);
-      // Already clamped at MIN_SCALE/MAX_SCALE with the wheel direction
-      // pushing further past the bound: nothing to zoom, so leave the event
-      // unprevented and let it fall through to the surrounding scrollable
-      // container (drawer/form) instead of hijacking scroll.
-      if (newScale === scaleRef.current) return;
+      // Always preventDefault while ready: browser page zoom must never fire
+      // over the viewer, even at a scale bound.
+      if (event.ctrlKey || event.metaKey) {
+        event.preventDefault();
+        const newScale = nextScale(scaleRef.current, event.deltaY < 0 ? 1 : -1);
+        if (newScale === scaleRef.current) return;
+
+        hasUserZoomedRef.current = true;
+
+        const rect = container.getBoundingClientRect();
+        const anchor = {
+          x: event.clientX - rect.left,
+          y: event.clientY - rect.top,
+        };
+
+        const estimatedContent = resolveContentSize(
+          basePageSizeRef.current,
+          measured.content,
+          scaleRef.current,
+          newScale
+        );
+
+        const nextPan = zoomWithAnchor(panRef.current, scaleRef.current, newScale, anchor);
+        const clampedPan = clampPan(nextPan, measured.viewport, estimatedContent);
+        panRef.current = clampedPan;
+        scaleRef.current = newScale;
+        setPan(clampedPan);
+        setScale(newScale);
+        setMeasuredSize({ viewport: measured.viewport, content: estimatedContent });
+        return;
+      }
+
+      // Plain wheel pans the page by the wheel deltas (deltaX and deltaY),
+      // clamped by the same rules as drag. When the pan is already pinned at
+      // a bound in every direction the event is left unprevented so it falls
+      // through to the surrounding scrollable container (drawer/form), the
+      // same way a scroll container hands the wheel to its parent once it
+      // cannot scroll further.
+      const nextPan = clampPan(
+        { x: panRef.current.x - event.deltaX, y: panRef.current.y - event.deltaY },
+        measured.viewport,
+        measured.content
+      );
+      if (nextPan.x === panRef.current.x && nextPan.y === panRef.current.y) return;
 
       event.preventDefault();
-      hasUserZoomedRef.current = true;
-
-      const rect = container.getBoundingClientRect();
-      const anchor = {
-        x: event.clientX - rect.left,
-        y: event.clientY - rect.top,
-      };
-
-      const estimatedContent = resolveContentSize(
-        basePageSizeRef.current,
-        measured.content,
-        scaleRef.current,
-        newScale
-      );
-
-      const nextPan = zoomWithAnchor(
-        panRef.current,
-        scaleRef.current,
-        newScale,
-        anchor
-      );
-      // zoomWithAnchor returns raw values, so the result is clamped here.
-      // The refs are written synchronously (not just by the effect below) so
-      // rapid successive notches always step from the latest value, even if
-      // the render and effect flush later.
-      const clampedPan = clampPan(nextPan, measured.viewport, estimatedContent);
-      panRef.current = clampedPan;
-      scaleRef.current = newScale;
-      setPan(clampedPan);
-      setScale(newScale);
-      setMeasuredSize({ viewport: measured.viewport, content: estimatedContent });
+      panRef.current = nextPan;
+      setPan(nextPan);
     };
 
     container.addEventListener("wheel", handleWheel, { passive: false });
@@ -728,7 +751,7 @@ export const ReceiptPreview = forwardRef<HTMLButtonElement, ReceiptPreviewProps>
       </div>
     </div>
   );
-});
+}
 
 // Internal, axis-specific overlay scrollbar. Both bars share the same track
 // and thumb rendering, pointer-capture drag, track click-to-jump, and ARIA

@@ -259,7 +259,13 @@ export async function handleVerifyExpenseRequest(
   claimId: string,
 ): Promise<Response> {
   try {
-    return Response.json({ claim: await commands.verifyClaim(actorId, claimId) });
+    // The employee list rides along so the drawer can render the stamped
+    // claim with real actor names, not "System" placeholders.
+    const [claim, employees] = await Promise.all([
+      commands.verifyClaim(actorId, claimId),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
   } catch (error) {
     return expenseErrorResponse(error);
   }
@@ -272,7 +278,11 @@ export async function handlePayExpenseRequest(
   claimId: string,
 ): Promise<Response> {
   try {
-    return Response.json({ claim: await commands.markPaid(actorId, claimId) });
+    const [claim, employees] = await Promise.all([
+      commands.markPaid(actorId, claimId),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
   } catch (error) {
     return expenseErrorResponse(error);
   }

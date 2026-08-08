@@ -276,11 +276,12 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
                   </button>
                 </div>
               ) : null}
-              <WizardReceiptCard
-                source={receiptSource}
-                sourceKey={receiptPreviewKey}
-                isMobile={isMobile}
-              />
+              {/* The rail preview is desktop-only; mobile gets the sheet above. */}
+              {isMobile === false && receiptSource ? (
+                <div className={styles.captureRailPreview}>
+                  <ReceiptPreviewSurface source={receiptSource} sourceKey={receiptPreviewKey} />
+                </div>
+              ) : null}
             </aside>
           </div>
           <Drawer
@@ -494,23 +495,6 @@ function ReviewIntro() {
 
 function CaptureRail({ done, step }: { done: boolean; step: number }) {
   return <aside className={styles.captureRail}><p className={styles.eyebrow}>FAST CAPTURE</p><h2>Three things, then done.</h2><p>The form follows the natural order of expense work: proof, context, submit.</p><div className={styles.captureSteps}><CaptureStep number="1" title="Add proof" detail="Photo, scan, or PDF" done={done} /><CaptureStep number="2" title="Confirm context" detail="Category and payment details" done={step > 1} /><CaptureStep number="3" title="Review & send" detail="See who reviews it next" done={step > 2} /></div></aside>;
-}
-
-function WizardReceiptCard({
-  source,
-  sourceKey,
-  isMobile,
-}: {
-  source: ReceiptSource | null;
-  sourceKey: string | null;
-  isMobile: boolean | null;
-}) {
-  if (isMobile !== false || !source) return null;
-  return (
-    <div className={styles.captureRailPreview}>
-      <ReceiptPreviewSurface source={source} sourceKey={sourceKey} />
-    </div>
-  );
 }
 
 function ReceiptPreviewSurface({

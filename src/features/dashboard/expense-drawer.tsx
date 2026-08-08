@@ -32,7 +32,7 @@ import { isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
 import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
-import type { ExpenseClaim } from "@/server/expenses/ports";
+import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 
 export interface JourneyFlowStep {
   id: string;
@@ -103,8 +103,15 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
         label: step.roleName,
         date: "Pending",
         actor: step.assignedActorName ?? "Pending assignment",
-        detail: isFinance ? `Pending ${step.roleName} verification` : `Pending ${step.roleName} decision`,
-        tone: isFinance ? "primary" : "warning",
+        // A verified terminal step is no longer waiting for verification: it
+        // is verified and waiting for payment to be marked complete.
+        detail:
+          step.status === "verified"
+            ? "Awaiting payment confirmation"
+            : isFinance
+              ? `Pending ${step.roleName} verification`
+              : `Pending ${step.roleName} decision`,
+        tone: step.status === "verified" ? "primary" : isFinance ? "primary" : "warning",
         icon: Clock,
         isCurrent: false,
         isNext: false,
@@ -223,12 +230,14 @@ const PRIMARY_ACTION: Record<Expense["status"], string> = {
   rejected: "No action available",
 };
 
-// Verify/pay mutations return the domain claim ({ claim: ExpenseClaim }).
-// Render exactly what the server stamped - never fabricate workflow state.
+// Verify/pay mutations return the domain claim plus the organization
+// employees ({ claim, employees }), so the drawer renders exactly what the
+// server stamped with real actor names - never "System" placeholders.
 function resolveUpdatedExpense(body: unknown): Expense | null {
-  const claim = (body as { claim?: unknown } | null)?.claim;
+  const payload = (body as { claim?: unknown; employees?: unknown[] } | null) ?? null;
+  const claim = payload?.claim;
   if (claim && typeof claim === "object" && "amountMinor" in claim) {
-    return claimToExpense(claim as ExpenseClaim, []);
+    return claimToExpense(claim as ExpenseClaim, (payload.employees ?? []) as ExpenseEmployee[]);
   }
   return null;
 }
@@ -332,42 +341,62 @@ export function ExpenseDrawer({
   const canReject =
     !!next?.mine && (activeExpense?.primaryAction === "approve" || activeExpense?.primaryAction === "verify");
 
+  // One fetch+error-extraction shape for every drawer mutation: a POST (or
+  // DELETE) with a JSON body fallback, surfacing the server's message or a
+  // caller-chosen fallback, and a network-failure message on unreachable.
+  async function mutate(
+    path: string,
+    fallbackMessage: string,
+    init: RequestInit = { method: "POST" },
+  ): Promise<{ ok: boolean; body: unknown; error: string | null }> {
+    try {
+      const response = await fetch(path, init);
+      const body = await response.json().catch(() => null);
+      return {
+        ok: response.ok,
+        body,
+        error: response.ok ? null : ((body as { message?: string } | null)?.message ?? fallbackMessage),
+      };
+    } catch {
+      return { ok: false, body: null, error: "Could not reach the server. Check your connection and try again." };
+    }
+  }
+
   async function performAction() {
     if (!activeExpense?.primaryAction || !next?.mine || acting) return;
     setActing(true);
     setActionError(null);
     try {
-      const response = await fetch(`/api/expenses/${activeExpense.id}/${activeExpense.primaryAction}`, { method: "POST" });
-      if (response.ok) {
-        const body = await response.json().catch(() => null);
-        if (activeExpense.primaryAction === "verify") {
-          const updated = resolveUpdatedExpense(body);
-          if (!updated) {
-            setActionError("The action could not be completed. Please try again.");
-            return;
-          }
-          setOverrideExpense(updated);
-          setShowPostVerifyPrompt(true);
-          return;
-        } else if (activeExpense.primaryAction === "pay") {
-          const updated = resolveUpdatedExpense(body);
-          if (!updated) {
-            setActionError("The action could not be completed. Please try again.");
-            return;
-          }
-          setOverrideExpense(updated);
-          setShowPostVerifyPrompt(false);
-          router.refresh();
-          return;
-        } else {
-          window.location.reload();
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/${activeExpense.primaryAction}`,
+        "The action could not be completed. Please try again."
+      );
+      if (!result.ok) {
+        setActionError(result.error);
+        return;
+      }
+      if (activeExpense.primaryAction === "verify") {
+        const updated = resolveUpdatedExpense(result.body);
+        if (!updated) {
+          setActionError("The action could not be completed. Please try again.");
           return;
         }
+        setOverrideExpense(updated);
+        setShowPostVerifyPrompt(true);
+        return;
       }
-      const body = await response.json().catch(() => null);
-      setActionError(body?.message ?? "The action could not be completed. Please try again.");
-    } catch {
-      setActionError("Could not reach the server. Check your connection and try again.");
+      if (activeExpense.primaryAction === "pay") {
+        const updated = resolveUpdatedExpense(result.body);
+        if (!updated) {
+          setActionError("The action could not be completed. Please try again.");
+          return;
+        }
+        setOverrideExpense(updated);
+        setShowPostVerifyPrompt(false);
+        router.refresh();
+        return;
+      }
+      window.location.reload();
     } finally {
       setActing(false);
     }
@@ -378,24 +407,23 @@ export function ExpenseDrawer({
     setPayingPrompt(true);
     setActionError(null);
     try {
-      const response = await fetch(`/api/expenses/${activeExpense.id}/pay`, { method: "POST" });
-      if (response.ok) {
-        const body = await response.json().catch(() => null);
-        const updated = resolveUpdatedExpense(body);
-        if (!updated) {
-          setActionError("The action could not be completed. Please try again.");
-          return;
-        }
-        setOverrideExpense(updated);
-        setShowPostVerifyPrompt(false);
-        closeButtonRef.current?.focus();
-        router.refresh();
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/pay`,
+        "The payment action could not be completed. Please try again."
+      );
+      if (!result.ok) {
+        setActionError(result.error);
         return;
       }
-      const body = await response.json().catch(() => null);
-      setActionError(body?.message ?? "The payment action could not be completed. Please try again.");
-    } catch {
-      setActionError("Could not reach the server. Check your connection and try again.");
+      const updated = resolveUpdatedExpense(result.body);
+      if (!updated) {
+        setActionError("The action could not be completed. Please try again.");
+        return;
+      }
+      setOverrideExpense(updated);
+      setShowPostVerifyPrompt(false);
+      closeButtonRef.current?.focus();
+      router.refresh();
     } finally {
       setPayingPrompt(false);
     }
@@ -428,15 +456,18 @@ export function ExpenseDrawer({
     setDeleting(true);
     setDeleteError(null);
     try {
-      const response = await fetch(`/api/expenses/${activeExpense.id}`, { method: "DELETE" });
-      if (response.ok) {
-        setDeleteOpen(false);
-        onOpenChange(false);
-        window.location.reload();
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}`,
+        "Could not delete this draft.",
+        { method: "DELETE" }
+      );
+      if (!result.ok) {
+        setDeleteError(result.error);
         return;
       }
-      const body = await response.json().catch(() => null);
-      setDeleteError(body?.message ?? "Could not delete this draft.");
+      setDeleteOpen(false);
+      onOpenChange(false);
+      window.location.reload();
     } finally {
       setDeleting(false);
     }
@@ -458,17 +489,20 @@ export function ExpenseDrawer({
     setRejecting(true);
     setRejectError(null);
     try {
-      const response = await fetch(`/api/expenses/${activeExpense.id}/reject`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ reason }),
-      });
-      if (response.ok) {
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/reject`,
+        "Could not reject this claim.",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reason }),
+        }
+      );
+      if (result.ok) {
         window.location.reload();
-        return;
+      } else {
+        setRejectError(result.error);
       }
-      const body = await response.json().catch(() => null);
-      setRejectError(body?.message ?? "Could not reject this claim.");
     } finally {
       setRejecting(false);
     }

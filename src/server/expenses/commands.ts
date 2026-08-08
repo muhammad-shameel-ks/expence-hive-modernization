@@ -264,7 +264,14 @@ export function createExpenseCommands({
     return claim;
   }
 
-  async function requireAssignedClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+  // Shared mutation precondition: an active actor of the claim's organization
+  // acting on a claim they did not raise. The caller adds the stage-specific
+  // authority check (assignment or pool eligibility).
+  async function requireClaimForActor(
+    actorId: string,
+    claimId: string,
+    selfClaimMessage: string,
+  ): Promise<{ actor: ExpenseEmployee; claim: ExpenseClaim }> {
     const actor = await requireEmployee(actorId);
     const claimRow = await store.getClaim(claimId);
     if (!claimRow || claimRow.organizationId !== actor.organizationId) {
@@ -272,8 +279,13 @@ export function createExpenseCommands({
     }
     const claim = await catchUp(claimRow);
     if (claim.requesterId === actorId) {
-      throw new ExpenseError("unauthorized", "You cannot approve your own expense claim.");
+      throw new ExpenseError("unauthorized", selfClaimMessage);
     }
+    return { actor, claim };
+  }
+
+  async function requireAssignedClaim(actorId: string, claimId: string): Promise<ExpenseClaim> {
+    const { claim } = await requireClaimForActor(actorId, claimId, "You cannot approve your own expense claim.");
     if (claim.currentActorId !== actorId) {
       throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
     }
@@ -284,15 +296,11 @@ export function createExpenseCommands({
     actorId: string,
     claimId: string,
   ): Promise<{ actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }> {
-    const actor = await requireEmployee(actorId);
-    const claimRow = await store.getClaim(claimId);
-    if (!claimRow || claimRow.organizationId !== actor.organizationId) {
-      throw new ExpenseError("not-found", "Expense claim does not exist.");
-    }
-    const claim = await catchUp(claimRow);
-    if (claim.requesterId === actorId) {
-      throw new ExpenseError("unauthorized", "You cannot approve your own expense claim.");
-    }
+    const { actor, claim } = await requireClaimForActor(
+      actorId,
+      claimId,
+      "You cannot verify or pay your own expense claim.",
+    );
     const index = terminalIndex(claim);
     const step = claim.steps[index];
     const employees = await store.listEmployees(claim.organizationId);
