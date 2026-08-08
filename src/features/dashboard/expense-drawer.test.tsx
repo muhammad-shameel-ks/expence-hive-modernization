@@ -649,7 +649,7 @@ describe("ExpenseDrawer summary download", () => {
       expect(downloadBlobMock).toHaveBeenCalledTimes(1);
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/expenses/exp-123/summary");
-    expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), "EXP-1001-summary.pdf");
+    expect(downloadBlobMock).toHaveBeenCalledWith(expect.objectContaining({ size: 4 }), "EXP-1001-summary.pdf");
   });
 
   it("offers the enabled Download summary primary button on a rejected claim", async () => {

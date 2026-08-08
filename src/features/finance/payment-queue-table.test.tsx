@@ -644,7 +644,7 @@ describe("PaymentQueueTable download summary in the side panel", () => {
       expect(downloadBlobMock).toHaveBeenCalledTimes(1);
     });
     expect(fetch).toHaveBeenCalledWith("/api/expenses/claim-1/summary");
-    expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), "EXP-0001-summary.pdf");
+    expect(downloadBlobMock).toHaveBeenCalledWith(expect.objectContaining({ size: 4 }), "EXP-0001-summary.pdf");
   });
 
   it("shows the server error banner and saves no file when the fetch fails", async () => {

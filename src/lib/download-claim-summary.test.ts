@@ -29,7 +29,7 @@ describe("downloadClaimSummary", () => {
     expect(result).toBeNull();
     expect(fetch).toHaveBeenCalledWith("/api/expenses/claim-1/summary");
     expect(downloadBlobMock).toHaveBeenCalledTimes(1);
-    expect(downloadBlobMock).toHaveBeenCalledWith(expect.any(Blob), "EXP-0001-summary.pdf");
+    expect(downloadBlobMock).toHaveBeenCalledWith(expect.objectContaining({ size: 4 }), "EXP-0001-summary.pdf");
   });
 
   it("returns the server message on a failed response and saves no file", async () => {
