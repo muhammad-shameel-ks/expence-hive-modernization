@@ -43,8 +43,18 @@ export function rowsToWorkbook(
 }
 
 export function exportFileName(scope: PaymentQueueExportScope, date: Date = new Date()): string {
-  const day = date.toISOString().slice(0, 10);
+  const day = localDayString(date);
   return scope === "full" ? `payment-queue-${day}.xlsx` : `payment-queue-current-${day}.xlsx`;
+}
+
+// The file is named in the exporting user's local time: toISOString() is UTC,
+// so a user exporting just after local midnight would get a file dated the
+// previous day.
+function localDayString(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
 }
 
 /**

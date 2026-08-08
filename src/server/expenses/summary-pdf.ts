@@ -14,7 +14,7 @@ import { latestRejectionFor } from "./rejection";
 // The summary is typeset with the app's own Geist Sans (the ₹ glyph the
 // Standard 14 fonts lack) from the official `geist` package. If the font
 // cannot be read - packaged deployment, unusual cwd - the build falls back
-// to Helvetica rather than failing the request.
+// to Helvetica and notes that in the PDF rather than failing the request.
 const GEIST_FONT_DIR = path.join(
   process.cwd(),
   "node_modules",
@@ -48,6 +48,12 @@ export type ExpenseSummaryPdfInput = {
   receipt?: SummaryReceipt;
 };
 
+export type ExpenseSummaryPdfOptions = {
+  // Override the Geist font directory, e.g. in tests pointing at a path
+  // that does not exist so the Helvetica fallback path can be exercised.
+  geistFontDir?: string;
+};
+
 const STATUS_LABELS: Record<ExpenseClaim["status"], string> = {
   draft: "Draft",
   "in-approval": "In approval",
@@ -67,10 +73,11 @@ const STEP_DECISION_LABELS: Record<string, string> = {
 
 export async function buildExpenseSummaryPdf(
   input: ExpenseSummaryPdfInput,
+  options: ExpenseSummaryPdfOptions = {},
 ): Promise<Uint8Array> {
   const { claim, employees, receipt } = input;
   const pdfDoc = await PDFDocument.create();
-  const { font, semibold } = await embedFonts(pdfDoc);
+  const { font, semibold, fallback } = await embedFonts(pdfDoc, options.geistFontDir);
   const names = new Map(employees.map((employee) => [employee.id, employee.name]));
   const roleNames = new Map(
     employees.filter((employee) => employee.role).map((employee) => [employee.role!.id, employee.role!.displayName]),
@@ -96,7 +103,12 @@ export async function buildExpenseSummaryPdf(
     const color = options.color ?? INK;
     const maxWidth = options.width ?? CONTENT_WIDTH;
     const lineHeight = options.lineHeight ?? BODY_LINE_HEIGHT;
-    for (const line of wrapText(text, fontToUse, size, maxWidth)) {
+    const textToDraw = fallback ? sanitizeForStandardFont(text) : text;
+    for (const line of wrapText(textToDraw, fontToUse, size, maxWidth)) {
+      // Start a new page mid-paragraph when the next line would drop below
+      // the bottom margin; pdf-lib draws off-page lines without error, so
+      // without this a long wrapped comment is silently clipped.
+      ensureSpace(lineHeight);
       page.drawText(line, { x, y, size, font: fontToUse, color });
       y -= lineHeight;
     }
@@ -122,6 +134,13 @@ export async function buildExpenseSummaryPdf(
   drawText("Expense summary", LABEL_COLUMN_X, { size: TITLE_SIZE, font: semibold, lineHeight: 26 });
   y -= 2;
   drawText(claim.ref, LABEL_COLUMN_X, { color: MUTED, lineHeight: 16 });
+  if (fallback) {
+    drawText(
+      "Note: fallback font in use - currency amounts may render without the rupee symbol.",
+      LABEL_COLUMN_X,
+      { size: 8, color: MUTED, lineHeight: 12 },
+    );
+  }
   drawRule();
 
   sectionHeading("Expense facts");
@@ -269,25 +288,49 @@ function wrapText(text: string, font: PDFFont, size: number, maxWidth: number): 
   return lines;
 }
 
-async function embedFonts(pdfDoc: PDFDocument): Promise<{ font: PDFFont; semibold: PDFFont }> {
-  const regular = loadFontBytes("Geist-Regular.ttf");
-  const semiboldBytes = loadFontBytes("Geist-SemiBold.ttf");
+// The Standard 14 fonts carry only WinAnsi (printable ASCII plus Latin-1);
+// any other code point - the ₹ symbol most importantly - makes pdf-lib
+// throw while measuring or drawing. Replace ₹ with "Rs." and everything
+// else outside WinAnsi with "?" so the fallback PDF still delivers the
+// text instead of failing the request.
+function sanitizeForStandardFont(text: string): string {
+  let out = "";
+  for (const char of text) {
+    const codePoint = char.codePointAt(0)!;
+    if ((codePoint >= 0x20 && codePoint <= 0x7e) || (codePoint >= 0xa0 && codePoint <= 0xff)) {
+      out += char;
+    } else if (codePoint === 0x20b9) {
+      out += "Rs.";
+    } else {
+      out += "?";
+    }
+  }
+  return out;
+}
+
+async function embedFonts(
+  pdfDoc: PDFDocument,
+  fontDir: string | undefined,
+): Promise<{ font: PDFFont; semibold: PDFFont; fallback: boolean }> {
+  const regular = loadFontBytes(fontDir, "Geist-Regular.ttf");
+  const semiboldBytes = loadFontBytes(fontDir, "Geist-SemiBold.ttf");
   if (regular && semiboldBytes) {
     pdfDoc.registerFontkit(fontkit);
     const font = await pdfDoc.embedFont(regular);
     const semibold = await pdfDoc.embedFont(semiboldBytes);
-    return { font, semibold };
+    return { font, semibold, fallback: false };
   }
   console.warn("Geist font files unavailable; the summary PDF falls back to Helvetica (the ₹ glyph will not render).");
   return {
     font: await pdfDoc.embedFont(StandardFonts.Helvetica),
     semibold: await pdfDoc.embedFont(StandardFonts.HelveticaBold),
+    fallback: true,
   };
 }
 
-function loadFontBytes(fileName: string): Uint8Array | null {
+function loadFontBytes(fontDir: string | undefined, fileName: string): Uint8Array | null {
   try {
-    return new Uint8Array(readFileSync(path.join(GEIST_FONT_DIR, fileName)));
+    return new Uint8Array(readFileSync(path.join(fontDir ?? GEIST_FONT_DIR, fileName)));
   } catch {
     return null;
   }

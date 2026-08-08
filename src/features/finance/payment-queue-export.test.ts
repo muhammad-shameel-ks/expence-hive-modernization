@@ -199,7 +199,8 @@ describe("rowsToWorkbook", () => {
 });
 
 describe("exportFileName", () => {
-  const date = new Date("2026-08-08T10:30:00.000Z");
+  // Built from local-time parts so the expected date holds in any TZ.
+  const date = new Date(2026, 7, 8, 10, 30);
 
   it("dates the full-queue filename", () => {
     expect(exportFileName("full", date)).toBe("payment-queue-2026-08-08.xlsx");
@@ -217,7 +218,7 @@ describe("exportFileName", () => {
 describe("buildAndDownloadXlsx", () => {
   it("hands the download seam the xlsx blob and the dated filename", async () => {
     const downloadBlob = vi.fn();
-    const date = new Date("2026-08-08T10:30:00.000Z");
+    const date = new Date(2026, 7, 8, 10, 30);
 
     buildAndDownloadXlsx([buildClaim()], HELPERS, "full", { now: date, downloadBlob });
 

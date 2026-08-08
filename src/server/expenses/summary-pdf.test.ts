@@ -194,4 +194,43 @@ describe("expense summary PDF builder", () => {
     expect(text).toContain("Rejected by: Ada Lovelace");
     expect(text).toContain("Rejected on: Aug 4, 2026, 10:00 AM");
   });
+
+  it("paginates a long wrapped comment instead of clipping it", async () => {
+    const { commands } = build();
+    const submitted = await createSubmittedClaim(commands);
+    await commands.updateComments(
+      "emp-finance",
+      submitted.id,
+      `${"Finance note. ".repeat(300)}Final sentence of the comment.`,
+    );
+    const [claim, employees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const bytes = await buildExpenseSummaryPdf({ claim, employees });
+
+    const pdfDoc = await PDFDocument.load(bytes);
+    expect(pdfDoc.getPageCount()).toBeGreaterThan(1);
+    const text = await extractText(bytes);
+    expect(text).toContain("Final sentence of the comment.");
+  });
+
+  it("notes the fallback font in the PDF when Geist is unavailable", async () => {
+    const { commands } = build();
+    const submitted = await createSubmittedClaim(commands);
+    const [claim, employees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const bytes = await buildExpenseSummaryPdf(
+      { claim, employees },
+      { geistFontDir: "/nonexistent/geist-fonts" },
+    );
+
+    const text = await extractText(bytes);
+    expect(text).toContain("Expense summary");
+    expect(text).toContain("fallback font in use");
+  });
 });
