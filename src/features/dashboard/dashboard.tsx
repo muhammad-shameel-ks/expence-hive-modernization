@@ -15,11 +15,13 @@ import { formatMoney } from "./journey-meta";
 export function ExpenseDashboard({
   currentUser,
   currentUserId,
+  currentUserRoleId,
   expenses,
   activity = [],
 }: {
   currentUser: string;
   currentUserId?: string;
+  currentUserRoleId?: string;
   expenses: Expense[];
   activity?: ActivityItem[];
 }) {
@@ -91,6 +93,7 @@ export function ExpenseDashboard({
         expenses={expenses}
         currentUser={currentUser}
         currentUserId={currentUserId}
+        currentUserRoleId={currentUserRoleId}
         onOpen={openExpense}
       />
 
@@ -102,6 +105,7 @@ export function ExpenseDashboard({
         expense={selected}
         currentUser={currentUser}
         currentUserId={currentUserId}
+        currentUserRoleId={currentUserRoleId}
       />
     </div>
   );

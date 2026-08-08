@@ -134,6 +134,35 @@ describe("PostgresExpenseStore", () => {
     expect(claims).toHaveLength(1);
   });
 
+  it("lists in-finance claims for any holder of the terminal stage's role, not just the assigned actor", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes("FROM reimbursement_claims")) {
+        expect(sql).toContain("rc.status = 'in-finance'");
+        expect(sql).toContain("claim_approval_steps s");
+        expect(sql).toContain("employee_roles er");
+        expect(sql).toContain("s.status IN ('pending', 'verified')");
+        expect(params).toEqual(["org-1", "emp-finance-2"]);
+        return Promise.resolve({ rows: [] });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const employee = {
+      id: "emp-finance-2",
+      organizationId: "org-1",
+      name: "Rishikesh 2",
+      role: { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" },
+      active: true,
+      managerId: null,
+    };
+
+    const claims = await store.listClaimsForEmployee(employee);
+
+    expect(claims).toEqual([]);
+  });
+
   it("queries an actor's activity by joining history events to their claims, filtered to the given kinds", async () => {
     const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
       expect(sql).toContain("JOIN reimbursement_claims");

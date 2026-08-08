@@ -840,6 +840,46 @@ describe("expense commands", () => {
         status: "paid",
       });
     });
+
+    it("surfaces an in-finance claim to every holder of the terminal role, not just the assigned actor", async () => {
+      const execUser = emp("emp-shameel", "Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" });
+      const managerUser = emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" });
+      const financeHead = emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" });
+      const financeExec1 = emp("emp-finance", "Rishikesh 1", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+      const financeExec2 = emp("emp-rishikesh", "Rishikesh 2", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+
+      const { commands } = buildCommands({
+        employees: [execUser, managerUser, financeHead, financeExec1, financeExec2],
+        flows: [STANDARD_FLOW],
+      });
+
+      const draft = await commands.createDraft(execUser.id, {
+        title: "Software license",
+        category: "Software",
+        amountMinor: 150000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      const submitted = await commands.submitClaim(execUser.id, draft.id);
+      await commands.approveStage(managerUser.id, submitted.id);
+      await commands.approveStage(financeHead.id, submitted.id);
+
+      // financeExec2 is not the assigned actor (financeExec1 is) but holds
+      // the terminal role: the claim must surface in their workspace so the
+      // UI can offer verify/pay, matching the pool authorization.
+      const poolMemberClaims = await commands.listClaims(financeExec2.id);
+      expect(poolMemberClaims.find((claim) => claim.id === submitted.id)).toBeDefined();
+
+      // A manager who does not hold the terminal role never sees it.
+      const managerClaims = await commands.listClaims(managerUser.id);
+      expect(managerClaims.find((claim) => claim.id === submitted.id)).toBeUndefined();
+
+      // And once paid, the claim drops out of the pool surface again.
+      await commands.verifyClaim(financeExec2.id, submitted.id);
+      await commands.markPaid(financeExec2.id, submitted.id);
+      const afterPaid = await commands.listClaims(financeExec2.id);
+      expect(afterPaid.find((claim) => claim.id === submitted.id)).toBeUndefined();
+    });
   });
 
   it("lists claims at or past the finance stage for Finance, and rejects everyone else", async () => {

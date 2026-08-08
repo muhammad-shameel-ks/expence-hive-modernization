@@ -29,11 +29,30 @@ export class PostgresExpenseStore implements ExpenseStore {
   }
 
   async listClaimsForEmployee(employee: ExpenseEmployee): Promise<ExpenseClaim[]> {
+    // Besides claims the employee raised or is currently assigned to, an
+    // active holder of the terminal stage's role also sees every in-finance
+    // claim of that stage: the terminal stage is a pool (stories 13/14), so
+    // claims assigned to another pool member must still surface for the
+    // holder to verify or mark paid. The claim's current stage is the
+    // terminal one whenever status is in-finance, so any pending/verified
+    // step with the holder's role is that stage.
     const result = await this.pool.query<Row>(
       `SELECT rc.*
        FROM reimbursement_claims rc
        WHERE rc.organization_id = $1
-         AND (rc.requester_id = $2 OR rc.current_actor_id = $2)
+         AND (
+           rc.requester_id = $2
+           OR rc.current_actor_id = $2
+           OR (
+             rc.status = 'in-finance'
+             AND EXISTS (
+               SELECT 1
+               FROM claim_approval_steps s
+               JOIN employee_roles er ON er.employee_id = $2 AND er.role_id = s.role_id
+               WHERE s.claim_id = rc.id AND s.status IN ('pending', 'verified')
+             )
+           )
+         )
        ORDER BY COALESCE(rc.submitted_at, rc.created_at) DESC`,
       [employee.organizationId, employee.id],
     );

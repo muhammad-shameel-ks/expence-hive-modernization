@@ -488,4 +488,99 @@ describe("ExpenseDrawer verification and payment workflow", () => {
     expect(screen.getByRole("button", { name: "Yes, Mark Paid" })).toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark as paid" })).not.toBeInTheDocument();
   });
+
+  it("enables verify for a pool member holding the terminal role even when not the assigned actor", async () => {
+    const expense = buildExpense({ nextActorId: "emp-finance-other" });
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser="Rishikesh 2"
+        currentUserId="emp-rishikesh"
+        currentUserRoleId="role-finance-executive"
+      />,
+    );
+
+    const verifyBtn = screen.getByRole("button", { name: "Verify for payment" });
+    expect(verifyBtn).toBeEnabled();
+    expect(screen.getByText("Waiting on you.")).toBeInTheDocument();
+  });
+
+  it("keeps verify disabled for a viewer holding a different role than the terminal step", async () => {
+    const expense = buildExpense({ nextActorId: "emp-finance-other" });
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser="Pramod"
+        currentUserId="emp-pramod"
+        currentUserRoleId="role-finance-head"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Verify for payment" })).toBeDisabled();
+  });
+
+  it("does not offer Reject to a pool member who is not the assigned actor", async () => {
+    const expense = buildExpense({ nextActorId: "emp-finance-other" });
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser="Rishikesh 2"
+        currentUserId="emp-rishikesh"
+        currentUserRoleId="role-finance-executive"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Verify for payment" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Reject" })).not.toBeInTheDocument();
+  });
+
+  it("does not refresh the queue again when closing after 'Yes, Mark Paid' already refreshed", async () => {
+    const expense = buildExpense();
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.endsWith("/verify")) {
+          return Promise.resolve(verifiedResponse());
+        }
+        if (url.endsWith("/pay")) {
+          return Promise.resolve(paidResponse());
+        }
+        return Promise.reject(new Error("Unknown route"));
+      }),
+    );
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Verify for payment" }));
+    await waitFor(() => {
+      expect(screen.getByText("Mark payment as completed now?")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Yes, Mark Paid" }));
+
+    await waitFor(() => {
+      expect(screen.queryByRole("region", { name: "Mark payment prompt" })).not.toBeInTheDocument();
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+
+    fireEvent.click(screen.getByRole("button", { name: "Close details" }));
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
 });

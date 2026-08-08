@@ -73,6 +73,69 @@ describe("groupAttentionItems", () => {
     expect(pending).toEqual([]);
   });
 
+  it("includes in-finance claims I can act on as a terminal pool member, even without assignment", () => {
+    const list = [
+      expense({
+        id: "a",
+        status: "in-finance",
+        requesterId: "emp-requester",
+        nextActorId: "emp-finance-1",
+        steps: [
+          {
+            id: "s-1",
+            roleId: "role-finance-executive",
+            roleName: "Finance Executive",
+            status: "pending",
+          },
+        ],
+      }),
+    ];
+    const { pending } = groupAttentionItems(list, "Rishikesh 2", "emp-finance-2", "role-finance-executive");
+    expect(pending.map((e) => e.id)).toEqual(["a"]);
+  });
+
+  it("excludes in-finance claims when I hold a different role than the terminal step", () => {
+    const list = [
+      expense({
+        id: "a",
+        status: "in-finance",
+        requesterId: "emp-requester",
+        nextActorId: "emp-finance-1",
+        steps: [
+          {
+            id: "s-1",
+            roleId: "role-finance-executive",
+            roleName: "Finance Executive",
+            status: "pending",
+          },
+        ],
+      }),
+    ];
+    const { pending } = groupAttentionItems(list, "Pramod", "emp-pramod", "role-finance-head");
+    expect(pending).toEqual([]);
+  });
+
+  it("excludes my own in-finance claim even when I hold the terminal role", () => {
+    const list = [
+      expense({
+        id: "a",
+        status: "in-finance",
+        requesterId: ME_ID,
+        nextActorId: "emp-finance-1",
+        steps: [
+          {
+            id: "s-1",
+            roleId: "role-finance-executive",
+            roleName: "Finance Executive",
+            status: "pending",
+          },
+        ],
+      }),
+    ];
+    const { pending } = groupAttentionItems(list, ME, ME_ID, "role-finance-executive");
+    expect(pending).toEqual([]);
+  });
+
   it("returns empty groups for an empty list", () => {
     expect(groupAttentionItems([], ME, ME_ID)).toEqual({ pending: [] });
   });

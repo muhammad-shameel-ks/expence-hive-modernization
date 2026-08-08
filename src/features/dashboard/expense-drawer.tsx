@@ -28,7 +28,7 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { ME, STATUS_META, type Expense } from "./mock-data";
-import { isTerminal, nextActionFor } from "./next-action";
+import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
 import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
@@ -248,12 +248,15 @@ export function ExpenseDrawer({
   expense,
   currentUser,
   currentUserId,
+  currentUserRoleId,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   expense: Expense | null;
   currentUser: string;
   currentUserId?: string;
+  /** Role id of the viewer; the terminal-stage pool gate compares it against the claim's current step role. */
+  currentUserRoleId?: string;
 }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
@@ -272,6 +275,11 @@ export function ExpenseDrawer({
   const [payingPrompt, setPayingPrompt] = useState(false);
   const promptRef = useRef<HTMLDivElement | null>(null);
   const closeButtonRef = useRef<HTMLButtonElement | null>(null);
+  // True once a successful mutation already ran router.refresh() (e.g. the
+  // "Yes, Mark Paid" or "Keep Verified" paths): the queue is then already
+  // consistent with the server, so closing the drawer must not refresh a
+  // second time.
+  const queueSyncedRef = useRef(false);
   // The prompt's focus effect can be deferred past the dismissal commit
   // (concurrent scheduling), re-focusing the prompt after "Keep Verified" or
   // "Yes, Mark Paid" already moved focus to the close button. Re-assert the
@@ -299,6 +307,13 @@ export function ExpenseDrawer({
   }
 
   useEffect(() => {
+    // A switch to a different expense (or a fresh drawer mount) starts a new
+    // mutation session: the queue is no longer known to be in sync with the
+    // server, so a stale-close refresh must be allowed again.
+    queueSyncedRef.current = false;
+  }, [currentExpenseId]);
+
+  useEffect(() => {
     if (showPostVerifyPrompt) {
       promptWasShownRef.current = true;
       promptRef.current?.focus();
@@ -311,8 +326,11 @@ export function ExpenseDrawer({
     if (!next) {
       setActionError(null);
       // Closing without choosing leaves the queue behind stale: refresh it so
-      // the drawer never overshadows what the server actually stamped.
-      if (overrideExpense) router.refresh();
+      // the drawer never overshadows what the server actually stamped. A
+      // successful mutation path already refreshed (queueSyncedRef), so its
+      // close is a no-op instead of a redundant second refresh.
+      if (overrideExpense && !queueSyncedRef.current) router.refresh();
+      queueSyncedRef.current = false;
     }
     onOpenChange(next);
   }
@@ -325,7 +343,9 @@ export function ExpenseDrawer({
 
   const statusMeta = activeExpense ? STATUS_META[activeExpense.status] : null;
   const terminal = activeExpense ? isTerminal(activeExpense.status) : false;
-  const next = activeExpense ? nextActionFor(activeExpense, currentUser, currentUserId) : null;
+  const next = activeExpense
+    ? nextActionFor(activeExpense, currentUser, currentUserId, currentUserRoleId)
+    : null;
   const actionLabel = activeExpense?.primaryAction === "approve"
     ? "Approve claim"
     : activeExpense?.primaryAction === "verify"
@@ -337,9 +357,13 @@ export function ExpenseDrawer({
           : "Action";
   // Rejection is only possible while the assigned stage is still pending a
   // decision: once Finance has verified, the step has moved past "pending"
-  // and only payment marking remains.
+  // and only payment marking remains. The server's reject command requires
+  // strict assignment (requireAssignedClaim), so unlike the verify/pay pool
+  // gate this stays assignment-based even for pool-eligible viewers.
   const canReject =
-    !!next?.mine && (activeExpense?.primaryAction === "approve" || activeExpense?.primaryAction === "verify");
+    !!activeExpense &&
+    !!isCurrentActor(activeExpense, currentUser, currentUserId) &&
+    (activeExpense.primaryAction === "approve" || activeExpense.primaryAction === "verify");
 
   // One fetch+error-extraction shape for every drawer mutation: a POST (or
   // DELETE) with a JSON body fallback, surfacing the server's message or a
@@ -393,6 +417,7 @@ export function ExpenseDrawer({
         }
         setOverrideExpense(updated);
         setShowPostVerifyPrompt(false);
+        queueSyncedRef.current = true;
         router.refresh();
         return;
       }
@@ -422,6 +447,7 @@ export function ExpenseDrawer({
       }
       setOverrideExpense(updated);
       setShowPostVerifyPrompt(false);
+      queueSyncedRef.current = true;
       closeButtonRef.current?.focus();
       router.refresh();
     } finally {
@@ -431,6 +457,7 @@ export function ExpenseDrawer({
 
   function handleKeepVerified() {
     setShowPostVerifyPrompt(false);
+    queueSyncedRef.current = true;
     closeButtonRef.current?.focus();
     router.refresh();
   }

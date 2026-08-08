@@ -63,7 +63,12 @@ export default async function FinancePaymentsPage() {
         </p>
 
         <div className="mt-8">
-          <PaymentQueueTable claims={claims} employees={workspace.employees} />
+          <PaymentQueueTable
+            claims={claims}
+            employees={workspace.employees}
+            currentUserId={workspace.employee.id}
+            currentUserRoleId={workspace.employee.role?.id}
+          />
         </div>
       </div>
     </main>
