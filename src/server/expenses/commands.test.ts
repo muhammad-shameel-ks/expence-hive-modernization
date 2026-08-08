@@ -903,6 +903,31 @@ describe("expense commands", () => {
     await expect(commands.listFinancePaymentQueue("emp-katherine")).rejects.toMatchObject({ code: "unauthorized" });
   });
 
+  it("includes rejected claims in the finance payment queue, and still denies inactive and non-Finance employees", async () => {
+    const { commands } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Bengaluru client flight",
+      category: "Travel",
+      amountMinor: 1250000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+    await commands.submitClaim(employee.id, draft.id);
+    await commands.approveStage("emp-ada", draft.id);
+    await commands.approveStage("emp-pramod", draft.id);
+    await commands.rejectClaim("emp-finance", draft.id, "Payout details missing IFSC code");
+
+    const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
+    expect(financeQueue.find((claim) => claim.id === draft.id)).toMatchObject({ status: "rejected" });
+
+    const inactive = emp("emp-gone", "Gone Person", ROLE_EXECUTIVE, { active: false });
+    const withInactive = buildCommands({ employees: [inactive, ...BASE_EMPLOYEES.slice(1)] });
+    await expect(withInactive.commands.listFinancePaymentQueue(inactive.id)).rejects.toMatchObject({ code: "unauthorized" });
+
+    await expect(commands.listFinancePaymentQueue(employee.id)).rejects.toMatchObject({ code: "unauthorized" });
+    await expect(commands.listFinancePaymentQueue("emp-ada")).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
   it("captures sub category and remark on the draft and surfaces them on the finance queue", async () => {
     const { commands } = buildCommands();
     const draft = await commands.createDraft(employee.id, {
@@ -1379,6 +1404,28 @@ describe("expense commands", () => {
       const submitted = await submitStandardDraft(commands);
 
       await expect(commands.getClaim("emp-katherine", submitted.id)).rejects.toMatchObject({ code: "unauthorized" });
+    });
+  });
+
+  describe("getExpenseSummary", () => {
+    it("returns the claim, employees, and receipt, masking comments away from non-finance viewers", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+      await commands.updateComments("emp-finance", submitted.id, "Awaiting invoice copy before payout");
+
+      const requester = await commands.getExpenseSummary(employee.id, submitted.id);
+      expect(requester.claim.id).toBe(submitted.id);
+      expect(requester.claim.comments).toBe("Awaiting invoice copy before payout");
+      expect(requester.employees.length).toBeGreaterThan(0);
+      // submitStandardDraft attaches no receipt; the summary command must
+      // tolerate that instead of failing the whole request.
+      expect(requester.receipt).toBeUndefined();
+
+      const approver = await commands.getExpenseSummary("emp-ada", submitted.id);
+      expect(approver.claim.comments).toBeUndefined();
+
+      const finance = await commands.getExpenseSummary("emp-finance", submitted.id);
+      expect(finance.claim.comments).toBe("Awaiting invoice copy before payout");
     });
   });
 

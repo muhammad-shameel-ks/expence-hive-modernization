@@ -1,6 +1,6 @@
 import type { ExpenseClaim } from "@/server/expenses/ports";
 
-export type PaymentQueueFilter = "All" | "Awaiting payment" | "Paid";
+export type PaymentQueueFilter = "All" | "Awaiting payment" | "Paid" | "Rejected";
 export type PaymentQueueSortKey = "submitted" | "ref" | "category" | "amount" | "status";
 
 export interface PaymentQueueQuery {
@@ -19,6 +19,7 @@ export interface PaymentQueueQuery {
 const FILTER_MATCH: Record<Exclude<PaymentQueueFilter, "All">, (claim: ExpenseClaim) => boolean> = {
   "Awaiting payment": (claim) => claim.status === "in-finance",
   Paid: (claim) => claim.status === "paid",
+  Rejected: (claim) => claim.status === "rejected",
 };
 
 export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: PaymentQueueQuery = {}): ExpenseClaim[] {
@@ -77,11 +78,16 @@ export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: Payme
   });
 }
 
-export type PaymentStatus = "Paid" | "Not Paid";
+export type PaymentStatus = "Paid" | "Not Paid" | "Rejected";
 
 export function paymentStatusFor(claim: ExpenseClaim): PaymentStatus {
-  return claim.status === "paid" ? "Paid" : "Not Paid";
+  if (claim.status === "paid") return "Paid";
+  if (claim.status === "rejected") return "Rejected";
+  return "Not Paid";
 }
+
+/** The latest rejection event in the claim's history, if any (ADR-0009). */
+export { latestRejectionFor as rejectionFor } from "@/server/expenses/rejection";
 
 export function approvedOnFor(claim: ExpenseClaim): string | undefined {
   const approvals = claim.history.filter((event) => event.kind === "approved");

@@ -130,6 +130,11 @@ export type ExpenseCommands = {
   deleteDraft(actorId: string, claimId: string): Promise<void>;
   getReceipt(actorId: string, claimId: string): Promise<ReceiptData>;
   getClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  /** Authorized input bundle for the expense summary PDF: the (comment-masked) claim, the organization's employees, and the receipt when one exists. */
+  getExpenseSummary(
+    actorId: string,
+    claimId: string,
+  ): Promise<{ claim: ExpenseClaim; employees: ExpenseEmployee[]; receipt?: ReceiptData }>;
   listClaims(actorId: string): Promise<ExpenseClaim[]>;
   getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
   listEmployees(actorId: string): Promise<ExpenseEmployee[]>;
@@ -357,6 +362,39 @@ export function createExpenseCommands({
     }
   }
 
+  // Reads and integrity-checks the claim's receipt bytes (ADR-0005).
+  // With throwIfMissing the caller gets the not-found error; without it a
+  // missing or unavailable receipt simply yields undefined so optional
+  // consumers (the summary PDF) never abort for lack of a receipt.
+  async function readReceiptBytes(claim: ExpenseClaim, throwIfMissing: true): Promise<ReceiptData>;
+  async function readReceiptBytes(claim: ExpenseClaim, throwIfMissing: false): Promise<ReceiptData | undefined>;
+  async function readReceiptBytes(
+    claim: ExpenseClaim,
+    throwIfMissing: boolean,
+  ): Promise<ReceiptData | undefined> {
+    const missing = (message: string): never => {
+      if (!throwIfMissing) return undefined as never;
+      throw new ExpenseError("not-found", message);
+    };
+    if (!claim.attachment) return missing("This claim has no receipt.");
+    const blob = await blobStore.getBlob(claim.attachment.storageKey);
+    if (!blob) return missing("The receipt is unavailable.");
+    const contentSha256 = createHash("sha256").update(blob.data).digest("hex");
+    if (
+      contentSha256 !== claim.attachment.contentSha256 ||
+      blob.data.byteLength !== claim.attachment.sizeBytes
+    ) {
+      return missing("The receipt is unavailable.");
+    }
+    return {
+      fileName: claim.attachment.fileName,
+      contentType: claim.attachment.contentType,
+      contentSha256,
+      sizeBytes: blob.data.byteLength,
+      data: blob.data,
+    };
+  }
+
   return {
     async createDraft(actorId, input) {
       const employee = await requireEmployee(actorId);
@@ -453,32 +491,27 @@ export function createExpenseCommands({
       if (!claim.attachment) {
         throw new ExpenseError("not-found", "This claim has no receipt.");
       }
-      const blob = await blobStore.getBlob(claim.attachment.storageKey);
-      if (!blob) {
-        throw new ExpenseError("not-found", "The receipt is unavailable.");
-      }
-      // Re-verify integrity before serving: corrupted or swapped bytes are
-      // refused rather than streamed to the browser (ADR-0005).
-      const contentSha256 = createHash("sha256").update(blob.data).digest("hex");
-      if (
-        contentSha256 !== claim.attachment.contentSha256 ||
-        blob.data.byteLength !== claim.attachment.sizeBytes
-      ) {
-        throw new ExpenseError("not-found", "The receipt is unavailable.");
-      }
-      return {
-        fileName: claim.attachment.fileName,
-        contentType: claim.attachment.contentType,
-        contentSha256,
-        sizeBytes: blob.data.byteLength,
-        data: blob.data,
-      };
+      return readReceiptBytes(claim, true);
     },
 
     async getClaim(actorId, claimId) {
       const employee = await requireEmployee(actorId);
       const claim = await requireViewableClaim(actorId, claimId);
       return maskClaimComments(claim, employee);
+    },
+
+    async getExpenseSummary(actorId, claimId) {
+      const employee = await requireEmployee(actorId);
+      const claim = await requireViewableClaim(actorId, claimId);
+      const [employees, receipt] = await Promise.all([
+        store.listEmployees(employee.organizationId),
+        // The receipt is optional: a claim may proceed without one, and the
+        // summary PDF then simply carries no attachment. Comment masking is
+        // preserved (requester/Finance only), so a summary PDF exposes no
+        // more than the app already does.
+        readReceiptBytes(claim, false),
+      ]);
+      return { claim: maskClaimComments(claim, employee), employees, receipt };
     },
 
     async listClaims(actorId) {
@@ -741,7 +774,7 @@ export function createExpenseCommands({
         throw new ExpenseError("unauthorized", "Only Finance can view the payment queue.");
       }
       const claims = await catchUpAll(await store.listClaimsForOrganization(employee.organizationId), employee.organizationId);
-      return claims.filter((claim) => claim.status === "in-finance" || claim.status === "paid");
+      return claims.filter((claim) => claim.status === "in-finance" || claim.status === "paid" || claim.status === "rejected");
     },
 
     async updateComments(actorId, claimId, comments) {

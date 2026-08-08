@@ -37,3 +37,26 @@ _Avoid_: Viewer, PDF view, thumbnail
 The persistent receipt-preview area of the receipt-first flow: embedded in the CaptureRail on desktop, a "View receipt" button opening a full-screen sheet on mobile.
 It materializes only when a receipt exists (picked file or stored receipt); it is never an empty placeholder.
 _Avoid_: Preview panel, receipt pane
+
+**Payment queue**:
+The Finance-only list of claims in the payment lifecycle: awaiting payment, paid, and rejected.
+Rejected claims appear so Finance keeps the full record visible, but they are frozen - no comment editing and no terminal actions (ADR-0008).
+_Avoid_: Finance tab, payout list
+
+**Export current view**:
+The Excel export option that mirrors the queue exactly as filtered: the search text, status/category/amount/date filters, and the sort all apply.
+_Avoid_: Filtered export, WYSIWYG export
+
+**Full queue export**:
+The Excel export option that ignores all filters and search and contains every claim in the payment queue.
+_Avoid_: Everything export, database export
+
+**Expense summary PDF**:
+The server-generated PDF of a single claim: expense facts, the approval journey timeline, and comments, with the original receipt PDF attached as a file attachment (ADR-0011).
+Downloadable from the expense drawer for every status and from the queue's side panel header.
+_Avoid_: Receipt download, claim report
+
+**Rejection reason**:
+The required reason recorded when a claim is rejected.
+It lives only as a history event (kind `rejected`) with actor and timestamp, and is rendered read-only in comment surfaces; it is never written into the claim's comments field (ADR-0009).
+_Avoid_: Rejection note, decline reason

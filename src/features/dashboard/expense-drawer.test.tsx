@@ -16,6 +16,12 @@ vi.mock("next/navigation", () => ({
   }),
 }));
 
+const downloadBlobMock = vi.hoisted(() => vi.fn());
+
+vi.mock("@/lib/download-blob", () => ({
+  downloadBlob: downloadBlobMock,
+}));
+
 // The verify/pay responses carry the organization's employees so the drawer
 // can render the stamped claim with real actor names.
 const EMPLOYEES: ExpenseEmployee[] = [
@@ -225,6 +231,14 @@ function buildExpense(overrides: Partial<Expense> = {}): Expense {
   };
 }
 
+function terminalExpense(status: "paid" | "rejected"): Expense {
+  return buildExpense({ status, primaryAction: undefined });
+}
+
+function draftExpense(): Expense {
+  return buildExpense({ status: "draft", primaryAction: undefined });
+}
+
 describe("ExpenseDrawer verification and payment workflow", () => {
   const defaultUser = "Finance Officer";
   const defaultUserId = "emp-finance";
@@ -232,6 +246,7 @@ describe("ExpenseDrawer verification and payment workflow", () => {
   beforeEach(() => {
     mockRefresh.mockReset();
     mockPush.mockReset();
+    downloadBlobMock.mockReset();
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -582,5 +597,169 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close details" }));
     expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ExpenseDrawer summary download", () => {
+  const defaultUser = "Finance Officer";
+  const defaultUserId = "emp-finance";
+
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    mockPush.mockReset();
+    downloadBlobMock.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("downloads the summary PDF from the enabled primary button of a paid claim", async () => {
+    const expense = terminalExpense("paid");
+    const pdfBytes = new Uint8Array([0x25, 0x50, 0x44, 0x46]);
+    const fetchMock = vi.fn().mockResolvedValue(new Response(pdfBytes));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    const downloadBtn = screen.getByRole("button", { name: "Download summary" });
+    expect(downloadBtn).toBeEnabled();
+    expect(screen.getAllByRole("button", { name: "Download summary" })).toHaveLength(1);
+
+    fireEvent.click(downloadBtn);
+
+    await waitFor(() => {
+      expect(downloadBlobMock).toHaveBeenCalledTimes(1);
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/expenses/exp-123/summary");
+    expect(downloadBlobMock).toHaveBeenCalledWith(expect.objectContaining({ size: 4 }), "EXP-1001-summary.pdf");
+  });
+
+  it("offers the enabled Download summary primary button on a rejected claim", async () => {
+    const expense = terminalExpense("rejected");
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Uint8Array())));
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    const downloadBtn = screen.getByRole("button", { name: "Download summary" });
+    expect(downloadBtn).toBeEnabled();
+    expect(screen.queryByText("No action available")).not.toBeInTheDocument();
+  });
+
+  it("keeps the in-progress primary action and adds a secondary download button", async () => {
+    const expense = buildExpense();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Uint8Array())));
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Verify for payment" })).toBeEnabled();
+    expect(screen.getByRole("button", { name: "Download summary" })).toBeEnabled();
+  });
+
+  it("keeps the draft actions and adds a secondary download button on drafts", async () => {
+    const expense = draftExpense();
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(new Response(new Uint8Array())));
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Continue draft" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Delete draft" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Download summary" })).toBeEnabled();
+  });
+
+  it("surfaces the server error message and saves no file when the summary request is not ok", async () => {
+    const expense = terminalExpense("paid");
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValue(
+        new Response(
+          JSON.stringify({ error: "not-found", message: "This claim is not available to you." }),
+          { status: 404 },
+        ),
+      );
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Download summary" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("This claim is not available to you.");
+    });
+    expect(fetchMock).toHaveBeenCalledWith("/api/expenses/exp-123/summary");
+    expect(downloadBlobMock).not.toHaveBeenCalled();
+  });
+
+  it("shows a network error and saves no file when the summary fetch fails", async () => {
+    const expense = terminalExpense("paid");
+    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new Error("network down")));
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={expense}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Download summary" }));
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent(
+        "Could not reach the server. Check your connection and try again.",
+      );
+    });
+    expect(downloadBlobMock).not.toHaveBeenCalled();
   });
 });

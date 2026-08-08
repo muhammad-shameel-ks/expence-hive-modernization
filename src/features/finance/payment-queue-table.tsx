@@ -5,9 +5,11 @@
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { ArrowUpDown, FileText, LoaderCircle, Search, SlidersHorizontal, X } from "lucide-react";
+import { ArrowUpDown, Download, Search, SlidersHorizontal, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { Popover, PopoverContent, PopoverTrigger } from "@/components/ui/popover";
 import { cn } from "@/lib/utils";
+import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 import { isTerminalPoolEligible } from "@/features/dashboard/next-action";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
@@ -19,8 +21,21 @@ import {
   type PaymentQueueFilter,
   type PaymentQueueSortKey,
 } from "./payment-queue-query";
+import {
+  PAYMENT_QUEUE_COLUMNS,
+  type PaymentQueueColumn,
+  type PaymentQueueColumnHelpers,
+  type PaymentQueueColumnTextHelpers,
+} from "./payment-queue-columns";
+import {
+  buildAndDownloadXlsx,
+  type PaymentQueueExportScope,
+} from "./payment-queue-export";
 
-const FILTERS: PaymentQueueFilter[] = ["All", "Awaiting payment", "Paid"];
+const FILTERS: PaymentQueueFilter[] = ["All", "Awaiting payment", "Paid", "Rejected"];
+
+const exportOptionClassName =
+  "flex w-full items-center justify-start rounded-lg px-2.5 py-1.5 text-left text-sm text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50";
 
 export function PaymentQueueTable({
   claims,
@@ -73,6 +88,20 @@ export function PaymentQueueTable({
       setActingClaimId(null);
     }
   }
+
+  // The terminal action the viewer may take on a claim straight from the
+  // queue: any active reviewer holding the terminal step's role may act,
+  // mirroring the server's requireTerminalPoolClaim (which checks the
+  // claim's terminal step).
+  const terminalActionFor = (claim: ExpenseClaim): "verify" | "pay" | null => {
+    if (claim.status !== "in-finance") return null;
+    const terminalStep = claim.steps[claim.steps.length - 1];
+    if (!terminalStep || (terminalStep.status !== "pending" && terminalStep.status !== "verified")) {
+      return null;
+    }
+    if (!isTerminalPoolEligible(claim, currentUserId, currentUserRoleId)) return null;
+    return terminalStep.status === "verified" ? "pay" : "verify";
+  };
 
   async function saveComment(claimId: string, value: string) {
     setSavingCommentFor(claimId);
@@ -128,6 +157,9 @@ export function PaymentQueueTable({
   const [filter, setFilter] = useState<PaymentQueueFilter>("All");
   const [sort, setSort] = useState<{ key: PaymentQueueSortKey; dir: 1 | -1 }>({ key: "submitted", dir: -1 });
   const [moreFiltersOpen, setMoreFiltersOpen] = useState(false);
+  const [exportOpen, setExportOpen] = useState(false);
+  const [exporting, setExporting] = useState(false);
+  const [downloadingSummary, setDownloadingSummary] = useState(false);
   const [categories, setCategories] = useState<string[]>([]);
   const [amountMin, setAmountMin] = useState("");
   const [amountMax, setAmountMax] = useState("");
@@ -203,12 +235,74 @@ export function PaymentQueueTable({
     setDateTo("");
   };
 
-  function sortHeader(sortKey: PaymentQueueSortKey, label: string, className?: string) {
+  const columnHelpers: PaymentQueueColumnHelpers = {
+    employeeNameById,
+    paymentStatusFor,
+    approvedOnFor,
+    hasReceiptAttachment,
+    rowSelectedFor: (claimId) => selectedClaimId === claimId,
+    previewButtonRefFor: (claimId) => (el) => {
+      if (el) previewButtonRefs.current.set(claimId, el);
+      else previewButtonRefs.current.delete(claimId);
+    },
+    onToggleReceiptPreview: (claimId) => {
+      if (selectedClaimId === claimId) {
+        closePanel();
+      } else {
+        openPanel(claimId);
+      }
+    },
+    actingClaimId,
+    terminalActionFor,
+    onTerminalAction: runTerminalAction,
+    commentValueFor: (claim) => comments[claim.id] ?? claim.comments ?? "",
+    savingCommentFor,
+    onSaveComment: saveComment,
+  };
+
+  // The Excel export only needs the data-facing helpers, never the DOM
+  // concerns (refs, handlers, loading state) in the render bag above.
+  const textHelpers: PaymentQueueColumnTextHelpers = {
+    employeeNameById,
+    paymentStatusFor,
+    approvedOnFor,
+    commentValueFor: (claim) => comments[claim.id] ?? claim.comments ?? "",
+  };
+
+  function runExport(scope: PaymentQueueExportScope) {
+    // Generation is synchronous and fast; the busy flag keeps the popover
+    // actions disabled while a workbook is being produced.
+    setExporting(true);
+    try {
+      buildAndDownloadXlsx(scope === "full" ? claims : rows, textHelpers, scope);
+    } finally {
+      setExporting(false);
+      setExportOpen(false);
+    }
+  }
+
+  // Download the selected claim's summary PDF from the server; failures
+  // surface in the table's error banner and never save a partial file.
+  async function downloadSummary() {
+    if (!selected || downloadingSummary) return;
+    setDownloadingSummary(true);
+    setActionError(null);
+    try {
+      const error = await downloadClaimSummary(selected.id, `${selected.ref}-summary.pdf`);
+      if (error) setActionError(error);
+    } finally {
+      setDownloadingSummary(false);
+    }
+  }
+
+  function sortHeader(column: PaymentQueueColumn) {
+    const sortKey = column.sortKey;
+    if (!sortKey) return null;
     return (
       <th
-        key={sortKey}
+        key={column.id}
         aria-sort={sort.key === sortKey ? (sort.dir === 1 ? "ascending" : "descending") : "none"}
-        className={cn("px-4 py-3 font-medium", className)}
+        className={column.headerClassName ?? "px-4 py-3 font-medium"}
       >
         <button
           type="button"
@@ -218,7 +312,7 @@ export function PaymentQueueTable({
             sort.key === sortKey && "text-foreground",
           )}
         >
-          {label}
+          {column.label}
           <ArrowUpDown className={cn("h-3 w-3", sort.key === sortKey && "text-foreground")} />
         </button>
       </th>
@@ -275,6 +369,35 @@ export function PaymentQueueTable({
             </span>
           ) : null}
         </Button>
+
+        <Popover open={exportOpen} onOpenChange={setExportOpen}>
+          <PopoverTrigger asChild>
+            <Button variant="outline" size="sm" className="gap-1.5" loading={exporting}>
+              <Download className="h-3.5 w-3.5" />
+              Export
+            </Button>
+          </PopoverTrigger>
+          <PopoverContent align="end" className="w-56">
+            <div role="group" aria-label="Export payment queue" className="grid gap-0.5">
+              <button
+                type="button"
+                disabled={rows.length === 0 || exporting}
+                onClick={() => runExport("current")}
+                className={exportOptionClassName}
+              >
+                Export current view
+              </button>
+              <button
+                type="button"
+                disabled={exporting}
+                onClick={() => runExport("full")}
+                className={exportOptionClassName}
+              >
+                Export full queue
+              </button>
+            </div>
+          </PopoverContent>
+        </Popover>
       </div>
 
       {moreFiltersOpen ? (
@@ -388,15 +511,39 @@ export function PaymentQueueTable({
                 claimId={selected.id}
                 fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
                 onClose={closePanel}
+                headerAction={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    loading={downloadingSummary}
+                    onClick={downloadSummary}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download summary
+                  </Button>
+                }
                 className="h-full flex-1 border-0 rounded-none lg:rounded-xl bg-card"
               />
             ) : (
               <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card">
                 <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
                   <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
-                  <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
-                    <X />
-                  </Button>
+                  <div className="flex items-center gap-1">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      className="gap-1"
+                      loading={downloadingSummary}
+                      onClick={downloadSummary}
+                    >
+                      <Download className="h-3.5 w-3.5" />
+                      Download summary
+                    </Button>
+                    <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
+                      <X />
+                    </Button>
+                  </div>
                 </div>
                 <div className="m-auto flex items-center justify-center p-6 text-sm text-muted-foreground">
                   No receipt attached to this claim.
@@ -421,18 +568,15 @@ export function PaymentQueueTable({
           <table className="w-full min-w-[1600px] border-collapse text-sm">
             <thead className="sticky top-0 z-10">
               <tr className="bg-background text-left shadow-[inset_0_-1px_0_0_rgba(0,0,0,0.1)]">
-                <th className="px-4 py-3 font-medium">Name</th>
-                {sortHeader("ref", "Reference")}
-                {sortHeader("category", "Category", "hidden md:table-cell")}
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Sub category</th>
-                {sortHeader("submitted", "Bill submission", "hidden sm:table-cell")}
-                <th className="hidden px-4 py-3 font-medium lg:table-cell">Bill invoice date</th>
-                {sortHeader("amount", "Amount", "text-right")}
-                {sortHeader("status", "Status")}
-                <th className="px-4 py-3 font-medium">Payment status</th>
-                <th className="hidden px-4 py-3 font-medium xl:table-cell">Approved on</th>
-                <th className="hidden px-4 py-3 font-medium xl:table-cell">Remark</th>
-                <th className="min-w-[220px] px-4 py-3 font-medium">Comments</th>
+                {PAYMENT_QUEUE_COLUMNS.map((column) =>
+                  column.sortKey ? (
+                    sortHeader(column)
+                  ) : (
+                    <th key={column.id} className={column.headerClassName ?? "px-4 py-3 font-medium"}>
+                      {column.label}
+                    </th>
+                  ),
+                )}
               </tr>
             </thead>
             <tbody>
@@ -443,139 +587,27 @@ export function PaymentQueueTable({
                   </td>
                 </tr>
               ) : (
-                rows.map((claim) => {
-                  const approvedOn = approvedOnFor(claim);
-                  const commentValue = comments[claim.id] ?? claim.comments ?? "";
-                  const rowSelected = selectedClaimId === claim.id;
-                  const terminalStep = claim.steps[claim.steps.length - 1];
-                  const viewerCanAct =
-                    claim.status === "in-finance" &&
-                    !!terminalStep &&
-                    (terminalStep.status === "pending" || terminalStep.status === "verified") &&
-                    isTerminalPoolEligible(claim, currentUserId, currentUserRoleId);
-                  const terminalAction = viewerCanAct
-                    ? terminalStep!.status === "verified"
-                      ? "pay"
-                      : "verify"
-                    : null;
-                  return (
-                    <tr
-                      key={claim.id}
-                      ref={(el) => {
-                        if (el) rowRefs.current.set(claim.id, el);
-                        else rowRefs.current.delete(claim.id);
-                      }}
-                      className="border-t border-black/10 odd:bg-muted/60"
-                    >
-                      <td className="px-4 py-3 text-foreground">
-                        <div className="flex min-w-0 items-center gap-2">
-                          {hasReceiptAttachment(claim) ? (
-                            <Button
-                              ref={(el) => {
-                                if (el) previewButtonRefs.current.set(claim.id, el);
-                                else previewButtonRefs.current.delete(claim.id);
-                              }}
-                              variant={rowSelected ? "default" : "outline"}
-                              size="icon-sm"
-                              aria-label={`Preview receipt for ${claim.ref}`}
-                              aria-expanded={rowSelected}
-                              onClick={() => {
-                                if (rowSelected) {
-                                  closePanel();
-                                } else {
-                                  openPanel(claim.id);
-                                }
-                              }}
-                              className="shrink-0"
-                            >
-                              <FileText />
-                            </Button>
-                          ) : null}
-                          <span className="truncate">{employeeNameById.get(claim.requesterId) ?? "-"}</span>
-                        </div>
+                // react-hooks/refs cannot see that the column helpers only
+                // touch refs inside deferred ref callbacks and event
+                // handlers (never during render), so it flags passing the
+                // helpers bag into the schema renderers.
+                // eslint-disable-next-line react-hooks/refs
+                rows.map((claim) => (
+                  <tr
+                    key={claim.id}
+                    ref={(el) => {
+                      if (el) rowRefs.current.set(claim.id, el);
+                      else rowRefs.current.delete(claim.id);
+                    }}
+                    className="border-t border-black/10 odd:bg-muted/60"
+                  >
+                    {PAYMENT_QUEUE_COLUMNS.map((column) => (
+                      <td key={column.id} className={column.cellClassName ?? "px-4 py-3"}>
+                        {column.render(claim, columnHelpers)}
                       </td>
-                      <td className="px-4 py-3">
-                        <p className="font-medium text-foreground">{claim.title}</p>
-                        <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{claim.ref}</p>
-                      </td>
-                      <td className="hidden px-4 py-3 text-muted-foreground md:table-cell">{claim.category}</td>
-                      <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.subCategory || "-"}</td>
-                      <td className="hidden px-4 py-3 text-muted-foreground sm:table-cell">
-                        {(claim.submittedAt ?? claim.createdAt).slice(0, 10)}
-                      </td>
-                      <td className="hidden px-4 py-3 text-muted-foreground lg:table-cell">{claim.expenseDate}</td>
-                      <td className="px-4 py-3 text-right font-medium tabular-nums text-foreground">
-                        ₹{(claim.amountMinor / 100).toFixed(2)}
-                      </td>
-                      <td className="px-4 py-3">{claim.status}</td>
-                      <td className="px-4 py-3">
-                        <span
-                          className={cn(
-                            "rounded-full px-2 py-0.5 text-xs font-medium",
-                            paymentStatusFor(claim) === "Paid"
-                              ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-                              : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
-                          )}
-                        >
-                          {paymentStatusFor(claim)}
-                        </span>
-                        {terminalAction ? (
-                          <Button
-                            size="sm"
-                            variant={terminalAction === "pay" ? "default" : "outline"}
-                            loading={actingClaimId === claim.id}
-                            disabled={actingClaimId !== null}
-                            onClick={() => runTerminalAction(claim)}
-                          >
-                            {terminalAction === "pay" ? "Mark paid" : "Verify for payment"}
-                          </Button>
-                        ) : null}
-                      </td>
-                      <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">
-                        {approvedOn ? approvedOn.slice(0, 10) : "-"}
-                      </td>
-                      <td className="hidden px-4 py-3 text-muted-foreground xl:table-cell">{claim.remark || "-"}</td>
-                      <td className="px-4 py-3">
-                        <div className="relative">
-                          <input
-                            type="text"
-                            defaultValue={commentValue}
-                            placeholder="Add a comment…"
-                            aria-label={`Comment for ${claim.ref}`}
-                            aria-busy={savingCommentFor === claim.id || undefined}
-                            disabled={savingCommentFor === claim.id}
-                            onBlur={(e) => {
-                              if (e.target.value !== commentValue) saveComment(claim.id, e.target.value);
-                            }}
-                            onKeyDown={(e) => {
-                              if (e.key === "Enter") e.currentTarget.blur();
-                            }}
-                            // The trailing slot is always reserved so the
-                            // text gutter never shifts while a save is
-                            // pending; the spinner appears inside the fixed
-                            // slot instead of changing the input's padding.
-                            className="h-8 w-full rounded-md border border-input bg-card pl-2 pr-7 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-                          />
-                          {/*
-                           * The shared Button `loading` prop is not used here because there is no
-                           * discrete save trigger to attach it to: the comment save fires on blur/Enter
-                           * of this plain text input, with no adjacent button. `aria-busy` on the input
-                           * (above) carries the loading semantics for assistive tech; this spinner is a
-                           * purely visual affordance layered on top of the input itself.
-                           */}
-                          <span
-                            aria-hidden
-                            className="pointer-events-none absolute right-2 top-1/2 size-3.5 -translate-y-1/2 text-muted-foreground"
-                          >
-                            {savingCommentFor === claim.id ? (
-                              <LoaderCircle className="animate-spin" />
-                            ) : null}
-                          </span>
-                        </div>
-                      </td>
-                    </tr>
-                  );
-                })
+                    ))}
+                  </tr>
+                ))
               )}
             </tbody>
           </table>

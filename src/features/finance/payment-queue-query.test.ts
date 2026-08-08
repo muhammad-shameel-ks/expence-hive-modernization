@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { ExpenseClaim } from "@/server/expenses/ports";
-import { approvedOnFor, filterAndSortPaymentQueue, paymentStatusFor } from "./payment-queue-query";
+import { approvedOnFor, filterAndSortPaymentQueue, paymentStatusFor, rejectionFor } from "./payment-queue-query";
 
 function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
   return {
@@ -44,15 +44,17 @@ describe("filterAndSortPaymentQueue", () => {
     expect(filterAndSortPaymentQueue(list, { query: "   " })).toHaveLength(2);
   });
 
-  it("groups claims into Awaiting payment and Paid filters", () => {
+  it("groups claims into Awaiting payment, Paid, and Rejected filters", () => {
     const list = [
       claim({ id: "a", status: "in-finance" }),
       claim({ id: "b", status: "paid" }),
       claim({ id: "c", status: "in-finance" }),
+      claim({ id: "d", status: "rejected" }),
     ];
     expect(filterAndSortPaymentQueue(list, { filter: "Awaiting payment" }).map((c) => c.id)).toEqual(["a", "c"]);
     expect(filterAndSortPaymentQueue(list, { filter: "Paid" }).map((c) => c.id)).toEqual(["b"]);
-    expect(filterAndSortPaymentQueue(list, { filter: "All" })).toHaveLength(3);
+    expect(filterAndSortPaymentQueue(list, { filter: "Rejected" }).map((c) => c.id)).toEqual(["d"]);
+    expect(filterAndSortPaymentQueue(list, { filter: "All" })).toHaveLength(4);
   });
 
   it("filters by category list", () => {
@@ -144,9 +146,40 @@ describe("filterAndSortPaymentQueue", () => {
 });
 
 describe("paymentStatusFor", () => {
-  it("reports Paid only when the claim status is paid", () => {
+  it("reports Paid, Not Paid, and Rejected payment statuses", () => {
     expect(paymentStatusFor(claim({ status: "paid" }))).toBe("Paid");
     expect(paymentStatusFor(claim({ status: "in-finance" }))).toBe("Not Paid");
+    expect(paymentStatusFor(claim({ status: "rejected" }))).toBe("Rejected");
+  });
+});
+
+describe("rejectionFor", () => {
+  it("returns the latest rejected history event", () => {
+    const withRejections = claim({
+      history: [
+        { id: "h1", kind: "rejected", actorId: "emp-ada", detail: "First rejection", createdAt: "2026-07-27T10:00:00Z" },
+        { id: "h2", kind: "rejected", actorId: "emp-finance", detail: "Final rejection", createdAt: "2026-07-29T09:05:00Z" },
+      ],
+    });
+    expect(rejectionFor(withRejections)).toMatchObject({
+      kind: "rejected",
+      actorId: "emp-finance",
+      detail: "Final rejection",
+    });
+  });
+
+  it("ignores non-rejection events when picking the latest rejection", () => {
+    const withLaterApproval = claim({
+      history: [
+        { id: "h1", kind: "rejected", actorId: "emp-ada", detail: "Missing receipt", createdAt: "2026-07-27T10:00:00Z" },
+        { id: "h2", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-07-28T10:00:00Z" },
+      ],
+    });
+    expect(rejectionFor(withLaterApproval)).toMatchObject({ detail: "Missing receipt" });
+  });
+
+  it("returns undefined when no rejection has happened", () => {
+    expect(rejectionFor(claim())).toBeUndefined();
   });
 });
 

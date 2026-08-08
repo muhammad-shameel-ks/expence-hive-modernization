@@ -12,7 +12,7 @@
 
 ## Current Work
 
-- What: persistent receipt preview surface in the `/expenses/new` wizard - dual-source `ReceiptPreview`, one hoisted viewer across all wizard steps, mobile sheet access on every step, source/focus/mobile hydration polish, and Review-step auto-scroll (ADRs 0006-0007).
-- Plan: sliced in `.scratch/wizard-receipt-preview/slices/`; ADRs `docs/architecture/decisions/0006-dual-source-receipt-preview.md` and `0007-persistent-wizard-receipt-preview.md`; CONTEXT.md updated.
-- Next: review - lint/build green; 538 vitest tests passing across 31 test files (browser verification completed for the wizard surface).
+- What: payments queue export feature - Excel export of the queue (popover chooser: current view vs full queue, client-side SheetJS, shared column schema driving both table and export), server-side PDF expense summary (pdf-lib, all statuses in the drawer + queue side panel, receipt attached), and rejected claims joining the payment queue with the rejection reason surfaced read-only in comments (ADRs 0008-0011).
+- Plan: `docs/specs/payment-queue-export-and-pdf-summary.md` (ADRs 0008-0011, CONTEXT.md updated); tracked as issue #46.
+- Next: review done (review-maxxing, standards + spec) - all findings fixed; 653 vitest tests passing (36 files), lint/build green. Ready to commit.
 

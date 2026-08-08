@@ -7,6 +7,7 @@ import {
   useLayoutEffect,
   useRef,
   useState,
+  type ReactNode,
   type Ref,
 } from "react";
 import { FileText, Loader2, X, ZoomIn, ZoomOut } from "lucide-react";
@@ -95,6 +96,8 @@ type ReceiptPreviewProps =
       fileName?: string;
       className?: string;
       onClose?: () => void;
+      /** Optional action rendered in the header next to the zoom controls (e.g. "Download summary"). */
+      headerAction?: ReactNode;
     }
   | {
       claimId?: never;
@@ -102,6 +105,7 @@ type ReceiptPreviewProps =
       fileName?: string;
       className?: string;
       onClose?: () => void;
+      headerAction?: ReactNode;
     };
 
 // The close button is reachable via ref (React 19 passes refs as props); the
@@ -115,7 +119,7 @@ const useIsomorphicLayoutEffect = typeof window === "undefined" ? useEffect : us
 
 export function ReceiptPreview({ ref: closeButtonRef, ...props }: ReceiptPreviewWithRefProps) {
   const sourceKey = props.file !== undefined ? props.file : props.claimId;
-  const { fileName, className, onClose } = props;
+  const { fileName, className, onClose, headerAction } = props;
   const [status, setStatus] = useState<Status>("loading");
   const [scale, setScale] = useState(1);
   const [pan, setPan] = useState<Point>({ x: 0, y: 0 });
@@ -673,6 +677,7 @@ export function ReceiptPreview({ ref: closeButtonRef, ...props }: ReceiptPreview
           >
             <ZoomIn />
           </Button>
+          {headerAction ? <div className="ml-1 flex items-center">{headerAction}</div> : null}
           {onClose ? (
             <Button
               ref={closeButtonRef}

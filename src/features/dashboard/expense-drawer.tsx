@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, ArrowUpRight, Clock, Paperclip, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Clock, Download, Paperclip, X, type LucideIcon } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { EASE_OUT } from "@/lib/ease";
@@ -27,6 +27,7 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
+import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import { ME, STATUS_META, type Expense } from "./mock-data";
 import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
@@ -220,14 +221,11 @@ export function getJourneyFlowItems(expense: Expense, currentUser = "", currentU
   return [...historySteps, ...pendingSteps];
 }
 
-const PRIMARY_ACTION: Record<Expense["status"], string> = {
-  draft: "Continue draft",
+const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
   submitted: "Withdraw",
   "in-approval": "Remind approver",
   approved: "Add note",
   "in-finance": "Add note",
-  paid: "Download summary",
-  rejected: "No action available",
 };
 
 // Verify/pay mutations return the domain claim plus the organization
@@ -266,6 +264,7 @@ export function ExpenseDrawer({
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [acting, setActing] = useState(false);
+  const [downloading, setDownloading] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
   const [navigatingDraft, setNavigatingDraft] = useState(false);
   const [receiptOpen, setReceiptOpen] = useState(false);
@@ -424,6 +423,22 @@ export function ExpenseDrawer({
       window.location.reload();
     } finally {
       setActing(false);
+    }
+  }
+
+  // The summary PDF is fetched as bytes (never JSON, unlike the mutations
+  // above) and handed to the shared download flow. A failed request or a
+  // network failure surfaces in the footer's actionError banner; no file is
+  // saved because the download seam only runs after a successful response.
+  async function downloadSummary() {
+    if (!activeExpense || downloading) return;
+    setDownloading(true);
+    setActionError(null);
+    try {
+      const error = await downloadClaimSummary(activeExpense.id, `${activeExpense.ref}-summary.pdf`);
+      if (error) setActionError(error);
+    } finally {
+      setDownloading(false);
     }
   }
 
@@ -827,7 +842,7 @@ export function ExpenseDrawer({
             {actionError ? (
               <p role="status" className="mb-3 text-xs text-destructive">{actionError}</p>
             ) : null}
-            <div className="flex items-center gap-3">
+            <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               {activeExpense.status === "draft" ? (
                 <>
                   <Button className="flex-1" loading={navigatingDraft} onClick={continueDraft}>
@@ -837,7 +852,19 @@ export function ExpenseDrawer({
                   <Button variant="destructive" onClick={openDeleteDraft}>
                     Delete draft
                   </Button>
+                  <Button variant="outline" loading={downloading} onClick={downloadSummary}>
+                    <Download className="h-3.5 w-3.5" />
+                    Download summary
+                  </Button>
                 </>
+              ) : isTerminal(activeExpense.status) ? (
+                <Button
+                  className="flex-1"
+                  loading={downloading}
+                  onClick={downloadSummary}
+                >
+                  Download summary
+                </Button>
               ) : (
                 <>
                   {!showPostVerifyPrompt ? (
@@ -855,6 +882,10 @@ export function ExpenseDrawer({
                       Reject
                     </Button>
                   ) : null}
+                  <Button variant="outline" loading={downloading} onClick={downloadSummary}>
+                    <Download className="h-3.5 w-3.5" />
+                    Download summary
+                  </Button>
                 </>
               )}
               <Button variant="outline" className="gap-1.5">
