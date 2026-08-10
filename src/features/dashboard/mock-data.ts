@@ -16,6 +16,7 @@ export type HistoryKind =
   | "approved"
   | "rejected"
   | "skipped"
+  | "auto-skipped"
   | "takeover"
   | "reviewing"
   | "verified"

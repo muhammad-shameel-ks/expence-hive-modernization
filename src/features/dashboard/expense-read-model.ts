@@ -11,6 +11,7 @@ const HISTORY_KINDS: Record<ExpenseHistoryEvent["kind"], Expense["history"][numb
   skipped: "skipped",
   takeover: "takeover",
   comment: "comment",
+  "auto-skipped": "auto-skipped",
 };
 
 export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]): Expense {
