@@ -1,10 +1,12 @@
 import {
   formatGuardAmount,
   GUARD_FAIL_PHRASES,
+  GUARD_OPERATORS,
   guardSatisfied,
   minorToRupees,
   rupeesToMinor,
   type AmountGuard,
+  type AmountGuardOperator,
 } from "@/server/shared/amount-guard";
 
 export type { AmountGuard, AmountGuardOperator } from "@/server/shared/amount-guard";
@@ -56,8 +58,7 @@ export function validateGuardOperator(operator: string | null | undefined): {
   isValid: boolean;
   error?: string;
 } {
-  const validOperators = ["gte", "gt", "lte", "lt"];
-  if (!operator || !validOperators.includes(operator)) {
+  if (!operator || !GUARD_OPERATORS.includes(operator as AmountGuardOperator)) {
     return { isValid: false, error: "Select a valid guard operator." };
   }
   return { isValid: true };

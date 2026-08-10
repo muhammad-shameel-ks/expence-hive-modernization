@@ -42,43 +42,42 @@ export function getJourneyFlowItems(
   // Auto-skips are presented on their stage (see the steps pass below), not
   // as a standalone history entry: the event is written at submission and
   // would otherwise appear before earlier pending stages.
-  const historySteps: JourneyFlowStep[] = expense.history
-    .filter((event) => event.kind !== "auto-skipped")
-    .map((event, i) => {
-      const meta = KIND_META[event.kind];
-      const isCurrent = !terminal && i === expense.history.length - 1;
-      const isTakeover = event.kind === "takeover";
-      // A takeover's title is the stage it bypassed (like any other stage
-      // entry), not the generic "Taken over" or the taking-over actor's name
-      // - the "Taken over" chip and the description carry that meaning
-      // instead (see render). The bypassed stage is read from the claim's
-      // current steps snapshot: a takeover always leaves at least one step
-      // "skipped" with no skipReason (amount-guard auto-skips are the only
-      // other skips, and they always carry a skipReason).
-      const bypassedSteps = isTakeover
-        ? (expense.steps ?? []).filter((s) => s.status === "skipped" && !s.skipReason)
-        : [];
-      const reasonMatch = isTakeover ? event.detail?.match(/\(reason: (.*?)\)/) : null;
-      const extraBypassed = bypassedSteps.slice(1).map((s) => s.roleName);
-      return {
-        id: event.id,
-        label: isTakeover ? bypassedSteps[0]?.roleName ?? "Approval stage" : meta.label,
-        date: event.date,
-        actor: event.actor,
-        detail: isTakeover
-          ? `Taken over by ${event.actor}${reasonMatch ? ` for "${reasonMatch[1]}"` : ""}${
-              extraBypassed.length ? ` (also skipped: ${extraBypassed.join(", ")})` : ""
-            }`
-          : event.detail,
-        tone: meta.tone,
-        icon: meta.icon,
-        isCurrent,
-        isNext: false,
-        pending: false,
-        isMine: isMine(event.actor, event.actorId),
-        isTakeover,
-      };
-    });
+  const nonAutoSkippedHistory = expense.history.filter((event) => event.kind !== "auto-skipped");
+  const historySteps: JourneyFlowStep[] = nonAutoSkippedHistory.map((event, i) => {
+    const meta = KIND_META[event.kind];
+    const isCurrent = !terminal && i === nonAutoSkippedHistory.length - 1;
+    const isTakeover = event.kind === "takeover";
+    // A takeover's title is the stage it bypassed (like any other stage
+    // entry), not the generic "Taken over" or the taking-over actor's name
+    // - the "Taken over" chip and the description carry that meaning
+    // instead (see render). The bypassed stage is read from the claim's
+    // current steps snapshot: a takeover always leaves at least one step
+    // "skipped" with no skipReason (amount-guard auto-skips are the only
+    // other skips, and they always carry a skipReason).
+    const bypassedSteps = isTakeover
+      ? (expense.steps ?? []).filter((s) => s.status === "skipped" && !s.skipReason)
+      : [];
+    const reasonMatch = isTakeover ? event.detail?.match(/\(reason: (.*?)\)/) : null;
+    const extraBypassed = bypassedSteps.slice(1).map((s) => s.roleName);
+    return {
+      id: event.id,
+      label: isTakeover ? bypassedSteps[0]?.roleName ?? "Approval stage" : meta.label,
+      date: event.date,
+      actor: event.actor,
+      detail: isTakeover
+        ? `Taken over by ${event.actor}${reasonMatch ? ` for "${reasonMatch[1]}"` : ""}${
+            extraBypassed.length ? ` (also skipped: ${extraBypassed.join(", ")})` : ""
+          }`
+        : event.detail,
+      tone: meta.tone,
+      icon: meta.icon,
+      isCurrent,
+      isNext: false,
+      pending: false,
+      isMine: isMine(event.actor, event.actorId),
+      isTakeover,
+    };
+  });
 
   // An amount-guard auto-skip is a decided stage: it renders between its
   // neighbors in flow order, titled by its role name, with the skip

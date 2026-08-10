@@ -1142,6 +1142,38 @@ describe("expense commands", () => {
       expect(afterApproval).toMatchObject({ status: "in-finance", currentStage: ROLE_FINANCE_EXECUTIVE.id, currentActorId: undefined });
       expect(afterApproval.steps.at(-1)).toMatchObject({ status: "pending" });
     });
+
+    it("advances past a guarded step immediately after skipping a vacant earlier step, not landing the claim on the skipped guard step", async () => {
+      const { commands } = buildCommands({
+        employees: [employee, emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" })],
+        flows: [
+          {
+            id: "flow-vacant-then-guarded",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              roleStep(ROLE_MANAGER.id),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      // Manager is vacant (absence auto-skip); Finance Head is guarded off
+      // (amount-guard auto-skip, ₹300 total is under the ₹5000 guard) - the
+      // claim must land on the one step that is actually pending, Finance
+      // Executive, not get stranded on the guard-skipped Finance Head step.
+      expect(submitted.steps[0]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[2]).toMatchObject({ status: "pending" });
+      expect(submitted).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+    });
   });
 
   describe("amount-guard auto-skip", () => {

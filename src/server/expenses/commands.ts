@@ -206,11 +206,17 @@ export function createExpenseCommands({
           : "Skipped: no response within 3 days",
         createdAt: decidedAt,
       });
-      const next = claim.steps[index + 1];
+      // Advance to the next pending step: steps between could have been
+      // auto-skipped by an amount guard at submission and must be passed
+      // over, never stranding the claim on an already-skipped stage.
+      const nextIndex = claim.steps.findIndex(
+        (candidate, candidateIndex) => candidateIndex > index && candidate.status === "pending",
+      );
+      const next = claim.steps[nextIndex];
       claim.currentStage = next.roleId ?? undefined;
       claim.currentActorId = next.assignedActorId;
       claim.currentStageSince = decidedAt;
-      claim.status = isTerminalIndex(claim, index + 1) ? "in-finance" : "in-approval";
+      claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
       changed = true;
     }
     return changed;
