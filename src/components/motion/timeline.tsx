@@ -44,8 +44,9 @@ interface TimelineItemContextValue {
   last: boolean;
   even: boolean;
   pending: boolean;
-  current: boolean;
-  next: boolean;
+  index: number;
+  currentIndex: number;
+  nextPending: boolean;
 }
 
 const TimelineItemContext = createContext<TimelineItemContextValue | null>(null);
@@ -56,15 +57,29 @@ export function Timeline({
   className,
   children,
 }: TimelineProps) {
-  const count = Children.count(children);
-  const items = Children.map(children, (child, index) => {
+  const childArray = Children.toArray(children);
+  const count = childArray.length;
+  // A live journey marks exactly one item as current; the connectors up to
+  // and including the one leading into it are drawn in the success tone.
+  // Terminal journeys (paid/rejected) have no current item, so no connector
+  // is ever tinted success.
+  const currentIndex = childArray.findIndex(
+    (child) => isValidElement<TimelineItemProps>(child) && child.props.current === true,
+  );
+  const items = childArray.map((child, index) => {
     if (!isValidElement<TimelineItemProps>(child)) return child;
+    const nextChild = childArray[index + 1];
+    const nextPending =
+      isValidElement<TimelineItemProps>(nextChild) && nextChild.props.pending === true;
     return cloneElement<TimelineItemProps>(child, {
       position,
       orientation,
       first: index === 0,
       last: index === count - 1,
       even: index % 2 === 0,
+      index,
+      currentIndex,
+      nextPending,
     });
   });
   return (
@@ -88,8 +103,12 @@ export interface TimelineItemProps {
   pending?: boolean;
   /** Marks the current stage of a live journey; the connector leading into it is drawn in the success tone. */
   current?: boolean;
-  /** Marks the immediate next stage of a live journey; connectors stay neutral until reached. */
-  next?: boolean;
+  /** Item index within the timeline; assigned by Timeline. */
+  index?: number;
+  /** Index of the item marked current, or -1 in terminal journeys; assigned by Timeline. */
+  currentIndex?: number;
+  /** Whether the following item is pending; assigned by Timeline. */
+  nextPending?: boolean;
   className?: string;
   children?: ReactNode;
 }
@@ -101,8 +120,9 @@ export function TimelineItem({
   last = false,
   even = true,
   pending = false,
-  current = false,
-  next = false,
+  index = 0,
+  currentIndex = -1,
+  nextPending = false,
   className,
   children,
 }: TimelineItemProps) {
@@ -113,8 +133,9 @@ export function TimelineItem({
     last,
     even,
     pending,
-    current,
-    next,
+    index,
+    currentIndex,
+    nextPending,
   };
   return (
     <li
@@ -173,16 +194,22 @@ export function TimelineSeparator({
   className?: string;
   children?: ReactNode;
 }) {
-  const { orientation, position, first, last, pending, current, next } = useTimelineItem();
+  const { orientation, position, first, last, pending, index = 0, currentIndex = -1, nextPending = false } =
+    useTimelineItem();
   const vertical = orientation === "vertical";
 
-  const reached = !pending && !next;
-  const outboundReached = reached && !current;
+  // Each connector segment belongs to exactly one decision: the segment
+  // leading into this dot is tinted success when the journey has reached
+  // this stage (a live current stage exists at or after this index), and
+  // the segment leading out of this dot is tinted success when the journey
+  // has reached the next stage. Pending stages keep the dashed style.
+  const leadingReached = currentIndex >= 0 && index <= currentIndex;
+  const outboundReached = currentIndex >= 0 && index + 1 <= currentIndex;
 
-  const connector = (done: boolean) =>
-    done
+  const connector = (reached: boolean, dashed: boolean) =>
+    reached
       ? "bg-emerald-500"
-      : pending
+      : dashed
         ? vertical
           ? "bg-border/40 border-l border-dashed border-border/60"
           : "bg-border/40 border-t border-dashed border-border/60"
@@ -210,17 +237,14 @@ export function TimelineSeparator({
         <>
           <span
             aria-hidden
-            className={cn(
-              "h-1 w-0.5 shrink-0",
-              first ? "bg-transparent" : connector(reached),
-            )}
+            className={cn("h-1 w-0.5 shrink-0", first ? "bg-transparent" : connector(leadingReached, pending))}
           />
           <span className="relative z-10 inline-flex shrink-0">{children}</span>
           <span
             aria-hidden
             className={cn(
               "min-h-0 w-0.5 flex-1",
-              last ? "bg-transparent" : connector(outboundReached),
+              last ? "bg-transparent" : connector(outboundReached, nextPending),
             )}
           />
         </>
@@ -228,12 +252,12 @@ export function TimelineSeparator({
         <>
           <span
             aria-hidden
-            className={cn("h-0.5 flex-1", first ? "bg-transparent" : connector(reached))}
+            className={cn("h-0.5 flex-1", first ? "bg-transparent" : connector(leadingReached, pending))}
           />
           {children}
           <span
             aria-hidden
-            className={cn("h-0.5 flex-1", last ? "bg-transparent" : connector(outboundReached))}
+            className={cn("h-0.5 flex-1", last ? "bg-transparent" : connector(outboundReached, nextPending))}
           />
         </>
       )}
