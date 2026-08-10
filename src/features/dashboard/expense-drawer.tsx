@@ -687,7 +687,7 @@ export function ExpenseDrawer({
             const Icon = step.icon;
             const isPendingStep = step.pending && !step.isNext;
             return (
-              <TimelineItem key={step.id} pending={isPendingStep}>
+              <TimelineItem key={step.id} pending={isPendingStep} current={step.isCurrent} next={step.isNext}>
                 <TimelineSeparator>
                   <TimelineDot
                     tone={step.tone}

@@ -44,6 +44,8 @@ interface TimelineItemContextValue {
   last: boolean;
   even: boolean;
   pending: boolean;
+  current: boolean;
+  next: boolean;
 }
 
 const TimelineItemContext = createContext<TimelineItemContextValue | null>(null);
@@ -84,6 +86,10 @@ export interface TimelineItemProps {
   last?: boolean;
   even?: boolean;
   pending?: boolean;
+  /** Marks the current stage of a live journey; the connector leading into it is drawn in the success tone. */
+  current?: boolean;
+  /** Marks the immediate next stage of a live journey; connectors stay neutral until reached. */
+  next?: boolean;
   className?: string;
   children?: ReactNode;
 }
@@ -95,10 +101,21 @@ export function TimelineItem({
   last = false,
   even = true,
   pending = false,
+  current = false,
+  next = false,
   className,
   children,
 }: TimelineItemProps) {
-  const value: TimelineItemContextValue = { position, orientation, first, last, even, pending };
+  const value: TimelineItemContextValue = {
+    position,
+    orientation,
+    first,
+    last,
+    even,
+    pending,
+    current,
+    next,
+  };
   return (
     <li
       className={cn(
@@ -156,8 +173,20 @@ export function TimelineSeparator({
   className?: string;
   children?: ReactNode;
 }) {
-  const { orientation, position, first, last, pending } = useTimelineItem();
+  const { orientation, position, first, last, pending, current, next } = useTimelineItem();
   const vertical = orientation === "vertical";
+
+  const reached = !pending && !next;
+  const outboundReached = reached && !current;
+
+  const connector = (done: boolean) =>
+    done
+      ? "bg-emerald-500"
+      : pending
+        ? vertical
+          ? "bg-border/40 border-l border-dashed border-border/60"
+          : "bg-border/40 border-t border-dashed border-border/60"
+        : "bg-border";
 
   const colStart = !vertical
     ? "row-start-2"
@@ -183,7 +212,7 @@ export function TimelineSeparator({
             aria-hidden
             className={cn(
               "h-1 w-0.5 shrink-0",
-              first ? "bg-transparent" : pending ? "bg-border/40 border-l border-dashed border-border/60" : "bg-border",
+              first ? "bg-transparent" : connector(reached),
             )}
           />
           <span className="relative z-10 inline-flex shrink-0">{children}</span>
@@ -191,7 +220,7 @@ export function TimelineSeparator({
             aria-hidden
             className={cn(
               "min-h-0 w-0.5 flex-1",
-              last ? "bg-transparent" : pending ? "bg-border/40 border-l border-dashed border-border/60" : "bg-border",
+              last ? "bg-transparent" : connector(outboundReached),
             )}
           />
         </>
@@ -199,18 +228,12 @@ export function TimelineSeparator({
         <>
           <span
             aria-hidden
-            className={cn(
-              "h-0.5 flex-1",
-              first ? "bg-transparent" : pending ? "bg-border/40 border-t border-dashed border-border/60" : "bg-border",
-            )}
+            className={cn("h-0.5 flex-1", first ? "bg-transparent" : connector(reached))}
           />
           {children}
           <span
             aria-hidden
-            className={cn(
-              "h-0.5 flex-1",
-              last ? "bg-transparent" : pending ? "bg-border/40 border-t border-dashed border-border/60" : "bg-border",
-            )}
+            className={cn("h-0.5 flex-1", last ? "bg-transparent" : connector(outboundReached))}
           />
         </>
       )}
