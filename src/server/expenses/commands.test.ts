@@ -14,6 +14,7 @@ const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displ
 const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" };
 const ROLE_TEAM_LEAD = { id: "role-team-lead", code: "team-lead", displayName: "Team Lead" };
 const ROLE_INTERN = { id: "role-intern", code: "intern", displayName: "Intern" };
+const ROLE_SUPERADMIN = { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" };
 
 const roleStep = (roleId: string): FlowStepTarget => ({ kind: "role", roleId });
 const TEAM_LEAD_STEP: FlowStepTarget = { kind: "team-lead" };
@@ -1584,6 +1585,23 @@ describe("expense commands", () => {
       expect(takenOver).toMatchObject({ status: "in-approval", currentStage: ROLE_MANAGER.id, currentActorId: "emp-ada" });
       const overrideEvent = takenOver.history.find((event) => event.kind === "takeover");
       expect(overrideEvent?.detail).toContain("team lead");
+    });
+
+    it("lets a Superadmin take over any in-approval claim as an apex bypass, same as Finance Head", async () => {
+      const { commands } = buildCommands({
+        employees: [...BASE_EMPLOYEES, emp("emp-super", "Root Admin", ROLE_SUPERADMIN, { departmentId: "dept-eng" })],
+      });
+      const submitted = await submitStandardDraft(commands);
+
+      const takenOver = await commands.takeOverClaim("emp-super", submitted.id, "Escalated by CEO");
+
+      expect(takenOver).toMatchObject({ status: "in-finance", currentStage: ROLE_FINANCE_EXECUTIVE.id, currentActorId: "emp-finance" });
+      expect(takenOver.steps[0]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[1]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[2]).toMatchObject({ status: "pending" });
+      const overrideEvent = takenOver.history.find((event) => event.kind === "takeover");
+      expect(overrideEvent).toMatchObject({ actorId: "emp-super" });
+      expect(overrideEvent?.detail).toContain("Escalated by CEO");
     });
 
     it("cannot target a team-lead step: the named person's role never matches a role-less step", async () => {

@@ -1,7 +1,12 @@
 import { createHash } from "node:crypto";
 import { buildBlobKey } from "../blob/keys";
 import type { BlobStore } from "../blob/ports";
-import { FINANCE_HEAD_ROLE_CODE, MANAGER_ROLE_CODE, resolveRoleCapabilities } from "../shared/authorization";
+import {
+  FINANCE_HEAD_ROLE_CODE,
+  MANAGER_ROLE_CODE,
+  SUPERADMIN_ROLE_CODE,
+  resolveRoleCapabilities,
+} from "../shared/authorization";
 import { autoSkipDetail, guardSatisfied } from "../shared/amount-guard";
 import {
   ACTIVITY_EVENT_KINDS,
@@ -741,15 +746,16 @@ export function createExpenseCommands({
       const targetIndex = claim.steps.findIndex(
         (step, index) => index > currentIndex && step.roleId === actorRole.id,
       );
-      // Finance Head apex: when the actor holds Finance Head and no later
-      // step targets their role, they take over by skipping every pending
-      // stage up to the terminal stage and assigning the terminal stage to
-      // the first eligible holder of its role (a Finance Executive) rather
-      // than to themselves (story 19/20). The terminal stage itself is never
-      // skipped by any takeover.
-      const financeHeadApex = actorRole.code === FINANCE_HEAD_ROLE_CODE && targetIndex === -1;
+      // Apex bypass: when the actor holds Finance Head or Superadmin and no
+      // later step targets their role, they take over by skipping every
+      // pending stage up to the terminal stage and assigning the terminal
+      // stage to the first eligible holder of its role (a Finance Executive)
+      // rather than to themselves (story 19/20). The terminal stage itself is
+      // never skipped by any takeover.
+      const isApexRole = actorRole.code === FINANCE_HEAD_ROLE_CODE || actorRole.code === SUPERADMIN_ROLE_CODE;
+      const apexTakeover = isApexRole && targetIndex === -1;
       const decidedAt = now().toISOString();
-      if (financeHeadApex) {
+      if (apexTakeover) {
         const terminalStepIndex = terminalIndex(claim);
         const skippedLabels = skippedStepLabels(claim, currentIndex, terminalStepIndex);
         for (let index = currentIndex; index < terminalStepIndex; index += 1) {

@@ -43,20 +43,28 @@ export function getJourneyFlowItems(
   // as a standalone history entry: the event is written at submission and
   // would otherwise appear before earlier pending stages.
   const nonAutoSkippedHistory = expense.history.filter((event) => event.kind !== "auto-skipped");
+  // Steps skipped without a skipReason come from two sources that render
+  // differently: absence/timeout auto-advance (its own "skipped" history
+  // entry, one step each) and a takeover (bypasses a contiguous run of
+  // steps). Because the current stage only ever advances forward, these
+  // steps appear in the same order as the history events that produced
+  // them, so walking both in chronological lockstep - consuming one step
+  // per "skipped" event and N steps (from the takeover's own "skipped N
+  // earlier stage(s)" detail) per takeover event - attributes each step to
+  // the event that actually skipped it, instead of guessing from status alone.
+  const skipWithoutReasonQueue = (expense.steps ?? []).filter((s) => s.status === "skipped" && !s.skipReason);
+  let skipCursor = 0;
   const historySteps: JourneyFlowStep[] = nonAutoSkippedHistory.map((event, i) => {
     const meta = KIND_META[event.kind];
     const isCurrent = !terminal && i === nonAutoSkippedHistory.length - 1;
     const isTakeover = event.kind === "takeover";
-    // A takeover's title is the stage it bypassed (like any other stage
-    // entry), not the generic "Taken over" or the taking-over actor's name
-    // - the "Taken over" chip and the description carry that meaning
-    // instead (see render). The bypassed stage is read from the claim's
-    // current steps snapshot: a takeover always leaves at least one step
-    // "skipped" with no skipReason (amount-guard auto-skips are the only
-    // other skips, and they always carry a skipReason).
-    const bypassedSteps = isTakeover
-      ? (expense.steps ?? []).filter((s) => s.status === "skipped" && !s.skipReason)
-      : [];
+    const bypassedCount = isTakeover ? Number(event.detail?.match(/skipped (\d+) earlier stage/)?.[1] ?? 0) : 0;
+    const bypassedSteps = isTakeover ? skipWithoutReasonQueue.slice(skipCursor, skipCursor + bypassedCount) : [];
+    if (isTakeover) {
+      skipCursor += bypassedCount;
+    } else if (event.kind === "skipped") {
+      skipCursor += 1;
+    }
     const reasonMatch = isTakeover ? event.detail?.match(/\(reason: (.*?)\)/) : null;
     const extraBypassed = bypassedSteps.slice(1).map((s) => s.roleName);
     return {

@@ -60,6 +60,43 @@ describe("getJourneyFlowItems takeover rendering", () => {
     const submitted = steps.find((s) => s.id === "h1");
     expect(submitted?.isTakeover).toBe(false);
   });
+
+  it("titles a takeover entry by the stage it actually bypassed, not an earlier absence-skipped stage", () => {
+    // The Team Lead step was vacancy-skipped at submission (no skipReason,
+    // same as a takeover skip), before the Finance Head takeover bypassed
+    // only the Manager step further along.
+    const expense = baseExpense({
+      history: [
+        { id: "h1", date: "Aug 1", actor: "Muhammad Shameel", actorId: "emp-shameel", kind: "submitted" },
+        { id: "h2", date: "Aug 1", actor: "System", kind: "skipped", detail: "Skipped: no active employee holds this stage" },
+        {
+          id: "h3",
+          date: "Aug 2",
+          actor: "Pramod",
+          actorId: "emp-pramod",
+          kind: "takeover",
+          detail: "Took over as Finance Head (reason: urgent); skipped 1 earlier stage(s): Manager",
+        },
+      ],
+      steps: [
+        { id: "step-0", roleId: null, roleName: "Team Lead", status: "skipped", assignedActorName: undefined },
+        { id: "step-1", roleId: "role-manager", roleName: "Manager", status: "skipped", assignedActorName: "Sanil" },
+        {
+          id: "step-2",
+          roleId: "role-finance-executive",
+          roleName: "Finance Executive",
+          status: "pending",
+          assignedActorName: "Rishikesh",
+        },
+      ],
+    });
+
+    const steps = getJourneyFlowItems(expense);
+    const takeoverStep = steps.find((s) => s.isTakeover);
+
+    expect(takeoverStep?.label).toBe("Manager");
+    expect(takeoverStep?.detail).not.toContain("Team Lead");
+  });
 });
 
 describe("JourneyFlow takeover rendering", () => {
