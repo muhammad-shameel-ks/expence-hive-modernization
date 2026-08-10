@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { createBlobStore } from "../blob/compose";
 import { databaseUrl } from "@/server/db/connection.mjs";
+import { runMigrations } from "@/server/db/migrate";
 import { createExpenseCommands, type ExpenseCommands } from "./commands";
 import { PostgresExpenseStore } from "./postgres";
 
@@ -18,7 +19,11 @@ export function expenseCommands(): ExpenseCommands {
     throw new Error("The development expense adapter must not run in production.");
   }
   if (!globalStore[poolKey]) {
-    globalStore[poolKey] = new Pool({ connectionString: databaseUrl });
+    const pool = new Pool({ connectionString: databaseUrl });
+    globalStore[poolKey] = pool;
+    runMigrations(pool).catch((error) => {
+      console.error("Failed to apply pending database migrations automatically", error);
+    });
   }
   return createExpenseCommands({
     store: new PostgresExpenseStore(globalStore[poolKey]),

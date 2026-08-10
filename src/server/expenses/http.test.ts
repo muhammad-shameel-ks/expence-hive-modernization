@@ -1,6 +1,6 @@
 import { createHash } from "node:crypto";
 import { PDFDocument } from "pdf-lib";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { InMemoryBlobStore } from "../blob/fakes";
 import { createExpenseCommands } from "./commands";
 import {
@@ -144,6 +144,17 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         attachment: { fileName: "receipt.pdf" },
       },
+    });
+  });
+
+  it("returns 500 with error and message payload when an unexpected command error occurs", async () => {
+    const { commands } = build();
+    commands.createDraft = vi.fn().mockRejectedValue(new Error("Unexpected DB failure"));
+    const response = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    expect(response.status).toBe(500);
+    await expect(response.json()).resolves.toEqual({
+      error: "internal",
+      message: "An internal server error occurred.",
     });
   });
 
