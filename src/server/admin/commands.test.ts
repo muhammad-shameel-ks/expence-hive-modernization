@@ -528,6 +528,123 @@ describe("createFlow", () => {
     expect(flow.steps).toEqual([{ kind: "team-lead" }, { kind: "role", roleId: managerRole.id }]);
   });
 
+  it("creates a flow whose steps carry amount guards and round-trips them", async () => {
+    const { admin } = buildAdmin();
+    const internRole = await admin.createRole("emp-superadmin", { code: "intern", displayName: "Intern" });
+    const managerRole = await admin.createRole("emp-superadmin", { code: "manager", displayName: "Manager" });
+    const steps = [
+      { kind: "role" as const, roleId: managerRole.id, guard: { operator: "gte" as const, amountMinor: 500000 } },
+      { kind: "team-lead" as const, guard: { operator: "lt" as const, amountMinor: 10000 } },
+      { kind: "role" as const, roleId: internRole.id },
+    ];
+
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Guarded reimbursement",
+      roleId: internRole.id,
+      steps,
+    });
+
+    expect(flow.steps).toEqual(steps);
+    const flows = await admin.listFlows("emp-superadmin");
+    expect(flows.find((candidate) => candidate.id === flow.id)?.steps).toEqual(steps);
+  });
+
+  it("rejects a guard with an unknown operator", async () => {
+    const { admin } = buildAdmin();
+    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+    const guard = { operator: "between", amountMinor: 500000 };
+
+    await expect(
+      admin.createFlow("emp-superadmin", {
+        name: "Guarded reimbursement",
+        roleId: role.id,
+        steps: [
+          { kind: "role", roleId: role.id, guard } as unknown as FlowStepInput,
+          roleStep(role.id),
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: 'Unknown guard operator "between".',
+    });
+  });
+
+  it("rejects a guard with a zero amount", async () => {
+    const { admin } = buildAdmin();
+    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+
+    await expect(
+      admin.createFlow("emp-superadmin", {
+        name: "Guarded reimbursement",
+        roleId: role.id,
+        steps: [
+          { kind: "role", roleId: role.id, guard: { operator: "gte", amountMinor: 0 } },
+          roleStep(role.id),
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The guard amount must be a positive integer (paise).",
+    });
+  });
+
+  it("rejects a guard with a negative amount", async () => {
+    const { admin } = buildAdmin();
+    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+
+    await expect(
+      admin.createFlow("emp-superadmin", {
+        name: "Guarded reimbursement",
+        roleId: role.id,
+        steps: [
+          { kind: "role", roleId: role.id, guard: { operator: "gte", amountMinor: -100 } },
+          roleStep(role.id),
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The guard amount must be a positive integer (paise).",
+    });
+  });
+
+  it("rejects a guard with a non-integer amount", async () => {
+    const { admin } = buildAdmin();
+    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+
+    await expect(
+      admin.createFlow("emp-superadmin", {
+        name: "Guarded reimbursement",
+        roleId: role.id,
+        steps: [
+          { kind: "role", roleId: role.id, guard: { operator: "gte", amountMinor: 100.5 } },
+          roleStep(role.id),
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The guard amount must be a positive integer (paise).",
+    });
+  });
+
+  it("rejects a guard on the terminal step", async () => {
+    const { admin } = buildAdmin();
+    const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+
+    await expect(
+      admin.createFlow("emp-superadmin", {
+        name: "Guarded reimbursement",
+        roleId: role.id,
+        steps: [
+          roleStep(role.id),
+          { kind: "role", roleId: role.id, guard: { operator: "gte", amountMinor: 500000 } },
+        ],
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The terminal step of a flow cannot be guarded.",
+    });
+  });
+
   it("rejects a team-lead step that carries a role id", async () => {
     const { admin } = buildAdmin();
     const role = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
@@ -606,6 +723,30 @@ describe("updateFlow", () => {
     });
     expect(store.audit.map((e) => e.action)).toContain("update-flow");
   });
+
+  it("updates a flow to carry amount guards and round-trips them", async () => {
+    const { admin } = buildAdmin();
+    const role1 = await admin.createRole("emp-superadmin", { code: "executive", displayName: "Executive" });
+    const role2 = await admin.createRole("emp-superadmin", { code: "finance", displayName: "Finance" });
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Initial Flow",
+      roleId: role1.id,
+      steps: [roleStep(role1.id), roleStep(role2.id)],
+    });
+    const guardedSteps = [
+      { kind: "role" as const, roleId: role1.id, guard: { operator: "gte" as const, amountMinor: 500000 } },
+      { kind: "role" as const, roleId: role2.id },
+    ];
+    const updated = await admin.updateFlow("emp-superadmin", flow.id, {
+      name: "Guarded Flow",
+      roleId: role1.id,
+      steps: guardedSteps,
+    });
+
+    expect(updated.steps).toEqual(guardedSteps);
+    const flows = await admin.listFlows("emp-superadmin");
+    expect(flows.find((candidate) => candidate.id === flow.id)?.steps).toEqual(guardedSteps);
+  });
 });
 
 describe("publishFlow", () => {
@@ -622,6 +763,48 @@ describe("publishFlow", () => {
     const published = await admin.publishFlow("emp-superadmin", flow.id);
 
     expect(published.status).toBe("published");
+  });
+
+  it("publishes a draft flow with a valid amount guard on a non-terminal step", async () => {
+    const { admin } = buildAdmin();
+    const managerRole = await admin.createRole("emp-superadmin", { code: "manager", displayName: "Manager" });
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    const guardedSteps = [
+      { kind: "role" as const, roleId: managerRole.id, guard: { operator: "gte" as const, amountMinor: 500000 } },
+      { kind: "role" as const, roleId: financeExecRole.id },
+    ];
+    const flow = await admin.createFlow("emp-superadmin", {
+      name: "Guarded reimbursement",
+      roleId: managerRole.id,
+      steps: guardedSteps,
+    });
+
+    const published = await admin.publishFlow("emp-superadmin", flow.id);
+
+    expect(published.status).toBe("published");
+    expect(published.steps).toEqual(guardedSteps);
+  });
+
+  it("rejects publishing a flow whose terminal step carries an amount guard", async () => {
+    const { admin, store } = buildAdmin();
+    const managerRole = await admin.createRole("emp-superadmin", { code: "manager", displayName: "Manager" });
+    const financeExecRole = await admin.createRole("emp-superadmin", { code: "finance-executive", displayName: "Finance Executive" });
+    // The store is written directly to bypass the create-flow guard
+    // validation: publish re-validates and must refuse the guarded
+    // terminal step.
+    const flow = await store.createFlow("org-1", {
+      name: "Unsafe reimbursement",
+      roleId: managerRole.id,
+      steps: [
+        { kind: "role", roleId: managerRole.id },
+        { kind: "role", roleId: financeExecRole.id, guard: { operator: "gte", amountMinor: 500000 } },
+      ],
+    });
+
+    await expect(admin.publishFlow("emp-superadmin", flow.id)).rejects.toMatchObject({
+      code: "validation",
+      message: "The terminal step of a flow cannot be guarded.",
+    });
   });
 
   it("allows multiple flows to remain active and published concurrently", async () => {

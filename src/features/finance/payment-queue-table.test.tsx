@@ -145,6 +145,39 @@ describe("PaymentQueueTable comment save loading state", () => {
     expect(input).not.toBeDisabled();
     expect(document.querySelector(".animate-spin")).toBeNull();
   });
+
+  it("marks the comment input busy and shows a spinner when saving via Enter key", async () => {
+    let resolveFetch!: (value: Response) => void;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(
+        () =>
+          new Promise<Response>((resolve) => {
+            resolveFetch = resolve;
+          }),
+      ),
+    );
+
+    const claim = buildClaim();
+    render(<PaymentQueueTable claims={[claim]} employees={[]} />);
+
+    const input = screen.getByRole("textbox", { name: `Comment for ${claim.ref}` });
+
+    input.focus();
+    (input as HTMLInputElement).value = "Enter key comment";
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    fireEvent.keyDown(input, { key: "Enter", code: "Enter" });
+
+    await waitFor(() => expect(input).toHaveAttribute("aria-busy", "true"));
+    expect(input).toBeDisabled();
+    expect(document.querySelector(".animate-spin")).not.toBeNull();
+
+    resolveFetch(new Response(null, { status: 200 }));
+
+    await waitFor(() => expect(input).not.toHaveAttribute("aria-busy"));
+    expect(input).not.toBeDisabled();
+    expect(document.querySelector(".animate-spin")).toBeNull();
+  });
 });
 
 describe("PaymentQueueTable terminal verify/pay actions", () => {

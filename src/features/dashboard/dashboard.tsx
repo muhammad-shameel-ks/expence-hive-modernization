@@ -55,7 +55,9 @@ export function ExpenseDashboard({
     }
   }
 
-  const stats = dashboardStats(expenses, new Date().toISOString().slice(0, 7));
+  // Money stats are the viewer's own spend; pool claims (claims the viewer's
+  // role can verify in Finance) never count as money they spent.
+  const stats = dashboardStats(expenses, new Date().toISOString().slice(0, 7), currentUserId);
 
   const statCards = [
     {

@@ -1,5 +1,6 @@
 import { isAdminError, type AdminCommands } from "./commands";
 import type { AuditFilter, FlowStepInput } from "./ports";
+import { GUARD_OPERATORS, type AmountGuardOperator } from "../shared/amount-guard";
 
 const BARE_DATE = /^\d{4}-\d{2}-\d{2}$/;
 
@@ -48,7 +49,8 @@ async function readJsonBody(request: Request): Promise<unknown | null> {
   }
 }
 
-// Steps arrive as either { kind: 'role', roleId } or { kind: 'team-lead' }.
+// Steps arrive as either { kind: 'role', roleId } or { kind: 'team-lead' },
+// optionally with an amount guard { operator, amountMinor } on any step.
 // The team-lead shape intentionally ignores any stray roleId field: the
 // command layer rejects a team-lead step that carries one with a clear
 // validation error.
@@ -57,18 +59,36 @@ function parseFlowSteps(value: unknown): FlowStepInput[] | null {
   const steps: FlowStepInput[] = [];
   for (const step of value) {
     if (typeof step !== "object" || step === null) return null;
-    const candidate = step as { kind?: unknown; roleId?: unknown };
+    const candidate = step as { kind?: unknown; roleId?: unknown; guard?: unknown };
+    const guard = parseGuard(candidate.guard);
+    if (guard === false) return null;
     if (candidate.kind === "team-lead") {
-      steps.push({ kind: "team-lead" });
+      steps.push({ kind: "team-lead", guard });
       continue;
     }
     if (candidate.kind === "role" && typeof candidate.roleId === "string") {
-      steps.push({ kind: "role", roleId: candidate.roleId });
+      steps.push({ kind: "role", roleId: candidate.roleId, guard });
       continue;
     }
     return null;
   }
   return steps;
+}
+
+// The guard is validated by the command layer; this boundary only shapes it.
+// Absent/null means no condition; false means a malformed guard.
+function parseGuard(value: unknown): FlowStepInput["guard"] | false {
+  if (value === undefined || value === null) return null;
+  if (typeof value !== "object") return false;
+  const candidate = value as { operator?: unknown; amountMinor?: unknown };
+  const operator = candidate.operator;
+  if (typeof operator !== "string" || !GUARD_OPERATORS.includes(operator as AmountGuardOperator)) {
+    return false;
+  }
+  if (typeof candidate.amountMinor !== "number" || !Number.isInteger(candidate.amountMinor)) {
+    return false;
+  }
+  return { operator: operator as AmountGuardOperator, amountMinor: candidate.amountMinor };
 }
 
 async function handle<T>(

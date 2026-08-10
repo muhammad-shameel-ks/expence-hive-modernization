@@ -4,18 +4,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, ArrowUpRight, Clock, Download, Paperclip, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Paperclip, X } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { EASE_OUT } from "@/lib/ease";
-import {
-  Timeline,
-  TimelineContent,
-  TimelineDot,
-  TimelineItem,
-  TimelineSeparator,
-  type TimelineTone,
-} from "@/components/motion/timeline";
 import { Button } from "@/components/ui/button";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -28,198 +20,16 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { downloadClaimSummary } from "@/lib/download-claim-summary";
-import { ME, STATUS_META, type Expense } from "./mock-data";
+import { STATUS_META, type Expense } from "./mock-data";
 import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
-import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
+import { formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { JourneyFlow, getJourneyFlowItems, type JourneyFlowStep } from "./journey-flow";
 
-export interface JourneyFlowStep {
-  id: string;
-  label: string;
-  date: string;
-  actor: string;
-  detail?: string;
-  tone: TimelineTone;
-  icon: LucideIcon;
-  isCurrent: boolean;
-  isNext: boolean;
-  pending: boolean;
-  isMine: boolean;
-}
+export { getJourneyFlowItems, type JourneyFlowStep };
 
-export function getJourneyFlowItems(expense: Expense, currentUser = "", currentUserId?: string): JourneyFlowStep[] {
-  const terminal = isTerminal(expense.status);
-  const historyKinds = new Set(expense.history.map((h) => h.kind));
-  const isMine = (actor: string, actorId?: string) =>
-    currentUserId && actorId ? actorId === currentUserId : !!currentUser && actor === currentUser;
-
-  const historySteps: JourneyFlowStep[] = expense.history.map((event, i) => {
-    const meta = KIND_META[event.kind];
-    const isCurrent = !terminal && i === expense.history.length - 1;
-    return {
-      id: event.id,
-      label: meta.label,
-      date: event.date,
-      actor: event.actor,
-      detail: event.detail,
-      tone: meta.tone,
-      icon: meta.icon,
-      isCurrent,
-      isNext: false,
-      pending: false,
-      isMine: isMine(event.actor, event.actorId),
-    };
-  });
-
-  if (terminal) {
-    return historySteps;
-  }
-
-  const pendingSteps: JourneyFlowStep[] = [];
-
-  if (expense.status === "draft") {
-    pendingSteps.push({
-      id: "pending-submission",
-      label: "Submission",
-      date: "Pending",
-      actor: ME,
-      detail: "Pending submission",
-      tone: "info",
-      icon: Clock,
-      isCurrent: false,
-      isNext: false,
-      pending: true,
-      isMine: false,
-    });
-  }
-
-  if (expense.steps && expense.steps.length > 0) {
-    const remaining = expense.steps.filter((s) => s.status === "pending" || s.status === "verified");
-    remaining.forEach((step) => {
-      const isFinance = step.roleName.toLowerCase().includes("finance") || step.roleName.toLowerCase().includes("treasury");
-      pendingSteps.push({
-        id: `pending-step-${step.id}`,
-        label: step.roleName,
-        date: "Pending",
-        actor: step.assignedActorName ?? "Pending assignment",
-        // A verified terminal step is no longer waiting for verification: it
-        // is verified and waiting for payment to be marked complete.
-        detail:
-          step.status === "verified"
-            ? "Awaiting payment confirmation"
-            : isFinance
-              ? `Pending ${step.roleName} verification`
-              : `Pending ${step.roleName} decision`,
-        tone: step.status === "verified" ? "primary" : isFinance ? "primary" : "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    });
-
-    if (!historyKinds.has("paid") && expense.status !== "rejected") {
-      pendingSteps.push({
-        id: "pending-payment",
-        label: "Paid",
-        date: "Pending",
-        actor: "Finance / Treasury",
-        detail: "Pending payment disbursement",
-        tone: "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-  } else {
-    const needsApprovalStep =
-      expense.status === "in-approval" ||
-      expense.status === "submitted" ||
-      expense.status === "draft" ||
-      (!historyKinds.has("approved") &&
-        !historyKinds.has("takeover") &&
-        expense.status !== "approved" &&
-        expense.status !== "in-finance" &&
-        expense.status !== "paid" &&
-        expense.status !== "rejected");
-
-    if (needsApprovalStep) {
-      pendingSteps.push({
-        id: "pending-approval",
-        label:
-          expense.nextStage && (expense.status === "in-approval" || expense.status === "submitted")
-            ? expense.nextStage
-            : "Manager approval",
-        date: "Pending",
-        actor:
-          expense.nextActor && (expense.status === "in-approval" || expense.status === "submitted")
-            ? expense.nextActor
-            : "Approver",
-        detail: "Pending approval decision",
-        tone: "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-
-    const needsVerificationStep =
-      expense.status !== "paid" &&
-      expense.status !== "rejected" &&
-      (!historyKinds.has("verified") || expense.status === "in-finance");
-
-    if (needsVerificationStep) {
-      pendingSteps.push({
-        id: "pending-verification",
-        label:
-          expense.nextStage && expense.status === "in-finance"
-            ? expense.nextStage
-            : "Finance verification",
-        date: "Pending",
-        actor:
-          expense.nextActor && expense.status === "in-finance"
-            ? expense.nextActor
-            : "Finance Officer",
-        detail: "Pending Finance verification",
-        tone: "primary",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-
-    if (!historyKinds.has("paid") && expense.status !== "rejected") {
-      pendingSteps.push({
-        id: "pending-payment",
-        label: "Paid",
-        date: "Pending",
-        actor: "Finance / Treasury",
-        detail: "Pending payment disbursement",
-        tone: "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-  }
-
-  if (pendingSteps.length > 0) {
-    pendingSteps[0].isNext = true;
-  }
-
-  return [...historySteps, ...pendingSteps];
-}
 
 const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
   submitted: "Withdraw",
@@ -680,48 +490,7 @@ export function ExpenseDrawer({
         )}
       </section>
 
-      <section className="mt-6" aria-label="Expense journey">
-        <h3 className="text-sm font-semibold text-foreground">Journey</h3>
-        <Timeline position="right" className="mt-4">
-          {getJourneyFlowItems(activeExpense, currentUser, currentUserId).map((step) => {
-            const Icon = step.icon;
-            const isPendingStep = step.pending && !step.isNext;
-            return (
-              <TimelineItem key={step.id} pending={isPendingStep}>
-                <TimelineSeparator>
-                  <TimelineDot
-                    tone={step.tone}
-                    current={step.isCurrent}
-                    next={step.isNext}
-                    pending={isPendingStep}
-                  >
-                    <Icon />
-                  </TimelineDot>
-                </TimelineSeparator>
-                <TimelineContent>
-                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-                    <div className="flex items-center gap-1.5">
-                      <p className={cn("text-sm font-medium", isPendingStep ? "text-muted-foreground" : "text-foreground")}>
-                        {step.label}
-                      </p>
-                      {step.isMine ? (
-                        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                          You
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
-                  </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
-                  {step.detail ? (
-                    <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
-                  ) : null}
-                </TimelineContent>
-              </TimelineItem>
-            );
-          })}
-        </Timeline>
-      </section>
+      <JourneyFlow expense={activeExpense} currentUser={currentUser} currentUserId={currentUserId} />
 
       {activeExpense.attachments.length > 0 ? (
         <section className="mt-6" aria-label="Attachments">

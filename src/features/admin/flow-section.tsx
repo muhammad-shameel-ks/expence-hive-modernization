@@ -6,6 +6,7 @@ import {
   ArrowRight,
   ArrowUp,
   CheckCircle2,
+  ChevronDown,
   Clock,
   Edit3,
   Eye,
@@ -20,18 +21,53 @@ import {
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AdminDepartment, AdminRole, FlowDraft, FlowStatus } from "@/server/admin/ports";
+import type { AmountGuard } from "@/server/shared/amount-guard";
 import { SectionHeading } from "./section-heading";
+import {
+  GUARD_OPERATOR_LABELS,
+  GUARD_OPERATORS,
+  minorToRupees,
+  rupeesToMinor,
+  simulateRoute,
+  validateStepGuard,
+} from "./flow-guard";
 
 type FlowStep = {
   id: number;
   kind: "role" | "team-lead";
   roleId: string | null;
+  guard: AmountGuard | null;
+  guardAmountInput?: string;
 };
 
 const TEAM_LEAD_LABEL = "Team lead";
 
-function stepFromInput(input: { kind: "role"; roleId: string } | { kind: "team-lead" }, id: number): FlowStep {
-  return input.kind === "role" ? { id, kind: "role", roleId: input.roleId } : { id, kind: "team-lead", roleId: null };
+function stepFromInput(
+  input: ({ kind: "role"; roleId: string } | { kind: "team-lead" }) & { guard?: AmountGuard | null },
+  id: number,
+): FlowStep {
+  const guard = input.guard ?? null;
+  return input.kind === "role"
+    ? {
+        id,
+        kind: "role",
+        roleId: input.roleId,
+        guard,
+        guardAmountInput: guard ? minorToRupees(guard.amountMinor) : "",
+      }
+    : {
+        id,
+        kind: "team-lead",
+        roleId: null,
+        guard,
+        guardAmountInput: guard ? minorToRupees(guard.amountMinor) : "",
+      };
+}
+
+function stepToInput(step: FlowStep): { kind: "role"; roleId: string; guard: AmountGuard | null } | { kind: "team-lead"; guard: AmountGuard | null } {
+  return step.kind === "role"
+    ? { kind: "role", roleId: step.roleId ?? "", guard: step.guard }
+    : { kind: "team-lead", guard: step.guard };
 }
 
 export function FlowSection({
@@ -52,6 +88,9 @@ export function FlowSection({
   const firstRoleId = activeRoles[0]?.id ?? "";
 
   const [simulatingStep, setSimulatingStep] = useState<number | null>(null);
+  const [simulationOpen, setSimulationOpen] = useState(false);
+  const [simulationAmount, setSimulationAmount] = useState("10000");
+  const [simulatedRoute, setSimulatedRoute] = useState<ReturnType<typeof simulateRoute> | null>(null);
 
   const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
   const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
@@ -68,6 +107,11 @@ export function FlowSection({
   const [deleting, setDeleting] = useState<string | null>(null);
   const [viewingFlowId, setViewingFlowId] = useState<string | null>(null);
   const nextStepId = useRef(Math.max(0, ...steps.map((step) => step.id)) + 1);
+
+  const stepValidations = steps.map((step, index) =>
+    validateStepGuard(step, index, steps.length),
+  );
+  const hasGuardErrors = stepValidations.some((v) => !v.isValid);
 
   const roleName = (roleId: string) => {
     const role = activeRoles.find((r) => r.id === roleId);
@@ -137,6 +181,10 @@ export function FlowSection({
   };
 
   const saveFlow = async (publishImmediately = false) => {
+    if (hasGuardErrors) {
+      onError("Please resolve guard validation errors before saving.");
+      return;
+    }
     setSaving(true);
     onError("");
     try {
@@ -145,14 +193,12 @@ export function FlowSection({
         const response = await fetch("/api/admin/flows/update", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            flowId: editingFlowId,
-            name: flowName,
-            roleId: targetRoleId,
-            steps: steps.map((step) =>
-              step.kind === "role" ? { kind: "role", roleId: step.roleId } : { kind: "team-lead" },
-            ),
-          }),
+            body: JSON.stringify({
+              flowId: editingFlowId,
+              name: flowName,
+              roleId: targetRoleId,
+              steps: steps.map((step) => stepToInput(step)),
+            }),
         });
         if (!response.ok) {
           const body = (await response.json()) as { error?: string };
@@ -166,13 +212,11 @@ export function FlowSection({
         const response = await fetch("/api/admin/flows", {
           method: "POST",
           headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            name: flowName,
-            roleId: targetRoleId,
-            steps: steps.map((step) =>
-              step.kind === "role" ? { kind: "role", roleId: step.roleId } : { kind: "team-lead" },
-            ),
-          }),
+            body: JSON.stringify({
+              name: flowName,
+              roleId: targetRoleId,
+              steps: steps.map((step) => stepToInput(step)),
+            }),
         });
         if (!response.ok) {
           const body = (await response.json()) as { error?: string };
@@ -232,14 +276,14 @@ export function FlowSection({
   const addStep = (roleIdToAdd: string) => {
     const id = nextStepId.current;
     nextStepId.current += 1;
-    setSteps((current) => [...current, { id, kind: "role", roleId: roleIdToAdd }]);
+    setSteps((current) => [...current, { id, kind: "role", roleId: roleIdToAdd, guard: null }]);
     onMessage(`${roleName(roleIdToAdd)} added to the flow.`);
   };
 
   const addTeamLeadStep = () => {
     const id = nextStepId.current;
     nextStepId.current += 1;
-    setSteps((current) => [...current, { id, kind: "team-lead", roleId: null }]);
+    setSteps((current) => [...current, { id, kind: "team-lead", roleId: null, guard: null }]);
     onMessage(`${TEAM_LEAD_LABEL} added to the flow.`);
   };
 
@@ -248,7 +292,7 @@ export function FlowSection({
     nextStepId.current += 1;
     setSteps((current) => {
       const next = [...current];
-      next.splice(position, 0, { id, kind: "role", roleId: roleIdToAdd });
+      next.splice(position, 0, { id, kind: "role", roleId: roleIdToAdd, guard: null });
       return next;
     });
     onMessage(`${roleName(roleIdToAdd)} inserted at position ${position + 1}.`);
@@ -284,6 +328,14 @@ export function FlowSection({
   };
 
   const runSimulation = () => {
+    const totalMinor = rupeesToMinor(simulationAmount);
+    if (totalMinor === null) {
+      onError("Enter a valid amount in rupees to simulate the path.");
+      return;
+    }
+    onError("");
+    const route = simulateRoute(steps, totalMinor);
+    setSimulatedRoute(route);
     setSimulatingStep(0);
     let current = 0;
     const interval = setInterval(() => {
@@ -368,14 +420,21 @@ export function FlowSection({
               <span className="hidden items-center gap-1.5 rounded-lg border border-[#d6dfe8] bg-[#f8fafc] px-3 py-1.5 text-[0.68rem] font-semibold text-[#64748b] lg:flex">
                 <GripVertical className="size-3.5 text-[#196d86]" /> Drag & drop nodes to re-order
               </span>
-              <Button variant="outline" size="sm" onClick={runSimulation}>
+              <Button
+                variant="outline"
+                size="sm"
+                aria-expanded={simulationOpen}
+                aria-controls="simulation-panel"
+                onClick={() => setSimulationOpen((open) => !open)}
+              >
                 <Play className="size-3.5 text-[#196d86]" />
-                Simulate Path
+                Simulate path
+                <ChevronDown className={`size-3.5 transition-transform ${simulationOpen ? "rotate-180" : ""}`} />
               </Button>
               <Button
                 variant="outline"
                 size="sm"
-                disabled={saving || !targetRoleId || steps.length === 0}
+                disabled={saving || !targetRoleId || steps.length === 0 || hasGuardErrors}
                 onClick={() => saveFlow(false)}
               >
                 {saving ? "Saving..." : editingFlowId ? "Save Changes" : "Save Draft"}
@@ -383,7 +442,7 @@ export function FlowSection({
               <Button
                 className="bg-[#196d86] hover:bg-[#175d75]"
                 size="sm"
-                disabled={saving || !targetRoleId || steps.length === 0}
+                disabled={saving || !targetRoleId || steps.length === 0 || hasGuardErrors}
                 onClick={() => saveFlow(true)}
               >
                 {editingFlowStatus === "published" ? "Save & Update Flow" : "Save & Publish Flow"}
@@ -391,6 +450,40 @@ export function FlowSection({
               </Button>
             </div>
           </div>
+
+          {/* Interactive Drag & Drop Node Canvas Container */}
+          {simulationOpen && (
+            <div id="simulation-panel" className="mt-5 rounded-2xl border border-[#d6dfe8] bg-[#f8fafc] p-4">
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div>
+                  <p className="text-xs font-bold text-[#1c2f46]">Simulate a claim&apos;s path</p>
+                  <p className="mt-0.5 text-[0.68rem] text-[#64748b]">
+                    Enter a test amount to preview which steps run and which are auto-skipped. Nothing is saved.                  </p>
+                </div>
+                <div className="flex items-center gap-2">
+                  <label className="text-[0.62rem] font-bold uppercase tracking-[0.08em] text-[#8a96a8]" htmlFor="canvas-simulation-amount">
+                    Test amount
+                  </label>
+                  <input
+                    id="canvas-simulation-amount"
+                    inputMode="decimal"
+                    className="h-9 w-24 rounded-lg border border-[#d6dfe8] bg-white px-3 text-xs font-semibold text-[#526278] outline-none focus:ring-2 focus:ring-[#b7d8e5]"
+                    value={simulationAmount}
+                    onChange={(e) => setSimulationAmount(e.target.value)}
+                  />
+                  <Button variant="outline" size="sm" onClick={runSimulation}>
+                    <Play className="size-3.5 text-[#196d86]" />
+                    Simulate
+                  </Button>
+                </div>
+              </div>
+              {simulatedRoute && (
+                <p className="mt-3 rounded-lg border border-[#e2e8f0] bg-white px-3 py-2 text-[0.68rem] font-semibold text-[#475569]">
+                  {simulatedRoute.filter((step) => step.runs).length} of {simulatedRoute.length} steps run for ₹{minorToRupees(rupeesToMinor(simulationAmount)) || simulationAmount}; auto-skipped steps are highlighted amber.
+                </p>
+              )}
+            </div>
+          )}
 
           {/* Interactive Drag & Drop Node Canvas Container */}
           <div className="mt-5 min-h-[380px] overflow-x-auto rounded-2xl border border-[#cbd5e1] bg-[#f8fafc] p-6 shadow-inner">
@@ -426,6 +519,10 @@ export function FlowSection({
                 const isSimulating = simulatingStep === index + 1;
                 const isDragging = draggedIndex === index;
                 const isDragOver = dragOverIndex === index;
+                const isTerminal = index === steps.length - 1;
+                const route = simulatedRoute?.[index];
+                const isSkipped = simulatedRoute !== null && route !== undefined && !route.runs;
+                const validation = stepValidations[index] ?? { isValid: true };
 
                 return (
                   <div
@@ -452,14 +549,18 @@ export function FlowSection({
                     }}
                   >
                     {/* Draggable Node Card */}
-                    <div className={`relative min-w-[210px] rounded-2xl border p-4 shadow-md transition-all cursor-grab active:cursor-grabbing ${
+                    <div className={`relative min-w-[230px] rounded-2xl border p-4 shadow-md transition-all cursor-grab active:cursor-grabbing ${
                       isDragging
                         ? "opacity-40 border-dashed border-[#196d86] bg-[#e8f2f6] scale-95 shadow-none"
                         : isDragOver
                           ? "border-[#196d86] ring-4 ring-[#b7d8e5] scale-105 bg-[#e8f2f6]"
-                          : isSimulating
-                            ? "border-[#196d86] bg-[#e8f2f6] ring-4 ring-[#b7d8e5] scale-105"
-                            : "border-[#cbd5e1] bg-white hover:border-[#196d86]"
+                          : isSkipped
+                            ? "border-[#d6a01f] bg-[#fdf8ec] ring-4 ring-[#f5e2b8]"
+                            : isSimulating
+                              ? "border-[#196d86] bg-[#e8f2f6] ring-4 ring-[#b7d8e5] scale-105"
+                              : !validation.isValid
+                                ? "border-[#a8384d] bg-white ring-2 ring-[#f5d0d6]"
+                                : "border-[#cbd5e1] bg-white hover:border-[#196d86]"
                     }`}>
                       <div className="flex items-center justify-between gap-2 border-b border-[#f1f5f9] pb-2">
                         <span className="flex items-center gap-1 text-[0.65rem] font-bold uppercase tracking-wider text-[#196d86]">
@@ -520,12 +621,165 @@ export function FlowSection({
                         )}
                       </div>
 
-                      <div className="mt-3 flex items-center justify-between text-[0.62rem] text-[#64748b]">
+                      {isTerminal ? (
+                        step.guard !== null ? (
+                          <div
+                            id={`node-terminal-error-${step.id}`}
+                            role="alert"
+                            className="mt-2.5 rounded-lg border border-[#f5c6cb] bg-[#f8d7da] p-2 text-[0.65rem]"
+                          >
+                            <p className="font-semibold text-[#721c24]">
+                              Terminal step cannot carry an amount condition.
+                            </p>
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setSteps((current) =>
+                                  current.map((item) =>
+                                    item.id === step.id ? { ...item, guard: null, guardAmountInput: "" } : item,
+                                  ),
+                                );
+                              }}
+                              className="mt-1 font-bold text-[#a8384d] underline hover:text-[#721c24]"
+                            >
+                              Remove condition
+                            </button>
+                          </div>
+                        ) : (
+                          <p className="mt-2.5 text-[0.62rem] font-semibold text-[#64748b]">
+                            Terminal stage - cannot carry an amount condition.
+                          </p>
+                        )
+                      ) : (
+                        <fieldset
+                          className={`mt-2.5 rounded-lg border p-2 ${
+                            validation.operatorError || validation.amountError
+                              ? "border-[#a8384d] bg-[#fdf0f2]"
+                              : "border-[#e2e8f0] bg-[#f8fafc]"
+                          }`}
+                        >
+                          <legend className="px-1 text-[0.55rem] font-bold uppercase tracking-wider text-[#64748b]">
+                            Amount condition
+                          </legend>
+                          <div className="flex flex-col gap-1.5">
+                            <div className="flex items-center gap-1.5">
+                              <label className="sr-only" htmlFor={`node-guard-op-${step.id}`}>Amount condition operator for step {index + 1}</label>
+                              <select
+                                id={`node-guard-op-${step.id}`}
+                                aria-invalid={Boolean(validation.operatorError)}
+                                aria-describedby={validation.operatorError ? `node-guard-op-error-${step.id}` : undefined}
+                                className={`h-7 w-[7.5rem] rounded-md border bg-white px-1.5 text-[0.65rem] font-semibold text-[#334155] outline-none focus:border-[#196d86] ${
+                                  validation.operatorError ? "border-[#a8384d] focus:ring-1 focus:ring-[#a8384d]" : "border-[#cbd5e1]"
+                                }`}
+                                value={step.guard?.operator ?? ""}
+                                onChange={(e) => {
+                                  const operator = e.target.value as (typeof GUARD_OPERATORS)[number] | "";
+                                  setSteps((current) =>
+                                    current.map((item) => {
+                                      if (item.id !== step.id) return item;
+                                      if (operator === "") {
+                                        return { ...item, guard: null, guardAmountInput: "" };
+                                      }
+                                      const currentInput =
+                                        item.guardAmountInput !== undefined
+                                          ? item.guardAmountInput
+                                          : item.guard?.amountMinor
+                                            ? minorToRupees(item.guard.amountMinor)
+                                            : "";
+                                      const minor = rupeesToMinor(currentInput);
+                                      return {
+                                        ...item,
+                                        guardAmountInput: currentInput,
+                                        guard: {
+                                          operator,
+                                          amountMinor: minor !== null && minor > 0 ? minor : 0,
+                                        },
+                                      };
+                                    }),
+                                  );
+                                }}
+                              >
+                                <option value="">No condition</option>
+                                {GUARD_OPERATORS.map((operator) => (
+                                  <option key={operator} value={operator}>{GUARD_OPERATOR_LABELS[operator]}</option>
+                                ))}
+                              </select>
+                              {step.guard && (
+                                <>
+                                  <label className="sr-only" htmlFor={`node-guard-amount-${step.id}`}>Amount for condition on step {index + 1}</label>
+                                  <div className="relative flex items-center">
+                                    <span className="pointer-events-none absolute left-2 text-[0.65rem] font-bold text-[#64748b]">₹</span>
+                                    <input
+                                      id={`node-guard-amount-${step.id}`}
+                                      inputMode="decimal"
+                                      aria-invalid={Boolean(validation.amountError)}
+                                      aria-describedby={validation.amountError ? `node-guard-amount-error-${step.id}` : undefined}
+                                      value={
+                                        step.guardAmountInput !== undefined
+                                          ? step.guardAmountInput
+                                          : step.guard.amountMinor > 0
+                                            ? minorToRupees(step.guard.amountMinor)
+                                            : ""
+                                      }
+                                      onChange={(e) => {
+                                        const newAmountInput = e.target.value;
+                                        const amountMinor = rupeesToMinor(newAmountInput);
+                                        setSteps((current) =>
+                                          current.map((item) =>
+                                            item.id === step.id && item.guard
+                                              ? {
+                                                  ...item,
+                                                  guardAmountInput: newAmountInput,
+                                                  guard: {
+                                                    operator: item.guard.operator,
+                                                    amountMinor: amountMinor !== null && amountMinor > 0 ? amountMinor : 0,
+                                                  },
+                                                }
+                                              : item,
+                                          ),
+                                        );
+                                      }}
+                                      className={`h-7 w-20 rounded-md border bg-white pl-5 pr-1.5 text-[0.65rem] font-semibold text-[#334155] outline-none focus:border-[#196d86] ${
+                                        validation.amountError ? "border-[#a8384d] focus:ring-1 focus:ring-[#a8384d]" : "border-[#cbd5e1]"
+                                      }`}
+                                    />
+                                  </div>
+                                </>
+                              )}
+                            </div>
+                            {validation.operatorError && (
+                              <p
+                                id={`node-guard-op-error-${step.id}`}
+                                role="alert"
+                                className="text-[0.62rem] font-semibold text-[#a8384d]"
+                              >
+                                {validation.operatorError}
+                              </p>
+                            )}
+                            {validation.amountError && (
+                              <p
+                                id={`node-guard-amount-error-${step.id}`}
+                                role="alert"
+                                className="text-[0.62rem] font-semibold text-[#a8384d]"
+                              >
+                                {validation.amountError}
+                              </p>
+                            )}
+                          </div>
+                        </fieldset>
+                      )}
+
+                      <div className="mt-3 flex items-center justify-between gap-2 text-[0.62rem] text-[#64748b]">
                         <span className="flex items-center gap-1">
                           <Clock className="size-3 text-[#94a3b8]" /> 3-day timeout
                         </span>
                         <span className="font-semibold text-[#166534]">Auto-skips</span>
                       </div>
+                      {isSkipped && route?.reason && (
+                        <p className="mt-2 rounded-md bg-[#fdf3d7] px-2 py-1 text-[0.62rem] font-semibold text-[#8a6414]">
+                          Auto-skips: {route.reason}
+                        </p>
+                      )}
                     </div>
 
                     {/* Inline Insert "+" Button & Arrow Connector */}

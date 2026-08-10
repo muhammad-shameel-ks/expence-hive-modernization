@@ -13,6 +13,8 @@ import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 import { isTerminalPoolEligible } from "@/features/dashboard/next-action";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
+import { claimToExpense } from "@/features/dashboard/expense-read-model";
+import { JourneyFlow } from "@/features/dashboard/journey-flow";
 import { hasReceiptAttachment, selectedClaimFor, stepSelection } from "./payment-queue-selection";
 import {
   approvedOnFor,
@@ -103,6 +105,8 @@ export function PaymentQueueTable({
     return terminalStep.status === "verified" ? "pay" : "verify";
   };
 
+  // Inline comment save is an input autosave flow on blur/Enter with no discrete trigger Button control;
+  // the inline input spinner in payment-queue-columns.tsx is retained and the shared Button loading pattern does not apply.
   async function saveComment(claimId: string, value: string) {
     setSavingCommentFor(claimId);
     try {
@@ -124,6 +128,10 @@ export function PaymentQueueTable({
 
   const selected = selectedClaimFor(claims, selectedClaimId);
   const selectedHasReceipt = selected ? hasReceiptAttachment(selected) : false;
+  const selectedExpense = useMemo(
+    () => (selected ? claimToExpense(selected, employees) : null),
+    [selected, employees],
+  );
 
   function openPanel(claimId: string) {
     setSelectedClaimId(claimId);
@@ -505,31 +513,14 @@ export function PaymentQueueTable({
               : "-translate-x-full opacity-0 pointer-events-none lg:translate-x-0 lg:w-0 lg:p-0 lg:border-0 lg:overflow-hidden lg:shrink-0"
           )}
         >
-          {selected ? (
-            selectedHasReceipt ? (
-              <ReceiptPreview
-                claimId={selected.id}
-                fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
-                onClose={closePanel}
-                headerAction={
-                  <Button
-                    variant="outline"
-                    size="sm"
-                    className="gap-1"
-                    loading={downloadingSummary}
-                    onClick={downloadSummary}
-                  >
-                    <Download className="h-3.5 w-3.5" />
-                    Download summary
-                  </Button>
-                }
-                className="h-full flex-1 border-0 rounded-none lg:rounded-xl bg-card"
-              />
-            ) : (
-              <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card">
-                <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
-                  <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
-                  <div className="flex items-center gap-1">
+          {selected && selectedExpense ? (
+            <div className="flex flex-1 flex-col overflow-y-auto p-4 space-y-6">
+              {selectedHasReceipt ? (
+                <ReceiptPreview
+                  claimId={selected.id}
+                  fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
+                  onClose={closePanel}
+                  headerAction={
                     <Button
                       variant="outline"
                       size="sm"
@@ -540,16 +531,41 @@ export function PaymentQueueTable({
                       <Download className="h-3.5 w-3.5" />
                       Download summary
                     </Button>
-                    <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
-                      <X />
-                    </Button>
+                  }
+                  className="h-[320px] shrink-0 rounded-xl border border-border bg-card"
+                />
+              ) : (
+                <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
+                  <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+                    <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
+                    <div className="flex items-center gap-1">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-1"
+                        loading={downloadingSummary}
+                        onClick={downloadSummary}
+                      >
+                        <Download className="h-3.5 w-3.5" />
+                        Download summary
+                      </Button>
+                      <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
+                        <X />
+                      </Button>
+                    </div>
+                  </div>
+                  <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">
+                    No receipt attached to this claim.
                   </div>
                 </div>
-                <div className="m-auto flex items-center justify-center p-6 text-sm text-muted-foreground">
-                  No receipt attached to this claim.
-                </div>
-              </div>
-            )
+              )}
+              <JourneyFlow
+                expense={selectedExpense}
+                currentUserId={currentUserId}
+                ariaLabel={`Journey for ${selected.ref}`}
+                className="mt-0 border-t border-border pt-4"
+              />
+            </div>
           ) : null}
         </aside>
 

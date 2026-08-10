@@ -20,6 +20,7 @@ export const KIND_META: Record<HistoryKind, { label: string; tone: TimelineTone;
   approved: { label: "Approved", tone: "success", icon: Check },
   rejected: { label: "Rejected", tone: "danger", icon: X },
   skipped: { label: "Stage skipped", tone: "muted", icon: SkipForward },
+  "auto-skipped": { label: "Auto-skipped", tone: "muted", icon: SkipForward },
   takeover: { label: "Taken over", tone: "primary", icon: Gavel },
   reviewing: { label: "Finance review", tone: "primary", icon: ShieldCheck },
   verified: { label: "Finance verified", tone: "primary", icon: ShieldCheck },
@@ -27,6 +28,8 @@ export const KIND_META: Record<HistoryKind, { label: string; tone: TimelineTone;
   comment: { label: "Comment added", tone: "primary", icon: MessageSquare },
   note: { label: "Note", tone: "muted", icon: StickyNote },
 };
+
+export { simplifyAutoSkipDetail } from "@/server/shared/amount-guard";
 
 export interface ActionIndicatorStyle {
   label: string;
@@ -113,6 +116,13 @@ export const ACTION_INDICATOR_STYLES: Record<HistoryKind, ActionIndicatorStyle> 
     iconColorClass: "text-muted-foreground",
     borderClass: "border-border",
   },
+  "auto-skipped": {
+    label: "Auto-skipped",
+    badgeClass: "bg-muted text-muted-foreground border-border",
+    iconBgClass: "bg-muted",
+    iconColorClass: "text-muted-foreground",
+    borderClass: "border-border",
+  },
   note: {
     label: "Note",
     badgeClass: "bg-muted text-muted-foreground border-border",
@@ -133,6 +143,7 @@ export const FILTER_DOT_COLOR: Record<string, string> = {
   draft: "bg-slate-400",
   submitted: "bg-sky-500",
   skipped: "bg-slate-400",
+  "auto-skipped": "bg-slate-400",
   reviewing: "bg-indigo-500",
   note: "bg-slate-400",
 };

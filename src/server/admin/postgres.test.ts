@@ -216,10 +216,17 @@ describe("PostgresAdminStore", () => {
         typeof sql === "string" && sql.includes("INSERT INTO flow_steps") && Array.isArray(values),
     );
     expect(stepInserts).toHaveLength(2);
-    expect(stepInserts[0]?.[1]).toEqual([expect.any(String), 0, "team-lead", null]);
-    expect(stepInserts[1]?.[1]).toEqual([expect.any(String), 1, "role", "role-manager"]);
+    expect(stepInserts[0]?.[1]).toEqual([expect.any(String), 0, "team-lead", null, null, null]);
+    expect(stepInserts[1]?.[1]).toEqual([
+      expect.any(String),
+      1,
+      "role",
+      "role-manager",
+      null,
+      null,
+    ]);
     const sql = String(stepInserts[0]?.[0]);
-    expect(sql).toContain("(flow_id, position, kind, role_id)");
+    expect(sql).toContain("(flow_id, position, kind, role_id, guard_operator, guard_amount_minor)");
   });
 
   it("listFlows maps flow steps back to role and team-lead targets", async () => {
@@ -247,7 +254,151 @@ describe("PostgresAdminStore", () => {
         name: "Intern reimbursement",
         roleId: "role-intern",
         status: "published",
-        steps: [{ kind: "team-lead" }, { kind: "role", roleId: "role-manager" }],
+        steps: [
+          { kind: "team-lead", guard: null },
+          { kind: "role", roleId: "role-manager", guard: null },
+        ],
+      },
+    ]);
+  });
+
+  it("createFlow persists guard operator and amount for guarded steps and nulls for unguarded ones", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await store.createFlow("org-1", {
+      name: "Guarded reimbursement",
+      roleId: "role-intern",
+      steps: [
+        { kind: "role", roleId: "role-manager", guard: { operator: "gte", amountMinor: 500000 } },
+        { kind: "team-lead", guard: { operator: "lt", amountMinor: 10000 } },
+        { kind: "role", roleId: "role-finance-executive" },
+      ],
+    });
+
+    const stepInserts = query.mock.calls.filter(
+      ([sql, values]) =>
+        typeof sql === "string" && sql.includes("INSERT INTO flow_steps") && Array.isArray(values),
+    );
+    expect(stepInserts).toHaveLength(3);
+    expect(stepInserts[0]?.[1]).toEqual([
+      expect.any(String),
+      0,
+      "role",
+      "role-manager",
+      "gte",
+      500000,
+    ]);
+    expect(stepInserts[1]?.[1]).toEqual([expect.any(String), 1, "team-lead", null, "lt", 10000]);
+    expect(stepInserts[2]?.[1]).toEqual([
+      expect.any(String),
+      2,
+      "role",
+      "role-finance-executive",
+      null,
+      null,
+    ]);
+    const sql = String(stepInserts[0]?.[0]);
+    expect(sql).toContain("guard_operator, guard_amount_minor");
+  });
+
+  it("updateFlow rewrites steps including their guard columns", async () => {
+    const query = vi.fn().mockImplementation((sql: string) => {
+      if (sql.trimStart().startsWith("SELECT id, organization_id, name, role_id, status")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "flow-1",
+              organization_id: "org-1",
+              name: "Guarded reimbursement",
+              role_id: "role-intern",
+              status: "draft",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await store.updateFlow("flow-1", {
+      name: "Guarded reimbursement",
+      roleId: "role-intern",
+      steps: [
+        { kind: "role", roleId: "role-manager", guard: { operator: "lte", amountMinor: 75000 } },
+      ],
+    });
+
+    const stepInserts = query.mock.calls.filter(
+      ([sql, values]) =>
+        typeof sql === "string" && sql.includes("INSERT INTO flow_steps") && Array.isArray(values),
+    );
+    expect(stepInserts).toHaveLength(1);
+    expect(stepInserts[0]?.[1]).toEqual([
+      expect.any(String),
+      0,
+      "role",
+      "role-manager",
+      "lte",
+      75000,
+    ]);
+  });
+
+  it("listFlows maps amount guards back from flow_steps rows", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      if (sql.trimStart().startsWith("SELECT id, organization_id, name, role_id, status")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "flow-1",
+              organization_id: "org-1",
+              name: "Guarded reimbursement",
+              role_id: "role-intern",
+              status: "draft",
+              created_at: "2026-08-04T10:00:00.000Z",
+              updated_at: "2026-08-04T10:00:00.000Z",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({
+        rows: [
+          {
+            flow_id: "flow-1",
+            kind: "role",
+            role_id: "role-manager",
+            guard_operator: "gte",
+            guard_amount_minor: "500000",
+          },
+          {
+            flow_id: "flow-1",
+            kind: "team-lead",
+            role_id: null,
+            guard_operator: null,
+            guard_amount_minor: null,
+          },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const flows = await store.listFlows("org-1");
+
+    expect(flows).toEqual([
+      {
+        id: "flow-1",
+        name: "Guarded reimbursement",
+        roleId: "role-intern",
+        status: "draft",
+        steps: [
+          { kind: "role", roleId: "role-manager", guard: { operator: "gte", amountMinor: 500000 } },
+          { kind: "team-lead", guard: null },
+        ],
       },
     ]);
   });

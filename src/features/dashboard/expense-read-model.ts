@@ -9,6 +9,7 @@ const HISTORY_KINDS: Record<ExpenseHistoryEvent["kind"], Expense["history"][numb
   verified: "verified",
   paid: "paid",
   skipped: "skipped",
+  "auto-skipped": "auto-skipped",
   takeover: "takeover",
   comment: "comment",
 };
@@ -65,6 +66,8 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
       assignedActorId: step.assignedActorId,
       assignedActorName: step.assignedActorId ? names.get(step.assignedActorId) : undefined,
       status: step.status,
+      skipReason: step.skipReason,
+      decidedAt: step.decidedAt ? formatHistoryDate(step.decidedAt) : undefined,
     })),
     primaryAction: actionFor(claim),
     blockingReason: rejection?.detail,

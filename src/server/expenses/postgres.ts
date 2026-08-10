@@ -1,5 +1,6 @@
 import type { Pool } from "pg";
 import type { ReceiptContentType } from "../blob/keys";
+import { guardFromRow } from "../shared/amount-guard";
 import { ExpenseError } from "./commands";
 import type {
   ActivityEntry,
@@ -181,10 +182,10 @@ export class PostgresExpenseStore implements ExpenseStore {
       for (let position = 0; position < claim.steps.length; position += 1) {
         const step = claim.steps[position];
         await client.query(
-          `INSERT INTO claim_approval_steps (id, claim_id, position, role_id, assigned_actor_id, status, decided_at)
-           VALUES ($1, $2, $3, $4, $5, $6, $7)
-           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at, assigned_actor_id = EXCLUDED.assigned_actor_id`,
-          [step.id, claim.id, position, step.roleId, step.assignedActorId ?? null, step.status, step.decidedAt ?? null],
+          `INSERT INTO claim_approval_steps (id, claim_id, position, role_id, assigned_actor_id, status, decided_at, skip_reason)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+           ON CONFLICT (id) DO UPDATE SET status = EXCLUDED.status, decided_at = EXCLUDED.decided_at, assigned_actor_id = EXCLUDED.assigned_actor_id, skip_reason = EXCLUDED.skip_reason`,
+          [step.id, claim.id, position, step.roleId, step.assignedActorId ?? null, step.status, step.decidedAt ?? null, step.skipReason ?? null],
         );
       }
       await insertHistory(client, claim);
@@ -229,7 +230,7 @@ export class PostgresExpenseStore implements ExpenseStore {
     if (flowResult.rows.length === 0) return null;
     const flowId = String(flowResult.rows[0].id);
     const stepsResult = await this.pool.query<Row>(
-      "SELECT kind, role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+      "SELECT kind, role_id, guard_operator, guard_amount_minor FROM flow_steps WHERE flow_id = $1 ORDER BY position",
       [flowId],
     );
     return {
@@ -341,9 +342,9 @@ async function insertClaim(client: { query: (sql: string, values?: unknown[]) =>
 async function insertHistory(client: { query: (sql: string, values?: unknown[]) => Promise<unknown> }, claim: ExpenseClaim): Promise<void> {
   for (const event of claim.history) {
     await client.query(
-      `INSERT INTO claim_history_events (id, claim_id, kind, actor_id, detail, created_at)
-       VALUES ($1, $2, $3, $4, $5, $6) ON CONFLICT (id) DO NOTHING`,
-      [event.id, claim.id, event.kind, event.actorId ?? null, event.detail ?? null, event.createdAt],
+      `INSERT INTO claim_history_events (id, claim_id, kind, actor_id, actor_name, detail, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`,
+      [event.id, claim.id, event.kind, event.actorId ?? null, event.actorName ?? null, event.detail ?? null, event.createdAt],
     );
   }
 }
@@ -407,13 +408,15 @@ function stepFromRow(row: Row): ExpenseStep {
     assignedActorId: row.assigned_actor_id ? String(row.assigned_actor_id) : undefined,
     status: String(row.status) as ExpenseStep["status"],
     decidedAt: row.decided_at ? new Date(String(row.decided_at)).toISOString() : undefined,
+    skipReason: row.skip_reason ? String(row.skip_reason) : undefined,
   };
 }
 
 function flowStepFromRow(row: Row): FlowStepTarget {
+  const guard = guardFromRow(row);
   return row.kind === "team-lead"
-    ? { kind: "team-lead" }
-    : { kind: "role", roleId: String(row.role_id) };
+    ? { kind: "team-lead", guard }
+    : { kind: "role", roleId: String(row.role_id), guard };
 }
 
 function historyFromRow(row: Row): ExpenseHistoryEvent {
@@ -421,6 +424,7 @@ function historyFromRow(row: Row): ExpenseHistoryEvent {
     id: String(row.id),
     kind: String(row.kind) as ExpenseHistoryEvent["kind"],
     actorId: row.actor_id ? String(row.actor_id) : undefined,
+    actorName: row.actor_name ? String(row.actor_name) : undefined,
     detail: row.detail ? String(row.detail) : undefined,
     createdAt: new Date(String(row.created_at)).toISOString(),
   };

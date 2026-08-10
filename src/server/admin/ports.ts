@@ -52,12 +52,19 @@ export type RoleInput = {
   displayName: string;
 };
 
+import type { AmountGuard, AmountGuardOperator } from "../shared/amount-guard";
+export type { AmountGuard, AmountGuardOperator };
+
 // One step of a Flow: a 'role' step targets any locked or custom role,
 // while a 'team-lead' step targets the requester's assigned named person
 // (kind 'team-lead' carries no role id - the hierarchy assignment governs).
-export type FlowStepInput =
+// Any step may carry an optional guard; absent or null means unguarded.
+export type FlowStepInput = (
   | { kind: "role"; roleId: string }
-  | { kind: "team-lead" };
+  | { kind: "team-lead" }
+) & {
+  guard?: AmountGuard | null;
+};
 
 export type FlowInput = {
   name: string;

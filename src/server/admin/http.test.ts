@@ -15,7 +15,7 @@ import {
   handleReactivateEmployeeRequest,
   handleUpdateFlowRequest,
 } from "./http";
-import type { AdminDepartment, AdminRole, FlowDraft } from "./ports";
+import type { AdminDepartment, AdminRole, FlowDraft, FlowInput } from "./ports";
 
 function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
   return {
@@ -193,6 +193,69 @@ describe("handleCreateFlowRequest", () => {
     );
 
     expect(response.status).toBe(201);
+  });
+
+  it("passes an amount guard through to the command layer", async () => {
+    let received: FlowDraft["steps"] | null = null;
+    const commands = buildCommands({
+      createFlow: async (_organizationId: string, input: FlowInput) => {
+        received = input.steps;
+        return {
+          id: "flow-1",
+          status: "draft",
+          name: input.name,
+          roleId: input.roleId,
+          steps: input.steps,
+        };
+      },
+    });
+
+    const response = await handleCreateFlowRequest(
+      new Request("http://localhost/api/admin/flows", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Guarded reimbursement",
+          roleId: "role-1",
+          steps: [
+            { kind: "role", roleId: "role-2", guard: { operator: "gte", amountMinor: 500000 } },
+            { kind: "team-lead" },
+          ],
+        }),
+      }),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(201);
+    expect(received).toEqual([
+      { kind: "role", roleId: "role-2", guard: { operator: "gte", amountMinor: 500000 } },
+      { kind: "team-lead", guard: null },
+    ]);
+  });
+
+  it("rejects a body with a malformed guard", async () => {
+    const cases = [
+      { operator: "eq", amountMinor: 500000 },
+      { operator: "gte", amountMinor: 50.5 },
+      { operator: "gte", amountMinor: "500000" },
+      { operator: "gte" },
+      {},
+    ];
+    for (const guard of cases) {
+      const response = await handleCreateFlowRequest(
+        new Request("http://localhost/api/admin/flows", {
+          method: "POST",
+          body: JSON.stringify({
+            name: "x",
+            roleId: "role-1",
+            steps: [{ kind: "role", roleId: "role-2", guard }],
+          }),
+        }),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(response.status, JSON.stringify(guard)).toBe(422);
+    }
   });
 
   it("rejects a body with malformed steps", async () => {
