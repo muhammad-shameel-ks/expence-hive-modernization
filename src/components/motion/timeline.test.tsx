@@ -8,10 +8,12 @@ import {
   TimelineDot,
   TimelineItem,
   TimelineSeparator,
+  type TimelineTone,
 } from "./timeline";
 
 interface JourneyStep {
   id: string;
+  tone?: TimelineTone;
   pending?: boolean;
   current?: boolean;
   next?: boolean;
@@ -21,9 +23,9 @@ function renderJourney(steps: JourneyStep[]) {
   return render(
     <Timeline position="right">
       {steps.map((step) => (
-        <TimelineItem key={step.id} pending={step.pending} current={step.current}>
+        <TimelineItem key={step.id} tone={step.tone} pending={step.pending}>
           <TimelineSeparator>
-            <TimelineDot pending={step.pending} current={step.current} next={step.next} />
+            <TimelineDot tone={step.tone} pending={step.pending} current={step.current} next={step.next} />
           </TimelineSeparator>
           <TimelineContent>{step.id}</TimelineContent>
         </TimelineItem>
@@ -41,46 +43,53 @@ function connectorClasses(container: HTMLElement): string[] {
 }
 
 const GREEN = "bg-emerald-500";
-const SOLID = "bg-border";
+const RED = "bg-red-500";
+const AMBER = "bg-amber-500";
+const SKY = "bg-sky-500";
 const DASHED = "bg-border/40 border-l border-dashed border-border/60";
 
 describe("TimelineSeparator connector styling", () => {
-  it("keeps all connectors neutral when the journey is terminal (no current stage)", () => {
-    // Rejected/paid journeys have only history steps, none flagged current.
+  it("tints the connector into a rejected stage with the danger tone, not success green", () => {
+    // Terminal rejected journey: the line leading into the red dot must be
+    // red - a failed claim must never look success-toned.
     const { container } = renderJourney([
-      { id: "draft" },
-      { id: "submitted" },
-      { id: "approved" },
-      { id: "rejected" },
+      { id: "draft", tone: "muted" },
+      { id: "submitted", tone: "info" },
+      { id: "approved", tone: "success" },
+      { id: "rejected", tone: "danger" },
     ]);
 
     const classes = connectorClasses(container);
-    expect(classes.join(" ")).not.toContain(GREEN);
-    // The first item's leading stub and the last item's outbound stub fade to
-    // transparent by design; every other half stays neutral.
-    classes.filter((cls) => !cls.includes("bg-transparent")).forEach((cls) => {
-      expect(cls).toContain(SOLID);
-    });
+    // submitted outbound + rejected leading form the segment into the
+    // rejected dot (classes[5] is approved outbound, classes[6] is rejected
+    // leading).
+    expect(classes[5]).toContain(RED);
+    expect(classes[6]).toContain(RED);
+    expect(classes[5]).not.toContain(GREEN);
+    expect(classes[6]).not.toContain(GREEN);
+    // The earlier segments follow their own stage tones.
+    expect(classes[1]).toContain(SKY);
+    expect(classes[3]).toContain(GREEN);
   });
 
-  it("tints connectors green up to and including the one leading into the current stage", () => {
-    // submitted is current; the next step pulses but is not reached yet.
+  it("matches each connector to the tone of the stage it leads into on a live journey", () => {
+    // submitted is current (info/sky); the next stage is a warning stage
+    // (amber); the following stages are pending.
     const { container } = renderJourney([
-      { id: "draft" },
-      { id: "submitted", current: true },
-      { id: "manager", next: true },
-      { id: "finance", pending: true },
-      { id: "payment", pending: true },
+      { id: "draft", tone: "muted" },
+      { id: "submitted", tone: "info", current: true },
+      { id: "manager", tone: "warning", next: true },
+      { id: "finance", tone: "primary", pending: true },
+      { id: "payment", tone: "warning", pending: true },
     ]);
 
     const classes = connectorClasses(container);
-    // draft -> submitted: green on both halves of the segment.
-    expect(classes[1]).toContain(GREEN); // draft outbound
-    expect(classes[2]).toContain(GREEN); // submitted leading
-    // submitted -> manager: reached the current dot, not the next one.
-    expect(classes[3]).not.toContain(GREEN); // submitted outbound
-    expect(classes[3]).toContain(SOLID);
-    expect(classes[4]).not.toContain(GREEN); // manager leading
+    // draft -> submitted: sky on both halves of the segment.
+    expect(classes[1]).toContain(SKY);
+    expect(classes[2]).toContain(SKY);
+    // submitted -> manager: amber, matching the pulsing next-stage dot.
+    expect(classes[3]).toContain(AMBER);
+    expect(classes[4]).toContain(AMBER);
   });
 
   it("draws the segment between the next stage and a following pending stage dashed on both halves", () => {
@@ -88,10 +97,10 @@ describe("TimelineSeparator connector styling", () => {
     // following pending item's leading stub was dashed, splitting one segment
     // into two inconsistent halves.
     const { container } = renderJourney([
-      { id: "submitted", current: true },
-      { id: "manager", next: true },
-      { id: "finance", pending: true },
-      { id: "payment", pending: true },
+      { id: "submitted", tone: "info", current: true },
+      { id: "manager", tone: "warning", next: true },
+      { id: "finance", tone: "primary", pending: true },
+      { id: "payment", tone: "warning", pending: true },
     ]);
 
     const classes = connectorClasses(container);
@@ -103,14 +112,15 @@ describe("TimelineSeparator connector styling", () => {
 
   it("keeps pending stages dashed after the current stage", () => {
     const { container } = renderJourney([
-      { id: "submitted", current: true },
-      { id: "finance", pending: true },
-      { id: "payment", pending: true },
+      { id: "submitted", tone: "info", current: true },
+      { id: "finance", tone: "primary", pending: true },
+      { id: "payment", tone: "warning", pending: true },
     ]);
 
     const classes = connectorClasses(container);
-    // Skip the last item's transparent outbound stub (last-item fade).
-    classes.slice(3, -1).forEach((cls) => {
+    // Skip the first transparent stub and the last item's transparent
+    // outbound stub (first/last fade).
+    classes.slice(1, -1).forEach((cls) => {
       expect(cls).toContain(DASHED);
     });
   });

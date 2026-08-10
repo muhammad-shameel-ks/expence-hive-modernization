@@ -44,8 +44,8 @@ interface TimelineItemContextValue {
   last: boolean;
   even: boolean;
   pending: boolean;
-  index: number;
-  currentIndex: number;
+  tone: TimelineTone;
+  nextTone: TimelineTone;
   nextPending: boolean;
 }
 
@@ -59,27 +59,19 @@ export function Timeline({
 }: TimelineProps) {
   const childArray = Children.toArray(children);
   const count = childArray.length;
-  // A live journey marks exactly one item as current; the connectors up to
-  // and including the one leading into it are drawn in the success tone.
-  // Terminal journeys (paid/rejected) have no current item, so no connector
-  // is ever tinted success.
-  const currentIndex = childArray.findIndex(
-    (child) => isValidElement<TimelineItemProps>(child) && child.props.current === true,
-  );
   const items = childArray.map((child, index) => {
     if (!isValidElement<TimelineItemProps>(child)) return child;
     const nextChild = childArray[index + 1];
-    const nextPending =
-      isValidElement<TimelineItemProps>(nextChild) && nextChild.props.pending === true;
+    const nextIsItem = isValidElement<TimelineItemProps>(nextChild);
     return cloneElement<TimelineItemProps>(child, {
       position,
       orientation,
       first: index === 0,
       last: index === count - 1,
       even: index % 2 === 0,
-      index,
-      currentIndex,
-      nextPending,
+      tone: child.props.tone ?? "default",
+      nextTone: nextIsItem ? (nextChild.props.tone ?? "default") : "default",
+      nextPending: nextIsItem && nextChild.props.pending === true,
     });
   });
   return (
@@ -101,12 +93,10 @@ export interface TimelineItemProps {
   last?: boolean;
   even?: boolean;
   pending?: boolean;
-  /** Marks the current stage of a live journey; the connector leading into it is drawn in the success tone. */
-  current?: boolean;
-  /** Item index within the timeline; assigned by Timeline. */
-  index?: number;
-  /** Index of the item marked current, or -1 in terminal journeys; assigned by Timeline. */
-  currentIndex?: number;
+  /** Tone of this stage; the connector leading into the stage is tinted to match. */
+  tone?: TimelineTone;
+  /** Tone of the following stage; assigned by Timeline. */
+  nextTone?: TimelineTone;
   /** Whether the following item is pending; assigned by Timeline. */
   nextPending?: boolean;
   className?: string;
@@ -120,8 +110,8 @@ export function TimelineItem({
   last = false,
   even = true,
   pending = false,
-  index = 0,
-  currentIndex = -1,
+  tone = "default",
+  nextTone = "default",
   nextPending = false,
   className,
   children,
@@ -133,8 +123,8 @@ export function TimelineItem({
     last,
     even,
     pending,
-    index,
-    currentIndex,
+    tone,
+    nextTone,
     nextPending,
   };
   return (
@@ -185,7 +175,10 @@ export function TimelineConnector({
 /**
  * The dot column (or horizontal line) between the two content sides.
  * Connectors are drawn around the children automatically and fade out on
- * the first and last item of the timeline.
+ * the first and last item of the timeline. Each connector segment is tinted
+ * with the tone of the stage it leads into, so the line matches the dot and
+ * icon colors (green for approved/paid, red for rejected, amber for warning
+ * stages); pending stages keep a dashed neutral style.
  */
 export function TimelineSeparator({
   className,
@@ -194,26 +187,18 @@ export function TimelineSeparator({
   className?: string;
   children?: ReactNode;
 }) {
-  const { orientation, position, first, last, pending, index = 0, currentIndex = -1, nextPending = false } =
-    useTimelineItem();
+  const { orientation, position, first, last, pending, tone, nextTone, nextPending } = useTimelineItem();
   const vertical = orientation === "vertical";
 
-  // Each connector segment belongs to exactly one decision: the segment
-  // leading into this dot is tinted success when the journey has reached
-  // this stage (a live current stage exists at or after this index), and
-  // the segment leading out of this dot is tinted success when the journey
-  // has reached the next stage. Pending stages keep the dashed style.
-  const leadingReached = currentIndex >= 0 && index <= currentIndex;
-  const outboundReached = currentIndex >= 0 && index + 1 <= currentIndex;
-
-  const connector = (reached: boolean, dashed: boolean) =>
-    reached
-      ? "bg-emerald-500"
-      : dashed
-        ? vertical
-          ? "bg-border/40 border-l border-dashed border-border/60"
-          : "bg-border/40 border-t border-dashed border-border/60"
-        : "bg-border";
+  // A connector segment belongs to exactly one decision: its color follows
+  // the destination stage's tone (dashed neutral when that stage is
+  // pending), never split across the two halves that meet mid-segment.
+  const connector = (destinationTone: TimelineTone, dashed: boolean) =>
+    dashed
+      ? vertical
+        ? "bg-border/40 border-l border-dashed border-border/60"
+        : "bg-border/40 border-t border-dashed border-border/60"
+      : CONNECTOR_TONES[destinationTone];
 
   const colStart = !vertical
     ? "row-start-2"
@@ -237,14 +222,14 @@ export function TimelineSeparator({
         <>
           <span
             aria-hidden
-            className={cn("h-1 w-0.5 shrink-0", first ? "bg-transparent" : connector(leadingReached, pending))}
+            className={cn("h-1 w-0.5 shrink-0", first ? "bg-transparent" : connector(tone, pending))}
           />
           <span className="relative z-10 inline-flex shrink-0">{children}</span>
           <span
             aria-hidden
             className={cn(
               "min-h-0 w-0.5 flex-1",
-              last ? "bg-transparent" : connector(outboundReached, nextPending),
+              last ? "bg-transparent" : connector(nextTone, nextPending),
             )}
           />
         </>
@@ -252,18 +237,33 @@ export function TimelineSeparator({
         <>
           <span
             aria-hidden
-            className={cn("h-0.5 flex-1", first ? "bg-transparent" : connector(leadingReached, pending))}
+            className={cn("h-0.5 flex-1", first ? "bg-transparent" : connector(tone, pending))}
           />
           {children}
           <span
             aria-hidden
-            className={cn("h-0.5 flex-1", last ? "bg-transparent" : connector(outboundReached, nextPending))}
+            className={cn("h-0.5 flex-1", last ? "bg-transparent" : connector(nextTone, nextPending))}
           />
         </>
       )}
     </div>
   );
 }
+
+// Connector colors mirror the filled dot tones so the line matches the icon
+// it leads into. "default"/"muted" stages keep the neutral border color and
+// "pending" is handled by the dashed style in TimelineSeparator (the dashed
+// branch returns before this map is indexed).
+const CONNECTOR_TONES: Record<TimelineTone, string> = {
+  default: "bg-border",
+  muted: "bg-border",
+  primary: "bg-primary",
+  info: "bg-sky-500",
+  success: "bg-emerald-500",
+  warning: "bg-amber-500",
+  danger: "bg-red-500",
+  pending: "bg-border",
+};
 
 const DOT_SIZES = {
   sm: "h-3 w-3 text-[8px]",
