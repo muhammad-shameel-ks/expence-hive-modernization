@@ -26,6 +26,7 @@ export interface JourneyFlowStep {
   isNext: boolean;
   pending: boolean;
   isMine: boolean;
+  isTakeover: boolean;
 }
 
 export function getJourneyFlowItems(
@@ -46,18 +47,36 @@ export function getJourneyFlowItems(
     .map((event, i) => {
       const meta = KIND_META[event.kind];
       const isCurrent = !terminal && i === expense.history.length - 1;
+      const isTakeover = event.kind === "takeover";
+      // A takeover's title is the stage it bypassed (like any other stage
+      // entry), not the generic "Taken over" or the taking-over actor's name
+      // - the "Taken over" chip and the description carry that meaning
+      // instead (see render). The bypassed stage is read from the claim's
+      // current steps snapshot: a takeover always leaves at least one step
+      // "skipped" with no skipReason (amount-guard auto-skips are the only
+      // other skips, and they always carry a skipReason).
+      const bypassedSteps = isTakeover
+        ? (expense.steps ?? []).filter((s) => s.status === "skipped" && !s.skipReason)
+        : [];
+      const reasonMatch = isTakeover ? event.detail?.match(/\(reason: (.*?)\)/) : null;
+      const extraBypassed = bypassedSteps.slice(1).map((s) => s.roleName);
       return {
         id: event.id,
-        label: meta.label,
+        label: isTakeover ? bypassedSteps[0]?.roleName ?? "Approval stage" : meta.label,
         date: event.date,
         actor: event.actor,
-        detail: event.detail,
+        detail: isTakeover
+          ? `Taken over by ${event.actor}${reasonMatch ? ` for "${reasonMatch[1]}"` : ""}${
+              extraBypassed.length ? ` (also skipped: ${extraBypassed.join(", ")})` : ""
+            }`
+          : event.detail,
         tone: meta.tone,
         icon: meta.icon,
         isCurrent,
         isNext: false,
         pending: false,
         isMine: isMine(event.actor, event.actorId),
+        isTakeover,
       };
     });
 
@@ -76,6 +95,7 @@ export function getJourneyFlowItems(
     isNext: false,
     pending: false,
     isMine: false,
+    isTakeover: false,
   });
 
   const autoSkippedSteps = (expense.steps ?? []).filter((s) => s.status === "skipped" && s.skipReason);
@@ -116,6 +136,7 @@ export function getJourneyFlowItems(
       isNext: false,
       pending: true,
       isMine: false,
+      isTakeover: false,
     });
   }
 
@@ -145,6 +166,7 @@ export function getJourneyFlowItems(
           isNext: false,
           pending: true,
           isMine: false,
+          isTakeover: false,
         });
       }
 
@@ -169,6 +191,7 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
+        isTakeover: false,
       });
     }
   } else {
@@ -202,6 +225,7 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
+        isTakeover: false,
       });
     }
 
@@ -229,6 +253,7 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
+        isTakeover: false,
       });
     }
 
@@ -245,6 +270,7 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
+        isTakeover: false,
       });
     }
   }
@@ -313,10 +339,17 @@ export function JourneyFlow({
                         You
                       </span>
                     ) : null}
+                    {step.isTakeover ? (
+                      <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
+                        Taken over
+                      </span>
+                    ) : null}
                   </div>
                   <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
                 </div>
-                <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
+                {step.isTakeover ? null : (
+                  <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
+                )}
                 {step.detail ? (
                   <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
                 ) : null}
