@@ -16,12 +16,14 @@ export function ExpenseDashboard({
   currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
   expenses,
   activity = [],
 }: {
   currentUser: string;
   currentUserId?: string;
   currentUserRoleId?: string;
+  currentUserRoleCode?: string;
   expenses: Expense[];
   activity?: ActivityItem[];
 }) {
@@ -48,7 +50,9 @@ export function ExpenseDashboard({
       const response = await fetch(`/api/expenses/${claimId}`);
       if (response.ok) {
         const { claim, employees } = await response.json();
-        openExpense(claimToExpense(claim, employees));
+        if (claim && typeof claim === "object") {
+          openExpense(claimToExpense(claim, employees ?? []));
+        }
       }
     } finally {
       setLoadingClaimId(null);
@@ -108,6 +112,7 @@ export function ExpenseDashboard({
         currentUser={currentUser}
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
+        currentUserRoleCode={currentUserRoleCode}
       />
     </div>
   );

@@ -833,7 +833,7 @@ export function createExpenseCommands({
         throw new ExpenseError("unauthorized", "Only Finance can view the payment queue.");
       }
       const claims = await catchUpAll(await store.listClaimsForOrganization(employee.organizationId), employee.organizationId);
-      return claims.filter((claim) => claim.status === "in-finance" || claim.status === "paid" || claim.status === "rejected");
+      return claims.filter((claim) => claim.status !== "draft");
     },
 
     async updateComments(actorId, claimId, comments) {
@@ -872,7 +872,15 @@ export function createExpenseCommands({
       if (!canViewOrganizationActivity(actor)) {
         throw new ExpenseError("unauthorized", "Only Finance Head can view the organization activity feed.");
       }
-      return store.listActivityForOrganization(actor.organizationId, ACTIVITY_EVENT_KINDS);
+      return store.listActivityForOrganization(actor.organizationId, [
+        "submitted",
+        "approved",
+        "rejected",
+        "verified",
+        "paid",
+        "takeover",
+        "comment",
+      ]);
     },
   };
 }

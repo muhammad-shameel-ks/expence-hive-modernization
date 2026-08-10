@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, ArrowUpRight, Download, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Gavel, Paperclip, X } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { EASE_OUT } from "@/lib/ease";
@@ -21,7 +21,7 @@ import {
 import { cn } from "@/lib/utils";
 import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import { STATUS_META, type Expense } from "./mock-data";
-import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
+import { canTakeOver, isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
 import { formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
@@ -57,6 +57,7 @@ export function ExpenseDrawer({
   currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,11 +66,16 @@ export function ExpenseDrawer({
   currentUserId?: string;
   /** Role id of the viewer; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
+  currentUserRoleCode?: string;
 }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
+  const [takeoverOpen, setTakeoverOpen] = useState(false);
+  const [takeoverReason, setTakeoverReason] = useState("");
+  const [takingOver, setTakingOver] = useState(false);
+  const [takeoverError, setTakeoverError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -357,6 +363,47 @@ export function ExpenseDrawer({
       }
     } finally {
       setRejecting(false);
+    }
+  }
+
+  function openTakeover() {
+    setTakeoverReason("");
+    setTakeoverError(null);
+    setTakeoverOpen(true);
+  }
+
+  async function performTakeover() {
+    if (!activeExpense) return;
+    const reasonCode = takeoverReason.trim();
+    if (!reasonCode) {
+      setTakeoverError("Enter a justification or reason code for taking over this claim.");
+      return;
+    }
+    setTakingOver(true);
+    setTakeoverError(null);
+    try {
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/take-over`,
+        "Could not take over this claim.",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reasonCode }),
+        }
+      );
+      if (result.ok) {
+        const updated = resolveUpdatedExpense(result.body);
+        if (updated) {
+          setOverrideExpense(updated);
+        }
+        setTakeoverOpen(false);
+        queueSyncedRef.current = true;
+        router.refresh();
+      } else {
+        setTakeoverError(result.error);
+      }
+    } finally {
+      setTakingOver(false);
     }
   }
 
@@ -651,6 +698,16 @@ export function ExpenseDrawer({
                       Reject
                     </Button>
                   ) : null}
+                  {activeExpense && canTakeOver(activeExpense, currentUserId, currentUserRoleCode, currentUserRoleId) ? (
+                    <Button
+                      variant="outline"
+                      className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                      onClick={openTakeover}
+                    >
+                      <Gavel className="h-3.5 w-3.5" />
+                      Take over
+                    </Button>
+                  ) : null}
                   <Button variant="outline" loading={downloading} onClick={downloadSummary}>
                     <Download className="h-3.5 w-3.5" />
                     Download summary
@@ -665,6 +722,39 @@ export function ExpenseDrawer({
           </footer>
         </>
       ) : null}
+
+      <Dialog open={takeoverOpen} onOpenChange={setTakeoverOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Take over this claim</DialogTitle>
+            <DialogDescription>
+              As a higher-stage approver or Finance Head, taking over this claim waives all pending earlier stages and advances it directly to your stage or terminal Finance.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="takeover-reason" className="text-xs font-medium text-muted-foreground">
+              Reason code / justification
+            </label>
+            <textarea
+              id="takeover-reason"
+              value={takeoverReason}
+              onChange={(e) => setTakeoverReason(e.target.value)}
+              rows={3}
+              className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              placeholder="Explain why you are taking over this claim (e.g. Manager away on leave / Urgent override)"
+            />
+            {takeoverError ? <p className="text-xs text-destructive">{takeoverError}</p> : null}
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setTakeoverOpen(false)} disabled={takingOver}>
+              Cancel
+            </Button>
+            <Button variant="default" onClick={performTakeover} loading={takingOver}>
+              Confirm takeover
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent>

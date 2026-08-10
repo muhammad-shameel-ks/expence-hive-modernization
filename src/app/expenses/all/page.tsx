@@ -58,6 +58,7 @@ export default async function AllExpensesPage() {
             currentUser={workspace.employee.name}
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
+            currentUserRoleCode={workspace.employee.role?.code}
           />
         </div>
       </div>

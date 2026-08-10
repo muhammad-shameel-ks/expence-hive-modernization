@@ -1,6 +1,6 @@
 import type { ExpenseClaim } from "@/server/expenses/ports";
 
-export type PaymentQueueFilter = "All" | "Awaiting payment" | "Paid" | "Rejected";
+export type PaymentQueueFilter = "All" | "In approval" | "Awaiting payment" | "Paid" | "Rejected";
 export type PaymentQueueSortKey = "submitted" | "ref" | "category" | "amount" | "status";
 
 export interface PaymentQueueQuery {
@@ -17,6 +17,7 @@ export interface PaymentQueueQuery {
 }
 
 const FILTER_MATCH: Record<Exclude<PaymentQueueFilter, "All">, (claim: ExpenseClaim) => boolean> = {
+  "In approval": (claim) => claim.status === "in-approval",
   "Awaiting payment": (claim) => claim.status === "in-finance",
   Paid: (claim) => claim.status === "paid",
   Rejected: (claim) => claim.status === "rejected",
@@ -78,11 +79,12 @@ export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: Payme
   });
 }
 
-export type PaymentStatus = "Paid" | "Not Paid" | "Rejected";
+export type PaymentStatus = "Paid" | "In approval" | "Not Paid" | "Rejected";
 
 export function paymentStatusFor(claim: ExpenseClaim): PaymentStatus {
   if (claim.status === "paid") return "Paid";
   if (claim.status === "rejected") return "Rejected";
+  if (claim.status === "in-approval") return "In approval";
   return "Not Paid";
 }
 

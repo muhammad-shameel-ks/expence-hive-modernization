@@ -25,7 +25,10 @@ export class PostgresExpenseStore implements ExpenseStore {
   }
 
   async listEmployees(organizationId: string): Promise<ExpenseEmployee[]> {
-    const result = await this.pool.query<Row>(employeeQuery.replace("WHERE e.id = $1", "WHERE e.organization_id = $1"), [organizationId]);
+    const result = await this.pool.query<Row>(
+      employeeQuery.replace("WHERE e.id = $1", "WHERE e.organization_id = $1 ORDER BY e.name"),
+      [organizationId],
+    );
     return result.rows.map(employeeFromRow);
   }
 

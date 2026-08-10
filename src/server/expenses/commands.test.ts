@@ -1819,6 +1819,7 @@ describe("expense commands", () => {
 
       const activity = await commands.listOrganizationActivity("emp-pramod");
       expect(activity).toEqual([
+        expect.objectContaining({ claimId: submitted.id, kind: "submitted", actorId: "emp-shameel" }),
         expect.objectContaining({ claimId: submitted.id, kind: "rejected", actorId: "emp-ada", actorName: "Ada Lovelace" }),
       ]);
     });

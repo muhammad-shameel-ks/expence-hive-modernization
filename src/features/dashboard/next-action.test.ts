@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { ME, type Expense } from "./mock-data";
-import { isTerminal, isTerminalPoolEligible, nextActionFor } from "./next-action";
+import { canTakeOver, isTerminal, isTerminalPoolEligible, nextActionFor } from "./next-action";
 
 function expense(overrides: Partial<Expense>): Expense {
   return {
@@ -207,5 +207,37 @@ describe("isTerminal", () => {
     for (const status of ["draft", "submitted", "in-approval", "approved", "in-finance"] as const) {
       expect(isTerminal(status)).toBe(false);
     }
+  });
+});
+
+describe("canTakeOver", () => {
+  const claimInApproval = {
+    status: "in-approval",
+    requesterId: "emp-shameel",
+    nextActorId: "emp-sanil",
+    steps: [
+      { roleId: "role-manager", status: "pending" },
+      { roleId: "role-finance-head", status: "pending" },
+    ],
+  };
+
+  it("returns true for Finance Head on an in-approval claim", () => {
+    expect(canTakeOver(claimInApproval, "emp-pramod", "finance-head", "role-finance-head")).toBe(true);
+  });
+
+  it("returns true for a later-stage role matching step", () => {
+    expect(canTakeOver(claimInApproval, "emp-other-head", "custom-head-role", "role-finance-head")).toBe(true);
+  });
+
+  it("returns false for the claim requester", () => {
+    expect(canTakeOver(claimInApproval, "emp-shameel", "finance-head", "role-finance-head")).toBe(false);
+  });
+
+  it("returns false for the active current actor", () => {
+    expect(canTakeOver(claimInApproval, "emp-sanil", "manager", "role-manager")).toBe(false);
+  });
+
+  it("returns false for terminal claims", () => {
+    expect(canTakeOver({ ...claimInApproval, status: "paid" }, "emp-pramod", "finance-head", "role-finance-head")).toBe(false);
   });
 });
