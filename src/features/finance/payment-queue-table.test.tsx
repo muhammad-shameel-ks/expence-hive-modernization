@@ -615,6 +615,175 @@ describe("PaymentQueueTable Excel export", () => {
   });
 });
 
+describe("PaymentQueueTable receipt panel is PDF-only", () => {
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function buildClaimWithReceipt(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
+    return buildClaim({
+      attachment: {
+        id: "att-1",
+        fileName: "receipt.pdf",
+        contentType: "application/pdf",
+        storageKey: "org-1/claim-1/att-1.pdf",
+        status: "available",
+        contentSha256: "abc123",
+        sizeBytes: 1234,
+        uploadedAt: "2026-08-01T00:00:00.000Z",
+      },
+      ...overrides,
+    });
+  }
+
+  it("opens via its own trigger and never renders the journey timeline for a receipt claim", () => {
+    render(<PaymentQueueTable claims={[buildClaimWithReceipt()]} employees={[]} />);
+
+    expect(screen.queryByRole("region", { name: "Journey for EXP-0001" })).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview receipt for EXP-0001" }));
+
+    expect(screen.getByRole("button", { name: "Download summary" })).toBeInTheDocument();
+    expect(screen.queryByLabelText("Journey for EXP-0001")).not.toBeInTheDocument();
+  });
+
+  it("never renders the journey timeline for the no-receipt fallback", () => {
+    const withReceipt = buildClaimWithReceipt();
+    const withoutReceipt = buildClaim({ id: "claim-2", ref: "EXP-0002" });
+    render(<PaymentQueueTable claims={[withReceipt, withoutReceipt]} employees={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview receipt for EXP-0001" }));
+    fireEvent.keyDown(screen.getByLabelText("Payment queue, arrow keys move selection"), { key: "ArrowDown" });
+
+    expect(screen.getByText("No receipt attached to this claim.")).toBeInTheDocument();
+    expect(screen.queryByLabelText("Journey for EXP-0002")).not.toBeInTheDocument();
+    expect(screen.queryByLabelText("Journey for EXP-0001")).not.toBeInTheDocument();
+  });
+
+  it("does not open the receipt panel merely by clicking the row", () => {
+    const { container } = render(<PaymentQueueTable claims={[buildClaimWithReceipt()]} employees={[]} />);
+
+    fireEvent.click(screen.getByText("Client dinner"));
+
+    const panel = container.querySelector('aside[aria-label="Receipt preview"]');
+    expect(panel).toHaveAttribute("aria-hidden", "true");
+  });
+});
+
+describe("PaymentQueueTable row click opens the shared expense drawer", () => {
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+    vi.stubGlobal(
+      "matchMedia",
+      vi.fn().mockReturnValue({
+        matches: false,
+        addEventListener: vi.fn(),
+        removeEventListener: vi.fn(),
+      }),
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("opens the expense drawer populated with the clicked row's claim", () => {
+    const claim = buildClaim();
+    render(
+      <PaymentQueueTable
+        claims={[claim]}
+        employees={FINANCE_EMPLOYEES}
+        currentUser="Grace Hopper"
+        currentUserId="employee-2"
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Client dinner"));
+
+    expect(screen.getByRole("heading", { name: "Client dinner" })).toBeInTheDocument();
+    expect(screen.getByRole("dialog", { name: `Expense details: ${claim.title}` })).toBeInTheDocument();
+  });
+
+  it("keeps the receipt panel's selection open while the drawer, opened from the same row, is closed", () => {
+    const claim = buildClaim({
+      attachment: {
+        id: "att-1",
+        fileName: "receipt.pdf",
+        contentType: "application/pdf",
+        storageKey: "org-1/claim-1/att-1.pdf",
+        status: "available",
+        contentSha256: "abc123",
+        sizeBytes: 1234,
+        uploadedAt: "2026-08-01T00:00:00.000Z",
+      },
+    });
+    render(<PaymentQueueTable claims={[claim]} employees={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview receipt for EXP-0001" }));
+    expect(screen.getByRole("button", { name: "Download summary" })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Client dinner"));
+    expect(screen.getByRole("dialog", { name: `Expense details: ${claim.title}` })).toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText("Close details"));
+
+    // The panel opened before the drawer and stayed open the whole time,
+    // independent of the drawer's own open/close state: closing the drawer
+    // never touched the panel's selection.
+    expect(screen.getByLabelText("Receipt preview for EXP-0001")).toHaveAttribute("aria-hidden", "false");
+  });
+
+  it("does not open the drawer when clicking the row's receipt preview trigger", () => {
+    const claim = buildClaim({
+      attachment: {
+        id: "att-1",
+        fileName: "receipt.pdf",
+        contentType: "application/pdf",
+        storageKey: "org-1/claim-1/att-1.pdf",
+        status: "available",
+        contentSha256: "abc123",
+        sizeBytes: 1234,
+        uploadedAt: "2026-08-01T00:00:00.000Z",
+      },
+    });
+    render(<PaymentQueueTable claims={[claim]} employees={[]} />);
+
+    fireEvent.click(screen.getByRole("button", { name: "Preview receipt for EXP-0001" }));
+
+    expect(screen.queryByRole("heading", { name: "Client dinner" })).not.toBeInTheDocument();
+  });
+});
+
 describe("PaymentQueueTable download summary in the side panel", () => {
   beforeEach(() => {
     mockRefresh.mockReset();

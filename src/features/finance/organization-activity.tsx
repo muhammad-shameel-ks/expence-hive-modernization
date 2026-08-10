@@ -13,10 +13,14 @@ export function OrganizationActivity({
   items,
   currentUser,
   currentUserId,
+  currentUserRoleId,
+  currentUserRoleCode,
 }: {
   items: ActivityItem[];
   currentUser: string;
   currentUserId?: string;
+  currentUserRoleId?: string;
+  currentUserRoleCode?: string;
 }) {
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<ActivityKindFilter>("all");
@@ -182,6 +186,8 @@ export function OrganizationActivity({
         expense={selected}
         currentUser={currentUser}
         currentUserId={currentUserId}
+        currentUserRoleId={currentUserRoleId}
+        currentUserRoleCode={currentUserRoleCode}
       />
     </section>
   );

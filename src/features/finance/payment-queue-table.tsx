@@ -13,8 +13,9 @@ import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 import { isTerminalPoolEligible } from "@/features/dashboard/next-action";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
+import { ExpenseDrawer } from "@/features/dashboard/expense-drawer";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
-import { JourneyFlow } from "@/features/dashboard/journey-flow";
+import type { Expense } from "@/features/dashboard/mock-data";
 import { hasReceiptAttachment, selectedClaimFor, stepSelection } from "./payment-queue-selection";
 import {
   approvedOnFor,
@@ -34,7 +35,7 @@ import {
   type PaymentQueueExportScope,
 } from "./payment-queue-export";
 
-const FILTERS: PaymentQueueFilter[] = ["All", "Awaiting payment", "Paid", "Rejected"];
+const FILTERS: PaymentQueueFilter[] = ["All", "In approval", "Awaiting payment", "Paid", "Rejected"];
 
 const exportOptionClassName =
   "flex w-full items-center justify-start rounded-lg px-2.5 py-1.5 text-left text-sm text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50";
@@ -42,15 +43,21 @@ const exportOptionClassName =
 export function PaymentQueueTable({
   claims,
   employees = [],
+  currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
 }: {
   claims: ExpenseClaim[];
   employees?: ExpenseEmployee[];
+  /** Viewer display name; ExpenseDrawer's next-action/takeover copy addresses the viewer by it. */
+  currentUser?: string;
   /** Viewer id; the terminal-stage pool gate uses it to exclude self-claims. */
   currentUserId?: string;
   /** Viewer role id; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
+  /** Viewer role code; ExpenseDrawer's takeover eligibility check uses it. */
+  currentUserRoleCode?: string;
 }) {
   const employeeNameById = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee.name])),
@@ -126,12 +133,26 @@ export function PaymentQueueTable({
   const panelRef = useRef<HTMLElement | null>(null);
   const previewButtonRefs = useRef(new Map<string, HTMLButtonElement>());
 
+  // The drawer's open/close state is independent of the receipt panel's
+  // (ADR-0014): opening one never opens or closes the other.
+  const [drawerExpense, setDrawerExpense] = useState<Expense | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  function openDrawer(claim: ExpenseClaim) {
+    setDrawerExpense(claimToExpense(claim, employees));
+    setDrawerOpen(true);
+  }
+
+  // Row click opens the drawer, but a click inside one of the row's own
+  // interactive controls (receipt preview trigger, terminal action button,
+  // comment input) must not also open it.
+  function handleRowClick(claim: ExpenseClaim, event: React.MouseEvent<HTMLTableRowElement>) {
+    if ((event.target as HTMLElement).closest("button, input, textarea, select")) return;
+    openDrawer(claim);
+  }
+
   const selected = selectedClaimFor(claims, selectedClaimId);
   const selectedHasReceipt = selected ? hasReceiptAttachment(selected) : false;
-  const selectedExpense = useMemo(
-    () => (selected ? claimToExpense(selected, employees) : null),
-    [selected, employees],
-  );
 
   function openPanel(claimId: string) {
     setSelectedClaimId(claimId);
@@ -513,14 +534,31 @@ export function PaymentQueueTable({
               : "-translate-x-full opacity-0 pointer-events-none lg:translate-x-0 lg:w-0 lg:p-0 lg:border-0 lg:overflow-hidden lg:shrink-0"
           )}
         >
-          {selected && selectedExpense ? (
-            <div className="flex flex-1 flex-col overflow-y-auto p-4 space-y-6">
-              {selectedHasReceipt ? (
-                <ReceiptPreview
-                  claimId={selected.id}
-                  fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
-                  onClose={closePanel}
-                  headerAction={
+          {selected ? (
+            selectedHasReceipt ? (
+              <ReceiptPreview
+                claimId={selected.id}
+                fileName={selected.attachment?.fileName ? `${selected.ref} - ${selected.attachment.fileName}` : selected.ref}
+                onClose={closePanel}
+                headerAction={
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    className="gap-1"
+                    loading={downloadingSummary}
+                    onClick={downloadSummary}
+                  >
+                    <Download className="h-3.5 w-3.5" />
+                    Download summary
+                  </Button>
+                }
+                className="h-full flex-1 border-0 rounded-none lg:rounded-xl bg-card"
+              />
+            ) : (
+              <div className="flex h-full flex-col overflow-hidden rounded-xl border border-border bg-card">
+                <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
+                  <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
+                  <div className="flex items-center gap-1">
                     <Button
                       variant="outline"
                       size="sm"
@@ -531,41 +569,16 @@ export function PaymentQueueTable({
                       <Download className="h-3.5 w-3.5" />
                       Download summary
                     </Button>
-                  }
-                  className="h-[320px] shrink-0 rounded-xl border border-border bg-card"
-                />
-              ) : (
-                <div className="flex shrink-0 flex-col overflow-hidden rounded-xl border border-border bg-card">
-                  <div className="flex items-center justify-between border-b border-border bg-background px-4 py-3">
-                    <p className="font-mono text-sm font-medium text-foreground">{selected.ref}</p>
-                    <div className="flex items-center gap-1">
-                      <Button
-                        variant="outline"
-                        size="sm"
-                        className="gap-1"
-                        loading={downloadingSummary}
-                        onClick={downloadSummary}
-                      >
-                        <Download className="h-3.5 w-3.5" />
-                        Download summary
-                      </Button>
-                      <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
-                        <X />
-                      </Button>
-                    </div>
-                  </div>
-                  <div className="flex items-center justify-center p-6 text-sm text-muted-foreground">
-                    No receipt attached to this claim.
+                    <Button variant="ghost" size="icon-sm" aria-label="Close preview" onClick={closePanel}>
+                      <X />
+                    </Button>
                   </div>
                 </div>
-              )}
-              <JourneyFlow
-                expense={selectedExpense}
-                currentUserId={currentUserId}
-                ariaLabel={`Journey for ${selected.ref}`}
-                className="mt-0 border-t border-border pt-4"
-              />
-            </div>
+                <div className="m-auto flex items-center justify-center p-6 text-sm text-muted-foreground">
+                  No receipt attached to this claim.
+                </div>
+              </div>
+            )
           ) : null}
         </aside>
 
@@ -615,7 +628,8 @@ export function PaymentQueueTable({
                       if (el) rowRefs.current.set(claim.id, el);
                       else rowRefs.current.delete(claim.id);
                     }}
-                    className="border-t border-black/10 odd:bg-muted/60"
+                    onClick={(event) => handleRowClick(claim, event)}
+                    className="cursor-pointer border-t border-black/10 odd:bg-muted/60 hover:bg-muted/50"
                   >
                     {PAYMENT_QUEUE_COLUMNS.map((column) => (
                       <td key={column.id} className={column.cellClassName ?? "px-4 py-3"}>
@@ -630,6 +644,16 @@ export function PaymentQueueTable({
           </div>
         </div>
       </div>
+
+      <ExpenseDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        expense={drawerExpense}
+        currentUser={currentUser ?? ""}
+        currentUserId={currentUserId}
+        currentUserRoleId={currentUserRoleId}
+        currentUserRoleCode={currentUserRoleCode}
+      />
     </div>
   );
 }
