@@ -157,4 +157,27 @@ describe("claimToExpense", () => {
     expect(stored.attachmentAvailable).toBe(true);
     expect(placeholder.attachmentAvailable).toBe(false);
   });
+
+  it("maps an auto-skipped history event to a known kind so the drawer never crashes on it", () => {
+    const expense = claimToExpense(
+      rejectedClaim({
+        history: [
+          { id: "h1", kind: "draft", actorId: "emp-shameel", createdAt: "2026-08-04T09:00:00.000Z" },
+          { id: "h2", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" },
+          {
+            id: "h3",
+            kind: "auto-skipped",
+            detail: "Total ₹1999 at or under ₹2000 guard on Finance Head step",
+            createdAt: "2026-08-04T10:00:00.000Z",
+          },
+        ],
+      }),
+      employees,
+    );
+
+    expect(expense.history.map((event) => event.kind)).toContain("auto-skipped");
+    expect(expense.history.find((event) => event.kind === "auto-skipped")?.detail).toContain(
+      "₹2000 guard",
+    );
+  });
 });

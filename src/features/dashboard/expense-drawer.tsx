@@ -26,9 +26,7 @@ import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./h
 import { formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
-import { JourneyFlow, getJourneyFlowItems, type JourneyFlowStep } from "./journey-flow";
-
-export { getJourneyFlowItems, type JourneyFlowStep };
+import { JourneyFlow } from "./journey-flow";
 
 
 const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
