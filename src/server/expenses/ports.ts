@@ -69,7 +69,8 @@ export type ExpenseHistoryEvent = {
     | "paid"
     | "skipped"
     | "takeover"
-    | "comment";
+    | "comment"
+    | "auto-skipped";
   actorId?: string;
   detail?: string;
   createdAt: string;
