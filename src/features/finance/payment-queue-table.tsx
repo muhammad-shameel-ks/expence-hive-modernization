@@ -40,6 +40,10 @@ const FILTERS: PaymentQueueFilter[] = ["All", "In approval", "Awaiting payment",
 const exportOptionClassName =
   "flex w-full items-center justify-start rounded-lg px-2.5 py-1.5 text-left text-sm text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50";
 
+// The row's own interactive controls must never double-fire a container-level
+// keyboard or click action; shared by the row-click and keydown handlers.
+const ROW_INTERACTIVE_SELECTOR = "button, input, textarea, select";
+
 export function PaymentQueueTable({
   claims,
   employees = [],
@@ -147,7 +151,7 @@ export function PaymentQueueTable({
   // interactive controls (receipt preview trigger, terminal action button,
   // comment input) must not also open it.
   function handleRowClick(claim: ExpenseClaim, event: React.MouseEvent<HTMLTableRowElement>) {
-    if ((event.target as HTMLElement).closest("button, input, textarea, select")) return;
+    if ((event.target as HTMLElement).closest(ROW_INTERACTIVE_SELECTOR)) return;
     openDrawer(claim);
   }
 
@@ -234,7 +238,7 @@ export function PaymentQueueTable({
     // Keys inside the row's own interactive controls (comment inputs,
     // receipt preview trigger, terminal action button) do their own thing;
     // never hijack them.
-    if ((event.target as HTMLElement).closest("button, input, textarea, select")) return;
+    if ((event.target as HTMLElement).closest(ROW_INTERACTIVE_SELECTOR)) return;
     // The selected row opens the drawer on Enter, matching the row click
     // (the drawer is the only surface with the journey, takeover, and
     // download-summary actions, so it must be keyboard-reachable).
@@ -600,9 +604,9 @@ export function PaymentQueueTable({
             </p>
           ) : null}
           <div
-            tabIndex={selectedClaimId ? 0 : undefined}
-            aria-label={selectedClaimId ? "Payment queue, arrow keys move selection" : undefined}
-            onKeyDown={selectedClaimId ? handleTableKeyDown : undefined}
+            tabIndex={0}
+            aria-label="Payment queue, arrow keys move selection, Enter opens claim details"
+            onKeyDown={handleTableKeyDown}
             className="max-h-[70vh] overflow-auto rounded-xl border border-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
           <table className="w-full min-w-[1600px] border-collapse text-sm">

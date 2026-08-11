@@ -674,7 +674,7 @@ describe("PaymentQueueTable receipt panel is PDF-only", () => {
     render(<PaymentQueueTable claims={[withReceipt, withoutReceipt]} employees={[]} />);
 
     fireEvent.click(screen.getByRole("button", { name: "Preview receipt for EXP-0001" }));
-    fireEvent.keyDown(screen.getByLabelText("Payment queue, arrow keys move selection"), { key: "ArrowDown" });
+    fireEvent.keyDown(screen.getByLabelText("Payment queue, arrow keys move selection, Enter opens claim details"), { key: "ArrowDown" });
 
     expect(screen.getByText("No receipt attached to this claim.")).toBeInTheDocument();
     expect(screen.queryByLabelText("Journey for EXP-0002")).not.toBeInTheDocument();
@@ -781,6 +781,33 @@ describe("PaymentQueueTable row click opens the shared expense drawer", () => {
     fireEvent.click(screen.getByRole("button", { name: "Preview receipt for EXP-0001" }));
 
     expect(screen.queryByRole("heading", { name: "Client dinner" })).not.toBeInTheDocument();
+  });
+
+  it("opens the drawer from the keyboard: ArrowDown selects the first row and Enter opens it", () => {
+    const claim = buildClaim();
+    render(
+      <PaymentQueueTable
+        claims={[claim]}
+        employees={FINANCE_EMPLOYEES}
+        currentUser="Grace Hopper"
+        currentUserId="employee-2"
+      />,
+    );
+
+    const region = screen.getByLabelText("Payment queue, arrow keys move selection, Enter opens claim details");
+    fireEvent.keyDown(region, { key: "ArrowDown" });
+    fireEvent.keyDown(region, { key: "Enter" });
+
+    expect(screen.getByRole("dialog", { name: `Expense details: ${claim.title}` })).toBeInTheDocument();
+  });
+
+  it("does not open the drawer on Enter when no row is selected", () => {
+    const claim = buildClaim();
+    render(<PaymentQueueTable claims={[claim]} employees={[]} />);
+
+    fireEvent.keyDown(screen.getByLabelText("Payment queue, arrow keys move selection, Enter opens claim details"), { key: "Enter" });
+
+    expect(screen.queryByRole("dialog", { name: `Expense details: ${claim.title}` })).not.toBeInTheDocument();
   });
 });
 
