@@ -1,7 +1,13 @@
 import { createHash } from "node:crypto";
 import { buildBlobKey } from "../blob/keys";
 import type { BlobStore } from "../blob/ports";
-import { FINANCE_HEAD_ROLE_CODE, MANAGER_ROLE_CODE, resolveRoleCapabilities } from "../shared/authorization";
+import {
+  FINANCE_HEAD_ROLE_CODE,
+  MANAGER_ROLE_CODE,
+  SUPERADMIN_ROLE_CODE,
+  resolveRoleCapabilities,
+} from "../shared/authorization";
+import { autoSkipDetail, guardSatisfied } from "../shared/amount-guard";
 import {
   ACTIVITY_EVENT_KINDS,
   type ActivityEntry,
@@ -83,6 +89,7 @@ function stepLabel(step: ExpenseClaim["steps"][number]): string {
   return step.roleId === null ? "team lead" : step.roleId;
 }
 
+
 // A pool-stage label for the takeover history detail: team-lead steps are
 // recorded by their named target kind, role steps by their role id.
 function skippedStepLabels(claim: ExpenseClaim, start: number, end: number): string[] {
@@ -106,7 +113,7 @@ function takeoverDetail(
   skippedLabels: string[],
 ): string {
   const skipped = skippedLabels.length > 0 ? `: ${skippedLabels.join(", ")}` : "";
-  return `Took over as ${actor.role!.displayName} (reason: ${reason}); skipped ${skippedLabels.length} earlier stage(s)${skipped}`;
+  return `Took over as ${actor.role?.displayName ?? "unknown"} (reason: ${reason}); skipped ${skippedLabels.length} earlier stage(s)${skipped}`;
 }
 
 export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict" | "too-large";
@@ -204,14 +211,55 @@ export function createExpenseCommands({
           : "Skipped: no response within 3 days",
         createdAt: decidedAt,
       });
-      const next = claim.steps[index + 1];
+      // Advance to the next pending step: steps between could have been
+      // auto-skipped by an amount guard at submission and must be passed
+      // over, never stranding the claim on an already-skipped stage.
+      const nextIndex = claim.steps.findIndex(
+        (candidate, candidateIndex) => candidateIndex > index && candidate.status === "pending",
+      );
+      const next = claim.steps[nextIndex];
       claim.currentStage = next.roleId ?? undefined;
       claim.currentActorId = next.assignedActorId;
       claim.currentStageSince = decidedAt;
-      claim.status = isTerminalIndex(claim, index + 1) ? "in-finance" : "in-approval";
+      claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
       changed = true;
     }
     return changed;
+  }
+
+  // The runtime half of amount guards (ADR-0012): after a claim's steps
+  // materialize from the published flow at submission, each guarded step is
+  // evaluated against the claim total and the outcome is frozen in the
+  // claim's step snapshot. A step whose guard fails is auto-skipped - the
+  // policy decided it, not a person - so the skip is recorded as a distinct
+  // 'auto-skipped' history event with no actor and the guard reason
+  // (ADR-0013). The terminal step is never auto-skipped: flow validation
+  // already rejects a guarded terminal step, and this is the runtime
+  // backstop so payment completion can never be silently bypassed.
+  function applyAmountGuards(
+    claim: ExpenseClaim,
+    steps: FlowStepTarget[],
+    roleNames: Map<string, string>,
+    decidedAt: string,
+  ): void {
+    for (let index = 0; index < claim.steps.length; index += 1) {
+      const guard = steps[index].guard;
+      if (!guard || isTerminalIndex(claim, index)) continue;
+      if (guardSatisfied(guard, claim.amountMinor)) continue;
+      const step = claim.steps[index];
+      step.status = "skipped";
+      step.decidedAt = decidedAt;
+      const stepRoleName =
+        step.roleId === null ? "team lead" : (roleNames.get(step.roleId) ?? step.roleId);
+      step.skipReason = autoSkipDetail(claim.amountMinor, guard, stepRoleName);
+      claim.history.push({
+        id: idFactory("history"),
+        kind: "auto-skipped",
+        actorName: "Policy",
+        detail: step.skipReason,
+        createdAt: decidedAt,
+      });
+    }
   }
 
   async function catchUp(claim: ExpenseClaim): Promise<ExpenseClaim> {
@@ -549,6 +597,11 @@ export function createExpenseCommands({
         throw new ExpenseError("validation", "No approval flow is published for your role yet.");
       }
       const employees = await store.listEmployees(requester.organizationId);
+      const roleNames = new Map(
+        employees.flatMap((employee) =>
+          employee.role ? [[employee.role.id, employee.role.displayName] as const] : [],
+        ),
+      );
       const submittedAt = now().toISOString();
       claim.steps = flow.steps.map((target) => {
         const eligible = employees.find((candidate) => isEligible(requester, candidate, target));
@@ -559,13 +612,23 @@ export function createExpenseCommands({
           status: "pending" as const,
         };
       });
-      claim.status = isTerminalIndex(claim, 0) ? "in-finance" : "in-approval";
-      claim.currentStage = claim.steps[0].roleId ?? undefined;
-      claim.currentActorId = claim.steps[0].assignedActorId;
-      claim.currentStageSince = submittedAt;
       claim.submittedAt = submittedAt;
       claim.version += 1;
       claim.history.push({ id: idFactory("history"), kind: "submitted", actorId, createdAt: submittedAt });
+      // Guards are evaluated at submission and the outcome is frozen with
+      // the claim: later flow edits cannot change it, and a fresh
+      // submission (e.g. a new claim after a rejection) re-evaluates.
+      applyAmountGuards(claim, flow.steps, roleNames, submittedAt);
+      // The first pending step is current: guarded steps that were
+      // auto-skipped never hold the claim up.
+      const currentIndex = Math.max(
+        claim.steps.findIndex((step) => step.status === "pending"),
+        0,
+      );
+      claim.status = isTerminalIndex(claim, currentIndex) ? "in-finance" : "in-approval";
+      claim.currentStage = claim.steps[currentIndex].roleId ?? undefined;
+      claim.currentActorId = claim.steps[currentIndex].assignedActorId;
+      claim.currentStageSince = submittedAt;
       catchUpAbsentStages(claim, new Set(activeIds(employees)));
       await store.updateClaim(claim);
       return claim;
@@ -599,11 +662,17 @@ export function createExpenseCommands({
       step.status = "approved";
       step.decidedAt = decidedAt;
       claim.history.push({ id: idFactory("history"), kind: "approved", actorId, createdAt: decidedAt });
-      const next = claim.steps[index + 1];
+      // Advance to the next pending step: steps between could have been
+      // auto-skipped by an amount guard at submission and must be passed
+      // over, never stranding the claim on an already-skipped stage.
+      const nextIndex = claim.steps.findIndex(
+        (candidate, candidateIndex) => candidateIndex > index && candidate.status === "pending",
+      );
+      const next = claim.steps[nextIndex];
       claim.currentStage = next.roleId ?? undefined;
       claim.currentActorId = next.assignedActorId;
       claim.currentStageSince = decidedAt;
-      claim.status = isTerminalIndex(claim, index + 1) ? "in-finance" : "in-approval";
+      claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
       claim.version += 1;
       const employees = await store.listEmployees(claim.organizationId);
       catchUpAbsentStages(claim, new Set(activeIds(employees)));
@@ -664,6 +733,7 @@ export function createExpenseCommands({
       if (!actor.role) {
         throw new ExpenseError("unauthorized", "You have no role that is eligible to take over this claim.");
       }
+      const actorRole = actor.role;
       const currentIndex = claim.steps.findIndex((step) => step.status === "pending");
       if (currentIndex === -1) {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
@@ -671,20 +741,24 @@ export function createExpenseCommands({
       const employees = await store.listEmployees(claim.organizationId);
       const requester = employees.find((candidate) => candidate.id === claim.requesterId);
       // Positional takeover: a later step targeting the actor's own role.
-      // Team-lead steps carry a null role id, so they can never be a
-      // takeover target.
+      // The step must still be pending - a later step could have been
+      // auto-skipped by an amount guard at submission, and landing the
+      // claim on an already-skipped stage would strand it there with no
+      // working next action. Team-lead steps carry a null role id, so they
+      // can never be a takeover target.
       const targetIndex = claim.steps.findIndex(
-        (step, index) => index > currentIndex && step.roleId === actor.role!.id,
+        (step, index) => index > currentIndex && step.status === "pending" && step.roleId === actorRole.id,
       );
-      // Finance Head apex: when the actor holds Finance Head and no later
-      // step targets their role, they take over by skipping every pending
-      // stage up to the terminal stage and assigning the terminal stage to
-      // the first eligible holder of its role (a Finance Executive) rather
-      // than to themselves (story 19/20). The terminal stage itself is never
-      // skipped by any takeover.
-      const financeHeadApex = actor.role.code === FINANCE_HEAD_ROLE_CODE && targetIndex === -1;
+      // Apex bypass: when the actor holds Finance Head or Superadmin and no
+      // later step targets their role, they take over by skipping every
+      // pending stage up to the terminal stage and assigning the terminal
+      // stage to the first eligible holder of its role (a Finance Executive)
+      // rather than to themselves (story 19/20). The terminal stage itself is
+      // never skipped by any takeover.
+      const isApexRole = actorRole.code === FINANCE_HEAD_ROLE_CODE || actorRole.code === SUPERADMIN_ROLE_CODE;
+      const apexTakeover = isApexRole && targetIndex === -1;
       const decidedAt = now().toISOString();
-      if (financeHeadApex) {
+      if (apexTakeover) {
         const terminalStepIndex = terminalIndex(claim);
         const skippedLabels = skippedStepLabels(claim, currentIndex, terminalStepIndex);
         for (let index = currentIndex; index < terminalStepIndex; index += 1) {
@@ -774,7 +848,7 @@ export function createExpenseCommands({
         throw new ExpenseError("unauthorized", "Only Finance can view the payment queue.");
       }
       const claims = await catchUpAll(await store.listClaimsForOrganization(employee.organizationId), employee.organizationId);
-      return claims.filter((claim) => claim.status === "in-finance" || claim.status === "paid" || claim.status === "rejected");
+      return claims.filter((claim) => claim.status !== "draft");
     },
 
     async updateComments(actorId, claimId, comments) {
@@ -813,7 +887,15 @@ export function createExpenseCommands({
       if (!canViewOrganizationActivity(actor)) {
         throw new ExpenseError("unauthorized", "Only Finance Head can view the organization activity feed.");
       }
-      return store.listActivityForOrganization(actor.organizationId, ACTIVITY_EVENT_KINDS);
+      return store.listActivityForOrganization(actor.organizationId, [
+        "submitted",
+        "approved",
+        "rejected",
+        "verified",
+        "paid",
+        "takeover",
+        "comment",
+      ]);
     },
   };
 }

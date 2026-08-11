@@ -351,7 +351,7 @@ function parseAmount(value: string): number | null {
 function expenseErrorResponse(error: unknown): Response {
   if (!isExpenseError(error)) {
     console.error("expense command failed", error instanceof Error ? error : String(error));
-    return Response.json({ error: "internal" }, { status: 500 });
+    return Response.json({ error: "internal", message: "An internal server error occurred." }, { status: 500 });
   }
   const status =
     error.code === "unauthorized"

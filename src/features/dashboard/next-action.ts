@@ -68,3 +68,37 @@ export function nextActionFor(
 export function isTerminal(status: ExpenseStatus) {
   return status === "paid" || status === "rejected";
 }
+
+export function canTakeOver(
+  claim: {
+    status?: string;
+    requesterId?: string;
+    nextActorId?: string;
+    steps?: readonly { roleId: string | null; status: string }[];
+  },
+  meId?: string,
+  viewerRoleCode?: string,
+  viewerRoleId?: string,
+): boolean {
+  if (!meId) return false;
+  if (claim.requesterId === meId) return false;
+  if (claim.status !== "in-approval" && claim.status !== "submitted") return false;
+  const steps = claim.steps ?? [];
+  const currentIndex = steps.findIndex((s) => s.status === "pending");
+  if (currentIndex === -1) return false;
+
+  if (claim.nextActorId === meId) return false;
+
+  if (viewerRoleCode === "finance-head" || viewerRoleCode === "superadmin") {
+    return true;
+  }
+
+  if (!viewerRoleId) return false;
+  // The target step must still be pending: a later step that was already
+  // auto-skipped by an amount guard is not a valid takeover target
+  // (mirrors the server's positional lookup in takeOverClaim).
+  const targetIndex = steps.findIndex(
+    (step, index) => index > currentIndex && step.status === "pending" && step.roleId === viewerRoleId,
+  );
+  return targetIndex !== -1;
+}

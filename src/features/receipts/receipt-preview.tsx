@@ -451,13 +451,13 @@ export function ReceiptPreview({ ref: closeButtonRef, ...props }: ReceiptPreview
       // convention, also how trackpad pinch arrives). One ZOOM_STEP per
       // notch, within the same MIN_SCALE/MAX_SCALE bounds as the toolbar.
       // zoomWithAnchor returns raw values, so the result is always clamped.
-      // Always preventDefault while ready: browser page zoom must never fire
-      // over the viewer, even at a scale bound.
+      // When already at a scale bound, do not preventDefault so the event can
+      // fall through to surrounding scrollable containers.
       if (event.ctrlKey || event.metaKey) {
-        event.preventDefault();
         const newScale = nextScale(scaleRef.current, event.deltaY < 0 ? 1 : -1);
         if (newScale === scaleRef.current) return;
 
+        event.preventDefault();
         hasUserZoomedRef.current = true;
 
         const rect = container.getBoundingClientRect();

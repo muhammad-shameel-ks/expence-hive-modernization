@@ -16,12 +16,14 @@ export function ExpenseDashboard({
   currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
   expenses,
   activity = [],
 }: {
   currentUser: string;
   currentUserId?: string;
   currentUserRoleId?: string;
+  currentUserRoleCode?: string;
   expenses: Expense[];
   activity?: ActivityItem[];
 }) {
@@ -48,14 +50,18 @@ export function ExpenseDashboard({
       const response = await fetch(`/api/expenses/${claimId}`);
       if (response.ok) {
         const { claim, employees } = await response.json();
-        openExpense(claimToExpense(claim, employees));
+        if (claim && typeof claim === "object") {
+          openExpense(claimToExpense(claim, employees ?? []));
+        }
       }
     } finally {
       setLoadingClaimId(null);
     }
   }
 
-  const stats = dashboardStats(expenses, new Date().toISOString().slice(0, 7));
+  // Money stats are the viewer's own spend; pool claims (claims the viewer's
+  // role can verify in Finance) never count as money they spent.
+  const stats = dashboardStats(expenses, new Date().toISOString().slice(0, 7), currentUserId);
 
   const statCards = [
     {
@@ -106,6 +112,7 @@ export function ExpenseDashboard({
         currentUser={currentUser}
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
+        currentUserRoleCode={currentUserRoleCode}
       />
     </div>
   );

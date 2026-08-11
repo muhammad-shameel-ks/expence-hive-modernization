@@ -41,6 +41,10 @@ export interface ExpenseStepView {
   assignedActorId?: string;
   assignedActorName?: string;
   status: "pending" | "approved" | "rejected" | "skipped" | "verified" | "paid";
+  /** The frozen guard reason when an amount guard auto-skipped this step. */
+  skipReason?: string;
+  /** Display date of the decision, when decided. */
+  decidedAt?: string;
 }
 
 export interface Expense {

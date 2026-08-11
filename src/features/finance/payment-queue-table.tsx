@@ -13,6 +13,9 @@ import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 import { isTerminalPoolEligible } from "@/features/dashboard/next-action";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
+import { ExpenseDrawer } from "@/features/dashboard/expense-drawer";
+import { claimToExpense } from "@/features/dashboard/expense-read-model";
+import type { Expense } from "@/features/dashboard/mock-data";
 import { hasReceiptAttachment, selectedClaimFor, stepSelection } from "./payment-queue-selection";
 import {
   approvedOnFor,
@@ -32,23 +35,33 @@ import {
   type PaymentQueueExportScope,
 } from "./payment-queue-export";
 
-const FILTERS: PaymentQueueFilter[] = ["All", "Awaiting payment", "Paid", "Rejected"];
+const FILTERS: PaymentQueueFilter[] = ["All", "In approval", "Awaiting payment", "Paid", "Rejected"];
 
 const exportOptionClassName =
   "flex w-full items-center justify-start rounded-lg px-2.5 py-1.5 text-left text-sm text-foreground outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50 disabled:pointer-events-none disabled:opacity-50";
 
+// The row's own interactive controls must never double-fire a container-level
+// keyboard or click action; shared by the row-click and keydown handlers.
+const ROW_INTERACTIVE_SELECTOR = "button, input, textarea, select";
+
 export function PaymentQueueTable({
   claims,
   employees = [],
+  currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
 }: {
   claims: ExpenseClaim[];
   employees?: ExpenseEmployee[];
+  /** Viewer display name; ExpenseDrawer's next-action/takeover copy addresses the viewer by it. */
+  currentUser?: string;
   /** Viewer id; the terminal-stage pool gate uses it to exclude self-claims. */
   currentUserId?: string;
   /** Viewer role id; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
+  /** Viewer role code; ExpenseDrawer's takeover eligibility check uses it. */
+  currentUserRoleCode?: string;
 }) {
   const employeeNameById = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee.name])),
@@ -103,6 +116,8 @@ export function PaymentQueueTable({
     return terminalStep.status === "verified" ? "pay" : "verify";
   };
 
+  // Inline comment save is an input autosave flow on blur/Enter with no discrete trigger Button control;
+  // the inline input spinner in payment-queue-columns.tsx is retained and the shared Button loading pattern does not apply.
   async function saveComment(claimId: string, value: string) {
     setSavingCommentFor(claimId);
     try {
@@ -121,6 +136,24 @@ export function PaymentQueueTable({
   const rowRefs = useRef(new Map<string, HTMLTableRowElement>());
   const panelRef = useRef<HTMLElement | null>(null);
   const previewButtonRefs = useRef(new Map<string, HTMLButtonElement>());
+
+  // The drawer's open/close state is independent of the receipt panel's
+  // (ADR-0014): opening one never opens or closes the other.
+  const [drawerExpense, setDrawerExpense] = useState<Expense | null>(null);
+  const [drawerOpen, setDrawerOpen] = useState(false);
+
+  function openDrawer(claim: ExpenseClaim) {
+    setDrawerExpense(claimToExpense(claim, employees));
+    setDrawerOpen(true);
+  }
+
+  // Row click opens the drawer, but a click inside one of the row's own
+  // interactive controls (receipt preview trigger, terminal action button,
+  // comment input) must not also open it.
+  function handleRowClick(claim: ExpenseClaim, event: React.MouseEvent<HTMLTableRowElement>) {
+    if ((event.target as HTMLElement).closest(ROW_INTERACTIVE_SELECTOR)) return;
+    openDrawer(claim);
+  }
 
   const selected = selectedClaimFor(claims, selectedClaimId);
   const selectedHasReceipt = selected ? hasReceiptAttachment(selected) : false;
@@ -202,8 +235,19 @@ export function PaymentQueueTable({
       closePanel();
       return;
     }
-    // Arrow keys inside the comment inputs move the text caret; never hijack.
-    if ((event.target as HTMLElement).closest("input, textarea, select")) return;
+    // Keys inside the row's own interactive controls (comment inputs,
+    // receipt preview trigger, terminal action button) do their own thing;
+    // never hijack them.
+    if ((event.target as HTMLElement).closest(ROW_INTERACTIVE_SELECTOR)) return;
+    // The selected row opens the drawer on Enter, matching the row click
+    // (the drawer is the only surface with the journey, takeover, and
+    // download-summary actions, so it must be keyboard-reachable).
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const claim = rows.find((candidate) => candidate.id === selectedClaimId);
+      if (claim) openDrawer(claim);
+      return;
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
@@ -560,9 +604,9 @@ export function PaymentQueueTable({
             </p>
           ) : null}
           <div
-            tabIndex={selectedClaimId ? 0 : undefined}
-            aria-label={selectedClaimId ? "Payment queue, arrow keys move selection" : undefined}
-            onKeyDown={selectedClaimId ? handleTableKeyDown : undefined}
+            tabIndex={0}
+            aria-label="Payment queue, arrow keys move selection, Enter opens claim details"
+            onKeyDown={handleTableKeyDown}
             className="max-h-[70vh] overflow-auto rounded-xl border border-black/10 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring/50"
           >
           <table className="w-full min-w-[1600px] border-collapse text-sm">
@@ -599,7 +643,8 @@ export function PaymentQueueTable({
                       if (el) rowRefs.current.set(claim.id, el);
                       else rowRefs.current.delete(claim.id);
                     }}
-                    className="border-t border-black/10 odd:bg-muted/60"
+                    onClick={(event) => handleRowClick(claim, event)}
+                    className="cursor-pointer border-t border-black/10 odd:bg-muted/60 hover:bg-muted/50"
                   >
                     {PAYMENT_QUEUE_COLUMNS.map((column) => (
                       <td key={column.id} className={column.cellClassName ?? "px-4 py-3"}>
@@ -614,6 +659,16 @@ export function PaymentQueueTable({
           </div>
         </div>
       </div>
+
+      <ExpenseDrawer
+        open={drawerOpen}
+        onOpenChange={setDrawerOpen}
+        expense={drawerExpense}
+        currentUser={currentUser ?? ""}
+        currentUserId={currentUserId}
+        currentUserRoleId={currentUserRoleId}
+        currentUserRoleCode={currentUserRoleCode}
+      />
     </div>
   );
 }

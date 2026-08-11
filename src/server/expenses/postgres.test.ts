@@ -316,13 +316,13 @@ describe("PostgresExpenseStore", () => {
         expect(params).toEqual(["org-1", "role-intern"]);
         return Promise.resolve({ rows: [{ id: "flow-intern", role_id: "role-intern" }] });
       }
-      expect(sql).toContain("SELECT kind, role_id FROM flow_steps");
+      expect(sql).toContain("SELECT kind, role_id, guard_operator, guard_amount_minor FROM flow_steps");
       expect(params).toEqual(["flow-intern"]);
       return Promise.resolve({
         rows: [
-          { kind: "team-lead", role_id: null },
-          { kind: "role", role_id: "role-manager" },
-          { kind: "role", role_id: "role-finance-executive" },
+          { kind: "team-lead", role_id: null, guard_operator: null, guard_amount_minor: null },
+          { kind: "role", role_id: "role-manager", guard_operator: null, guard_amount_minor: null },
+          { kind: "role", role_id: "role-finance-executive", guard_operator: null, guard_amount_minor: null },
         ],
       });
     });
@@ -332,9 +332,37 @@ describe("PostgresExpenseStore", () => {
     const flow = await store.getPublishedFlowForRole("org-1", "role-intern");
 
     expect(flow?.steps).toEqual([
-      { kind: "team-lead" },
-      { kind: "role", roleId: "role-manager" },
-      { kind: "role", roleId: "role-finance-executive" },
+      { kind: "team-lead", guard: null },
+      { kind: "role", roleId: "role-manager", guard: null },
+      { kind: "role", roleId: "role-finance-executive", guard: null },
+    ]);
+  });
+
+  it("maps amount guards back from published flow steps", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      if (sql.includes("FROM flows WHERE organization_id = $1 AND role_id = $2")) {
+        expect(params).toEqual(["org-1", "role-executive"]);
+        return Promise.resolve({ rows: [{ id: "flow-guarded", role_id: "role-executive" }] });
+      }
+      expect(sql).toContain("SELECT kind, role_id, guard_operator, guard_amount_minor FROM flow_steps");
+      expect(params).toEqual(["flow-guarded"]);
+      return Promise.resolve({
+        rows: [
+          { kind: "role", role_id: "role-manager", guard_operator: "gte", guard_amount_minor: "500000" },
+          { kind: "team-lead", role_id: null, guard_operator: "lt", guard_amount_minor: "10000" },
+          { kind: "role", role_id: "role-finance-executive", guard_operator: null, guard_amount_minor: null },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const flow = await store.getPublishedFlowForRole("org-1", "role-executive");
+
+    expect(flow?.steps).toEqual([
+      { kind: "role", roleId: "role-manager", guard: { operator: "gte", amountMinor: 500000 } },
+      { kind: "team-lead", guard: { operator: "lt", amountMinor: 10000 } },
+      { kind: "role", roleId: "role-finance-executive", guard: null },
     ]);
   });
 
@@ -384,8 +412,9 @@ describe("PostgresExpenseStore", () => {
               claim_id: "claim-1",
               role_id: null,
               assigned_actor_id: "emp-abilash",
-              status: "pending",
-              decided_at: null,
+              status: "skipped",
+              decided_at: "2026-08-04T10:00:00.000Z",
+              skip_reason: "Total ₹300 under ₹5000 guard on Manager step",
             },
             {
               id: "step-2",
@@ -394,6 +423,7 @@ describe("PostgresExpenseStore", () => {
               assigned_actor_id: "emp-finance",
               status: "pending",
               decided_at: null,
+              skip_reason: null,
             },
           ],
         });
@@ -406,7 +436,14 @@ describe("PostgresExpenseStore", () => {
     const claim = await store.getClaim("claim-1");
 
     expect(claim?.steps).toEqual([
-      { id: "step-1", roleId: null, assignedActorId: "emp-abilash", status: "pending", decidedAt: undefined },
+      {
+        id: "step-1",
+        roleId: null,
+        assignedActorId: "emp-abilash",
+        status: "skipped",
+        decidedAt: "2026-08-04T10:00:00.000Z",
+        skipReason: "Total ₹300 under ₹5000 guard on Manager step",
+      },
       { id: "step-2", roleId: "role-finance-executive", assignedActorId: "emp-finance", status: "pending", decidedAt: undefined },
     ]);
   });
@@ -431,6 +468,121 @@ describe("PostgresExpenseStore", () => {
       ([sql, values]) => typeof sql === "string" && sql.includes("INSERT INTO claim_approval_steps") && Array.isArray(values) && values.includes("step-1"),
     );
     expect(stepInsert?.[1]).toEqual(expect.arrayContaining([null, "emp-abilash"]));
+  });
+
+  it("writes the frozen auto-skip reason onto a skipped claim step", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = buildClaim();
+    claim.status = "in-approval";
+    claim.currentStage = undefined;
+    claim.version = 2;
+    claim.steps = [
+      {
+        id: "step-1",
+        roleId: null,
+        assignedActorId: "emp-abilash",
+        status: "skipped",
+        decidedAt: "2026-08-04T10:00:00.000Z",
+        skipReason: "Total ₹300 under ₹5000 guard on Manager step",
+      },
+    ];
+    await store.updateClaim(claim);
+
+    const stepInsert = query.mock.calls.find(
+      ([sql, values]) => typeof sql === "string" && sql.includes("INSERT INTO claim_approval_steps") && Array.isArray(values) && values.includes("step-1"),
+    );
+    expect(stepInsert?.[1]).toEqual(
+      expect.arrayContaining(["skipped", "2026-08-04T10:00:00.000Z", "Total ₹300 under ₹5000 guard on Manager step"]),
+    );
+  });
+
+  it("persists actor_name when inserting claim history events", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = buildClaim();
+    claim.history.push({
+      id: "history-2",
+      kind: "auto-skipped",
+      actorName: "Policy",
+      detail: "Total ₹300 under ₹5000 guard on Manager step",
+      createdAt: "2026-08-04T10:00:00.000Z",
+    });
+
+    await store.createClaim(claim);
+
+    const historyInsert = query.mock.calls.find(
+      ([sql, values]) =>
+        typeof sql === "string" &&
+        sql.includes("INSERT INTO claim_history_events") &&
+        Array.isArray(values) &&
+        values.includes("history-2"),
+    );
+    expect(historyInsert?.[0]).toContain("actor_name");
+    expect(historyInsert?.[1]).toEqual(
+      expect.arrayContaining(["history-2", "auto-skipped", null, "Policy", "Total ₹300 under ₹5000 guard on Manager step"]),
+    );
+  });
+
+  it("maps actor_name back from claim_history_events", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes("FROM reimbursement_claims")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "claim-1",
+              organization_id: "org-1",
+              requester_id: "emp-shameel",
+              reference: "EXP-2026-0001",
+              title: "Bengaluru client flight",
+              category: "Travel",
+              amount_minor: "1250000",
+              expense_date: "2026-08-04",
+              status: "in-approval",
+              version: "1",
+              created_at: "2026-08-04T10:00:00.000Z",
+            },
+          ],
+        });
+      }
+      if (sql.includes("FROM claim_history_events")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "history-1",
+              claim_id: "claim-1",
+              kind: "auto-skipped",
+              actor_id: null,
+              actor_name: "Policy",
+              detail: "Total ₹300 under ₹5000 guard on Manager step",
+              created_at: "2026-08-04T10:00:00.000Z",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = await store.getClaim("claim-1");
+
+    expect(claim?.history).toEqual([
+      {
+        id: "history-1",
+        kind: "auto-skipped",
+        actorId: undefined,
+        actorName: "Policy",
+        detail: "Total ₹300 under ₹5000 guard on Manager step",
+        createdAt: "2026-08-04T10:00:00.000Z",
+      },
+    ]);
   });
 });
 
@@ -477,6 +629,32 @@ describe("PostgresExpenseStore claim lifecycle", () => {
         "abc123",
         209,
       ]),
+    );
+  });
+
+  it("preserves skip_reason on step conflict update when updating a claim", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+    const claim = buildClaim();
+    claim.steps = [
+      {
+        id: "step-1",
+        roleId: "role-mgr",
+        status: "skipped",
+        skipReason: "Auto-skipped by threshold guard (< ₹5,000)",
+      },
+    ];
+
+    await store.updateClaim(claim);
+
+    const stepUpsertCall = query.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO claim_approval_steps"),
+    );
+    expect(stepUpsertCall?.[0]).toContain("skip_reason = EXCLUDED.skip_reason");
+    expect(stepUpsertCall?.[1]).toEqual(
+      expect.arrayContaining(["Auto-skipped by threshold guard (< ₹5,000)"]),
     );
   });
 

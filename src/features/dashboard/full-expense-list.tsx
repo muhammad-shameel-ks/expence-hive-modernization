@@ -13,11 +13,13 @@ export function FullExpenseList({
   currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
 }: {
   expenses: Expense[];
   currentUser: string;
   currentUserId?: string;
   currentUserRoleId?: string;
+  currentUserRoleCode?: string;
 }) {
   const [selected, setSelected] = useState<Expense | null>(null);
   const [open, setOpen] = useState(false);
@@ -59,6 +61,7 @@ export function FullExpenseList({
         currentUser={currentUser}
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
+        currentUserRoleCode={currentUserRoleCode}
       />
     </section>
   );

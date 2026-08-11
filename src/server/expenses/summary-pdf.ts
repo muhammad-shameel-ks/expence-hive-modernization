@@ -156,7 +156,10 @@ export async function buildExpenseSummaryPdf(
     sectionHeading("Approval journey");
     for (const step of claim.steps) {
       const roleName = stepRoleName(step.roleId, roleNames);
-      const decisionLabel = STEP_DECISION_LABELS[step.status] ?? step.status;
+      const decisionLabel =
+        step.status === "skipped" && step.skipReason
+          ? "Auto-skipped"
+          : STEP_DECISION_LABELS[step.status] ?? step.status;
       const decidedAt = step.decidedAt ? ` \u00B7 ${formatTimestamp(step.decidedAt)}` : "";
       const actorName = step.assignedActorId
         ? names.get(step.assignedActorId) ?? step.assignedActorId
@@ -164,6 +167,11 @@ export async function buildExpenseSummaryPdf(
       ensureSpace(BODY_LINE_HEIGHT * 2);
       drawText(`${roleName} - ${decisionLabel}${decidedAt}`, LABEL_COLUMN_X, { font: semibold });
       drawText(actorName, LABEL_COLUMN_X + 12, { size: 9, color: MUTED, lineHeight: 12 });
+      if (step.skipReason) {
+        ensureSpace(BODY_LINE_HEIGHT * 2);
+        drawText(step.skipReason, LABEL_COLUMN_X + 12, { size: 9, color: MUTED, lineHeight: 12 });
+        y -= 2;
+      }
       y -= 2;
     }
   }

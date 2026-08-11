@@ -1,4 +1,5 @@
 import type { ReceiptContentType } from "../blob/keys";
+import type { AmountGuard } from "../shared/amount-guard";
 
 export type ExpenseRole = {
   id: string;
@@ -56,6 +57,9 @@ export type ExpenseStep = {
   assignedActorId?: string;
   status: ExpenseStepStatus;
   decidedAt?: string;
+  // The frozen reason when an amount guard auto-skipped this step at
+  // submission (ADR-0012): null/absent for takeover or absence skips.
+  skipReason?: string;
 };
 
 export type ExpenseHistoryEvent = {
@@ -68,10 +72,11 @@ export type ExpenseHistoryEvent = {
     | "verified"
     | "paid"
     | "skipped"
+    | "auto-skipped"
     | "takeover"
-    | "comment"
-    | "auto-skipped";
+    | "comment";
   actorId?: string;
+  actorName?: string;
   detail?: string;
   createdAt: string;
 };
@@ -150,10 +155,10 @@ export type UpdateExpenseDraftInput = CreateExpenseDraftInput;
 // The target of one flow step. 'role' steps resolve to eligible holders of
 // the role (org-wide, or same-department for the Manager role); 'team-lead'
 // steps resolve to the requester's assigned named person from
-// hierarchy_assignments.manager_id.
+// hierarchy_assignments.manager_id. Any step may carry an optional amount
+// guard; absent or null means unguarded.
 export type FlowStepTarget =
-  | { kind: "role"; roleId: string }
-  | { kind: "team-lead" };
+  | ({ kind: "role"; roleId: string } | { kind: "team-lead" }) & { guard?: AmountGuard | null };
 
 export type ExpenseFlow = {
   id: string;

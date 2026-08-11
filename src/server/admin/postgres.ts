@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { AdminError } from "./commands";
 import { auditRangeBounds } from "./audit-filter";
+import { guardFromRow } from "../shared/amount-guard";
 import type {
   AdminDepartment,
   AdminEmployee,
@@ -19,11 +20,14 @@ import type {
 type Row = Record<string, unknown>;
 
 // A flow_steps row maps back to its target kind: team-lead steps carry a
-// null role id, role steps always reference a role.
+// null role id, role steps always reference a role. The guard columns are
+// either both null (unguarded) or a full operator/amount pair - the
+// flow_steps_guard_check constraint guarantees the pair stays coherent.
 function flowStepFromRow(row: Row): FlowStepInput {
+  const guard = guardFromRow(row);
   return row.kind === "team-lead"
-    ? { kind: "team-lead" }
-    : { kind: "role", roleId: String(row.role_id) };
+    ? { kind: "team-lead", guard }
+    : { kind: "role", roleId: String(row.role_id), guard };
 }
 
 // employee_roles remains many-to-many in the schema (ADR-0002 forward
@@ -302,8 +306,17 @@ export class PostgresAdminStore implements AdminStore {
       for (let index = 0; index < input.steps.length; index += 1) {
         const step = input.steps[index];
         await client.query(
-          "INSERT INTO flow_steps (flow_id, position, kind, role_id) VALUES ($1, $2, $3, $4)",
-          [flowId, index, step.kind, step.kind === "role" ? step.roleId : null],
+          `INSERT INTO flow_steps
+             (flow_id, position, kind, role_id, guard_operator, guard_amount_minor)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            flowId,
+            index,
+            step.kind,
+            step.kind === "role" ? step.roleId : null,
+            step.guard?.operator ?? null,
+            step.guard?.amountMinor ?? null,
+          ],
         );
       }
       await client.query("COMMIT");
@@ -348,8 +361,17 @@ export class PostgresAdminStore implements AdminStore {
       for (let index = 0; index < input.steps.length; index += 1) {
         const step = input.steps[index];
         await client.query(
-          "INSERT INTO flow_steps (flow_id, position, kind, role_id) VALUES ($1, $2, $3, $4)",
-          [flowId, index, step.kind, step.kind === "role" ? step.roleId : null],
+          `INSERT INTO flow_steps
+             (flow_id, position, kind, role_id, guard_operator, guard_amount_minor)
+           VALUES ($1, $2, $3, $4, $5, $6)`,
+          [
+            flowId,
+            index,
+            step.kind,
+            step.kind === "role" ? step.roleId : null,
+            step.guard?.operator ?? null,
+            step.guard?.amountMinor ?? null,
+          ],
         );
       }
       await client.query("COMMIT");
@@ -406,7 +428,8 @@ export class PostgresAdminStore implements AdminStore {
 
   private async loadSteps(flowId: string): Promise<FlowStepInput[]> {
     const result = await this.pool.query<Row>(
-      "SELECT kind, role_id FROM flow_steps WHERE flow_id = $1 ORDER BY position",
+      `SELECT kind, role_id, guard_operator, guard_amount_minor
+       FROM flow_steps WHERE flow_id = $1 ORDER BY position`,
       [flowId],
     );
     return result.rows.map(flowStepFromRow);
@@ -422,7 +445,7 @@ export class PostgresAdminStore implements AdminStore {
     );
     const steps = await this.pool.query<Row>(
       `
-        SELECT fs.flow_id, fs.kind, fs.role_id
+        SELECT fs.flow_id, fs.kind, fs.role_id, fs.guard_operator, fs.guard_amount_minor
         FROM flow_steps fs
         WHERE fs.flow_id IN (
           SELECT id FROM flows WHERE organization_id = $1

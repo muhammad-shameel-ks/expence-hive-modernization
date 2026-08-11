@@ -66,8 +66,10 @@ export default async function FinancePaymentsPage() {
           <PaymentQueueTable
             claims={claims}
             employees={workspace.employees}
+            currentUser={workspace.employee.name}
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
+            currentUserRoleCode={workspace.employee.role?.code}
           />
         </div>
       </div>

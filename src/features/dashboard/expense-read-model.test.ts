@@ -180,4 +180,27 @@ describe("claimToExpense", () => {
       "₹2000 guard",
     );
   });
+
+  it("renders an auto-skipped history event under its persisted Policy actor, not the System fallback", () => {
+    const expense = claimToExpense(
+      rejectedClaim({
+        history: [
+          { id: "h1", kind: "draft", actorId: "emp-shameel", createdAt: "2026-08-04T09:00:00.000Z" },
+          { id: "h2", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" },
+          {
+            id: "h3",
+            kind: "auto-skipped",
+            actorName: "Policy",
+            detail: "Total ₹300 under ₹5000 guard on Finance Head step",
+            createdAt: "2026-08-04T10:00:00.000Z",
+          },
+        ],
+      }),
+      employees,
+    );
+
+    const event = expense.history.find((entry) => entry.kind === "auto-skipped");
+    expect(event?.actor).toBe("Policy");
+    expect(event?.actorId).toBeUndefined();
+  });
 });

@@ -9,9 +9,9 @@ const HISTORY_KINDS: Record<ExpenseHistoryEvent["kind"], Expense["history"][numb
   verified: "verified",
   paid: "paid",
   skipped: "skipped",
+  "auto-skipped": "auto-skipped",
   takeover: "takeover",
   comment: "comment",
-  "auto-skipped": "auto-skipped",
 };
 
 export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]): Expense {
@@ -51,7 +51,7 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
     history: claim.history.map((event) => ({
       id: event.id,
       date: formatHistoryDate(event.createdAt),
-      actor: event.actorId ? names.get(event.actorId) ?? "System" : "System",
+      actor: event.actorName ?? (event.actorId ? names.get(event.actorId) ?? "System" : "System"),
       actorId: event.actorId,
       kind: HISTORY_KINDS[event.kind],
       detail: event.detail,
@@ -66,6 +66,8 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
       assignedActorId: step.assignedActorId,
       assignedActorName: step.assignedActorId ? names.get(step.assignedActorId) : undefined,
       status: step.status,
+      skipReason: step.skipReason,
+      decidedAt: step.decidedAt ? formatHistoryDate(step.decidedAt) : undefined,
     })),
     primaryAction: actionFor(claim),
     blockingReason: rejection?.detail,

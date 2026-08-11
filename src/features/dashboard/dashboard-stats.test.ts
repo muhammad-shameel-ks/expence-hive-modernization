@@ -60,6 +60,30 @@ describe("dashboardStats", () => {
     expect(dashboardStats(list, "2026-08").reimbursedThisMonth).toBe(75);
   });
 
+  it("never counts another employee's pool claim as the viewer's spend", () => {
+    const list = [
+      expense({
+        id: "mine",
+        requesterId: "emp-finance",
+        status: "in-finance",
+        amount: 100,
+        submittedAt: "2026-08-03T10:00:00Z",
+      }),
+      expense({
+        id: "pool",
+        requesterId: "emp-shameel",
+        status: "in-finance",
+        amount: 1999,
+        submittedAt: "2026-08-10T10:00:00Z",
+      }),
+    ];
+    const stats = dashboardStats(list, "2026-08", "emp-finance");
+    expect(stats.spentThisMonth).toBe(100);
+    expect(stats.spentThisMonthCount).toBe(1);
+    // The pool claim still awaits the viewer's decision, so it counts there.
+    expect(stats.pendingApproval).toBe(2);
+  });
+
   it("derives the expected overview from the full mock dataset", () => {
     expect(dashboardStats(expenses, "2026-08")).toEqual({
       spentThisMonth: 594,

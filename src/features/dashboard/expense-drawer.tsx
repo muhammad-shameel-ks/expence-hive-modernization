@@ -4,18 +4,10 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, ArrowUpRight, Clock, Download, Paperclip, X, type LucideIcon } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Gavel, Paperclip, X } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { EASE_OUT } from "@/lib/ease";
-import {
-  Timeline,
-  TimelineContent,
-  TimelineDot,
-  TimelineItem,
-  TimelineSeparator,
-  type TimelineTone,
-} from "@/components/motion/timeline";
 import { Button } from "@/components/ui/button";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { Avatar, AvatarFallback } from "@/components/ui/avatar";
@@ -28,198 +20,14 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { downloadClaimSummary } from "@/lib/download-claim-summary";
-import { ME, STATUS_META, type Expense } from "./mock-data";
-import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
+import { STATUS_META, type Expense } from "./mock-data";
+import { canTakeOver, isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
-import { KIND_META, formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
+import { formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { JourneyFlow } from "./journey-flow";
 
-export interface JourneyFlowStep {
-  id: string;
-  label: string;
-  date: string;
-  actor: string;
-  detail?: string;
-  tone: TimelineTone;
-  icon: LucideIcon;
-  isCurrent: boolean;
-  isNext: boolean;
-  pending: boolean;
-  isMine: boolean;
-}
-
-export function getJourneyFlowItems(expense: Expense, currentUser = "", currentUserId?: string): JourneyFlowStep[] {
-  const terminal = isTerminal(expense.status);
-  const historyKinds = new Set(expense.history.map((h) => h.kind));
-  const isMine = (actor: string, actorId?: string) =>
-    currentUserId && actorId ? actorId === currentUserId : !!currentUser && actor === currentUser;
-
-  const historySteps: JourneyFlowStep[] = expense.history.map((event, i) => {
-    const meta = KIND_META[event.kind];
-    const isCurrent = !terminal && i === expense.history.length - 1;
-    return {
-      id: event.id,
-      label: meta.label,
-      date: event.date,
-      actor: event.actor,
-      detail: event.detail,
-      tone: meta.tone,
-      icon: meta.icon,
-      isCurrent,
-      isNext: false,
-      pending: false,
-      isMine: isMine(event.actor, event.actorId),
-    };
-  });
-
-  if (terminal) {
-    return historySteps;
-  }
-
-  const pendingSteps: JourneyFlowStep[] = [];
-
-  if (expense.status === "draft") {
-    pendingSteps.push({
-      id: "pending-submission",
-      label: "Submission",
-      date: "Pending",
-      actor: ME,
-      detail: "Pending submission",
-      tone: "info",
-      icon: Clock,
-      isCurrent: false,
-      isNext: false,
-      pending: true,
-      isMine: false,
-    });
-  }
-
-  if (expense.steps && expense.steps.length > 0) {
-    const remaining = expense.steps.filter((s) => s.status === "pending" || s.status === "verified");
-    remaining.forEach((step) => {
-      const isFinance = step.roleName.toLowerCase().includes("finance") || step.roleName.toLowerCase().includes("treasury");
-      pendingSteps.push({
-        id: `pending-step-${step.id}`,
-        label: step.roleName,
-        date: "Pending",
-        actor: step.assignedActorName ?? "Pending assignment",
-        // A verified terminal step is no longer waiting for verification: it
-        // is verified and waiting for payment to be marked complete.
-        detail:
-          step.status === "verified"
-            ? "Awaiting payment confirmation"
-            : isFinance
-              ? `Pending ${step.roleName} verification`
-              : `Pending ${step.roleName} decision`,
-        tone: step.status === "verified" ? "primary" : isFinance ? "primary" : "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    });
-
-    if (!historyKinds.has("paid") && expense.status !== "rejected") {
-      pendingSteps.push({
-        id: "pending-payment",
-        label: "Paid",
-        date: "Pending",
-        actor: "Finance / Treasury",
-        detail: "Pending payment disbursement",
-        tone: "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-  } else {
-    const needsApprovalStep =
-      expense.status === "in-approval" ||
-      expense.status === "submitted" ||
-      expense.status === "draft" ||
-      (!historyKinds.has("approved") &&
-        !historyKinds.has("takeover") &&
-        expense.status !== "approved" &&
-        expense.status !== "in-finance" &&
-        expense.status !== "paid" &&
-        expense.status !== "rejected");
-
-    if (needsApprovalStep) {
-      pendingSteps.push({
-        id: "pending-approval",
-        label:
-          expense.nextStage && (expense.status === "in-approval" || expense.status === "submitted")
-            ? expense.nextStage
-            : "Manager approval",
-        date: "Pending",
-        actor:
-          expense.nextActor && (expense.status === "in-approval" || expense.status === "submitted")
-            ? expense.nextActor
-            : "Approver",
-        detail: "Pending approval decision",
-        tone: "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-
-    const needsVerificationStep =
-      expense.status !== "paid" &&
-      expense.status !== "rejected" &&
-      (!historyKinds.has("verified") || expense.status === "in-finance");
-
-    if (needsVerificationStep) {
-      pendingSteps.push({
-        id: "pending-verification",
-        label:
-          expense.nextStage && expense.status === "in-finance"
-            ? expense.nextStage
-            : "Finance verification",
-        date: "Pending",
-        actor:
-          expense.nextActor && expense.status === "in-finance"
-            ? expense.nextActor
-            : "Finance Officer",
-        detail: "Pending Finance verification",
-        tone: "primary",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-
-    if (!historyKinds.has("paid") && expense.status !== "rejected") {
-      pendingSteps.push({
-        id: "pending-payment",
-        label: "Paid",
-        date: "Pending",
-        actor: "Finance / Treasury",
-        detail: "Pending payment disbursement",
-        tone: "warning",
-        icon: Clock,
-        isCurrent: false,
-        isNext: false,
-        pending: true,
-        isMine: false,
-      });
-    }
-  }
-
-  if (pendingSteps.length > 0) {
-    pendingSteps[0].isNext = true;
-  }
-
-  return [...historySteps, ...pendingSteps];
-}
 
 const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
   submitted: "Withdraw",
@@ -247,6 +55,7 @@ export function ExpenseDrawer({
   currentUser,
   currentUserId,
   currentUserRoleId,
+  currentUserRoleCode,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -255,11 +64,16 @@ export function ExpenseDrawer({
   currentUserId?: string;
   /** Role id of the viewer; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
+  currentUserRoleCode?: string;
 }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
+  const [takeoverOpen, setTakeoverOpen] = useState(false);
+  const [takeoverReason, setTakeoverReason] = useState("");
+  const [takingOver, setTakingOver] = useState(false);
+  const [takeoverError, setTakeoverError] = useState<string | null>(null);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -550,6 +364,47 @@ export function ExpenseDrawer({
     }
   }
 
+  function openTakeover() {
+    setTakeoverReason("");
+    setTakeoverError(null);
+    setTakeoverOpen(true);
+  }
+
+  async function performTakeover() {
+    if (!activeExpense) return;
+    const reasonCode = takeoverReason.trim();
+    if (!reasonCode) {
+      setTakeoverError("Enter a justification or reason code for taking over this claim.");
+      return;
+    }
+    setTakingOver(true);
+    setTakeoverError(null);
+    try {
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/take-over`,
+        "Could not take over this claim.",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ reasonCode }),
+        }
+      );
+      if (result.ok) {
+        const updated = resolveUpdatedExpense(result.body);
+        if (updated) {
+          setOverrideExpense(updated);
+        }
+        setTakeoverOpen(false);
+        queueSyncedRef.current = true;
+        router.refresh();
+      } else {
+        setTakeoverError(result.error);
+      }
+    } finally {
+      setTakingOver(false);
+    }
+  }
+
   // The amount, facts, next action, journey, and attachment chips shared by
   // both layouts. Only the non-PDF layout additionally renders the "View
   // receipt" toggle below the chips.
@@ -680,48 +535,7 @@ export function ExpenseDrawer({
         )}
       </section>
 
-      <section className="mt-6" aria-label="Expense journey">
-        <h3 className="text-sm font-semibold text-foreground">Journey</h3>
-        <Timeline position="right" className="mt-4">
-          {getJourneyFlowItems(activeExpense, currentUser, currentUserId).map((step) => {
-            const Icon = step.icon;
-            const isPendingStep = step.pending && !step.isNext;
-            return (
-              <TimelineItem key={step.id} pending={isPendingStep} tone={step.tone}>
-                <TimelineSeparator>
-                  <TimelineDot
-                    tone={step.tone}
-                    current={step.isCurrent}
-                    next={step.isNext}
-                    pending={isPendingStep}
-                  >
-                    <Icon />
-                  </TimelineDot>
-                </TimelineSeparator>
-                <TimelineContent>
-                  <div className="flex flex-col gap-0.5 sm:flex-row sm:items-baseline sm:justify-between sm:gap-3">
-                    <div className="flex items-center gap-1.5">
-                      <p className={cn("text-sm font-medium", isPendingStep ? "text-muted-foreground" : "text-foreground")}>
-                        {step.label}
-                      </p>
-                      {step.isMine ? (
-                        <span className="rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-primary">
-                          You
-                        </span>
-                      ) : null}
-                    </div>
-                    <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
-                  </div>
-                  <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
-                  {step.detail ? (
-                    <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
-                  ) : null}
-                </TimelineContent>
-              </TimelineItem>
-            );
-          })}
-        </Timeline>
-      </section>
+      <JourneyFlow expense={activeExpense} currentUser={currentUser} currentUserId={currentUserId} />
 
       {activeExpense.attachments.length > 0 ? (
         <section className="mt-6" aria-label="Attachments">
@@ -882,6 +696,16 @@ export function ExpenseDrawer({
                       Reject
                     </Button>
                   ) : null}
+                  {activeExpense && canTakeOver(activeExpense, currentUserId, currentUserRoleCode, currentUserRoleId) ? (
+                    <Button
+                      variant="outline"
+                      className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
+                      onClick={openTakeover}
+                    >
+                      <Gavel className="h-3.5 w-3.5" />
+                      Take over
+                    </Button>
+                  ) : null}
                   <Button variant="outline" loading={downloading} onClick={downloadSummary}>
                     <Download className="h-3.5 w-3.5" />
                     Download summary
@@ -896,6 +720,39 @@ export function ExpenseDrawer({
           </footer>
         </>
       ) : null}
+
+      <Dialog open={takeoverOpen} onOpenChange={setTakeoverOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Take over this claim</DialogTitle>
+            <DialogDescription>
+              As a higher-stage approver or Finance Head, taking over this claim waives all pending earlier stages and advances it directly to your stage or terminal Finance.
+            </DialogDescription>
+          </DialogHeader>
+          <div className="flex flex-col gap-2">
+            <label htmlFor="takeover-reason" className="text-xs font-medium text-muted-foreground">
+              Reason code / justification
+            </label>
+            <textarea
+              id="takeover-reason"
+              value={takeoverReason}
+              onChange={(e) => setTakeoverReason(e.target.value)}
+              rows={3}
+              className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              placeholder="Explain why you are taking over this claim (e.g. Manager away on leave / Urgent override)"
+            />
+            {takeoverError ? <p className="text-xs text-destructive">{takeoverError}</p> : null}
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setTakeoverOpen(false)} disabled={takingOver}>
+              Cancel
+            </Button>
+            <Button variant="default" onClick={performTakeover} loading={takingOver}>
+              Confirm takeover
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
 
       <Dialog open={rejectOpen} onOpenChange={setRejectOpen}>
         <DialogContent>

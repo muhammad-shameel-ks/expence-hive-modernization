@@ -2,6 +2,7 @@ import { createHash } from "node:crypto";
 import { describe, expect, it, vi } from "vitest";
 import { InMemoryBlobStore } from "../blob/fakes";
 import type { BlobStore } from "../blob/ports";
+import type { AmountGuard } from "../admin/ports";
 import { createExpenseCommands } from "./commands";
 import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee, ExpenseFlow, FlowStepTarget } from "./ports";
@@ -13,9 +14,21 @@ const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displ
 const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" };
 const ROLE_TEAM_LEAD = { id: "role-team-lead", code: "team-lead", displayName: "Team Lead" };
 const ROLE_INTERN = { id: "role-intern", code: "intern", displayName: "Intern" };
+const ROLE_SUPERADMIN = { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" };
 
 const roleStep = (roleId: string): FlowStepTarget => ({ kind: "role", roleId });
 const TEAM_LEAD_STEP: FlowStepTarget = { kind: "team-lead" };
+
+const guardedStep = (roleId: string, operator: AmountGuard["operator"], amountMinor: number): FlowStepTarget => ({
+  kind: "role",
+  roleId,
+  guard: { operator, amountMinor },
+});
+
+const guardedTeamLeadStep = (operator: AmountGuard["operator"], amountMinor: number): FlowStepTarget => ({
+  kind: "team-lead",
+  guard: { operator, amountMinor },
+});
 
 const employee: ExpenseEmployee = {
   id: "emp-shameel",
@@ -57,8 +70,28 @@ function bytes(...values: number[]): Uint8Array {
 const PDF_RECEIPT: Uint8Array = bytes(0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a); // "%PDF-1.4\n"
 const JPEG_RECEIPT: Uint8Array = bytes(0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46);
 
-function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date; blobStore?: BlobStore } = {}) {
-  const store = new InMemoryExpenseStore({
+// A test store whose published flow can be swapped mid-test, so a later
+// flow edit is observable against claims already submitted under the old
+// flow definition (the real stores snapshot the flow at submission).
+class FlowEditingStore extends InMemoryExpenseStore {
+  private publishedFlow: ExpenseFlow | null;
+
+  constructor(flow: ExpenseFlow | null, employees: ExpenseEmployee[]) {
+    super({ employees, flows: flow ? [flow] : [] });
+    this.publishedFlow = flow;
+  }
+
+  async getPublishedFlowForRole(): Promise<ExpenseFlow | null> {
+    return this.publishedFlow;
+  }
+
+  setPublishedFlow(flow: ExpenseFlow): void {
+    this.publishedFlow = flow;
+  }
+}
+
+function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date; blobStore?: BlobStore; store?: InMemoryExpenseStore } = {}) {
+  const store = overrides.store ?? new InMemoryExpenseStore({
     employees: overrides.employees ?? BASE_EMPLOYEES,
     flows: overrides.flows ?? [STANDARD_FLOW],
   });
@@ -87,6 +120,21 @@ async function submitStandardDraft(commands: ReturnType<typeof buildCommands>["c
     title: "Client dinner",
     category: "Meals",
     amountMinor: 240000,
+    currency: "INR",
+    expenseDate: "2026-08-04",
+  });
+  return commands.submitClaim(actorId, draft.id);
+}
+
+async function submitDraftWithAmount(
+  commands: ReturnType<typeof buildCommands>["commands"],
+  amountMinor: number,
+  actorId = employee.id,
+) {
+  const draft = await commands.createDraft(actorId, {
+    title: "Client dinner",
+    category: "Meals",
+    amountMinor,
     currency: "INR",
     expenseDate: "2026-08-04",
   });
@@ -1095,6 +1143,317 @@ describe("expense commands", () => {
       expect(afterApproval).toMatchObject({ status: "in-finance", currentStage: ROLE_FINANCE_EXECUTIVE.id, currentActorId: undefined });
       expect(afterApproval.steps.at(-1)).toMatchObject({ status: "pending" });
     });
+
+    it("advances past a guarded step immediately after skipping a vacant earlier step, not landing the claim on the skipped guard step", async () => {
+      const { commands } = buildCommands({
+        employees: [employee, emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" })],
+        flows: [
+          {
+            id: "flow-vacant-then-guarded",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              roleStep(ROLE_MANAGER.id),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      // Manager is vacant (absence auto-skip); Finance Head is guarded off
+      // (amount-guard auto-skip, ₹300 total is under the ₹5000 guard) - the
+      // claim must land on the one step that is actually pending, Finance
+      // Executive, not get stranded on the guard-skipped Finance Head step.
+      expect(submitted.steps[0]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[2]).toMatchObject({ status: "pending" });
+      expect(submitted).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+    });
+  });
+
+  describe("amount-guard auto-skip", () => {
+    const guardedFlow = (guards: { operator: AmountGuard["operator"]; amountMinor: number }[]) => ({
+      id: "flow-guarded",
+      roleId: ROLE_EXECUTIVE.id,
+      steps: [
+        guardedStep(ROLE_MANAGER.id, guards[0]?.operator ?? "gte", guards[0]?.amountMinor ?? 500000),
+        roleStep(ROLE_FINANCE_HEAD.id),
+        roleStep(ROLE_FINANCE_EXECUTIVE.id),
+      ],
+    });
+
+    it("auto-skips a guarded first step when the claim total is under the guard, advancing to the next step", async () => {
+      const { commands } = buildCommands({
+        flows: [guardedFlow([{ operator: "gte", amountMinor: 500000 }])],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      expect(submitted.steps[0]).toMatchObject({ status: "skipped", decidedAt: "2026-08-04T10:00:00.000Z" });
+      expect(submitted.steps[1]).toMatchObject({ status: "pending", assignedActorId: "emp-pramod" });
+      expect(submitted.steps[2]).toMatchObject({ status: "pending" });
+      expect(submitted).toMatchObject({
+        status: "in-approval",
+        currentStage: ROLE_FINANCE_HEAD.id,
+        currentActorId: "emp-pramod",
+      });
+      expect(submitted.history.map((event) => event.kind)).toEqual(["draft", "submitted", "auto-skipped"]);
+      const autoSkip = submitted.history.find((event) => event.kind === "auto-skipped");
+      expect(autoSkip?.actorId).toBeUndefined();
+      expect(autoSkip?.actorName).toBe("Policy");
+      expect(autoSkip).toMatchObject({
+        actorName: "Policy",
+        detail: "Total ₹300 under ₹5000 guard on Manager step",
+        createdAt: "2026-08-04T10:00:00.000Z",
+      });
+    });
+
+    it("attaches actorName 'Policy' and no actorId to an auto-skipped history event on submission", async () => {
+      const { commands } = buildCommands({
+        flows: [guardedFlow([{ operator: "gte", amountMinor: 500000 }])],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+      const autoSkip = submitted.history.find((event) => event.kind === "auto-skipped");
+
+      expect(autoSkip).toBeDefined();
+      expect(autoSkip?.actorId).toBeUndefined();
+      expect(autoSkip?.actorName).toBe("Policy");
+    });
+
+    it("auto-skips a guarded mid-flow step while an earlier pending step stays current, and passes over the skip on approval", async () => {
+      const { commands } = buildCommands({
+        flows: [
+          {
+            id: "flow-fh-guarded",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              roleStep(ROLE_MANAGER.id),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      expect(submitted.steps[0]).toMatchObject({ status: "pending" });
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[2]).toMatchObject({ status: "pending" });
+      expect(submitted).toMatchObject({
+        status: "in-approval",
+        currentStage: ROLE_MANAGER.id,
+        currentActorId: "emp-ada",
+      });
+      expect(submitted.history.find((event) => event.kind === "auto-skipped")?.detail).toBe(
+        "Total ₹300 under ₹5000 guard on Finance Head step",
+      );
+
+      const afterManager = await commands.approveStage("emp-ada", submitted.id);
+      expect(afterManager).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+      expect(afterManager.steps[1]).toMatchObject({ status: "skipped" });
+      expect(afterManager.history.filter((event) => event.kind === "auto-skipped")).toHaveLength(1);
+    });
+
+    it("routes a claim over the guard threshold through the guarded step normally, with no auto-skip event", async () => {
+      const { commands } = buildCommands({
+        flows: [guardedFlow([{ operator: "gte", amountMinor: 500000 }])],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 600000);
+
+      expect(submitted.steps.map((step) => step.status)).toEqual(["pending", "pending", "pending"]);
+      expect(submitted.steps[0]).toMatchObject({ status: "pending", assignedActorId: "emp-ada" });
+      expect(submitted).toMatchObject({
+        status: "in-approval",
+        currentStage: ROLE_MANAGER.id,
+        currentActorId: "emp-ada",
+      });
+      expect(submitted.history.map((event) => event.kind)).toEqual(["draft", "submitted"]);
+    });
+
+    it("runs a gte-guarded step at the exact boundary, but auto-skips a gt-guarded one", async () => {
+      const gteCommands = buildCommands({
+        flows: [guardedFlow([{ operator: "gte", amountMinor: 500000 }])],
+      }).commands;
+      const atBoundary = await submitDraftWithAmount(gteCommands, 500000);
+      expect(atBoundary.steps[0]).toMatchObject({ status: "pending" });
+      expect(atBoundary.history.filter((event) => event.kind === "auto-skipped")).toHaveLength(0);
+
+      const gtCommands = buildCommands({
+        flows: [guardedFlow([{ operator: "gt", amountMinor: 500000 }])],
+      }).commands;
+      const stillUnder = await submitDraftWithAmount(gtCommands, 500000);
+      expect(stillUnder.steps[0]).toMatchObject({ status: "skipped" });
+      expect(stillUnder.history.find((event) => event.kind === "auto-skipped")?.detail).toBe(
+        "Total ₹5000 at or under ₹5000 guard on Manager step",
+      );
+    });
+
+    it("runs an lte-guarded step at the exact boundary, but auto-skips an lt-guarded one and an over-threshold lte one", async () => {
+      const lteCommands = buildCommands({
+        flows: [guardedFlow([{ operator: "lte", amountMinor: 500000 }])],
+      }).commands;
+      const atBoundary = await submitDraftWithAmount(lteCommands, 500000);
+      expect(atBoundary.steps[0]).toMatchObject({ status: "pending" });
+      expect(atBoundary.history.filter((event) => event.kind === "auto-skipped")).toHaveLength(0);
+
+      const ltCommands = buildCommands({
+        flows: [guardedFlow([{ operator: "lt", amountMinor: 500000 }])],
+      }).commands;
+      const stillAt = await submitDraftWithAmount(ltCommands, 500000);
+      expect(stillAt.steps[0]).toMatchObject({ status: "skipped" });
+      expect(stillAt.history.find((event) => event.kind === "auto-skipped")?.detail).toBe(
+        "Total ₹5000 at or above ₹5000 guard on Manager step",
+      );
+
+      const lteOverCommands = buildCommands({
+        flows: [guardedFlow([{ operator: "lte", amountMinor: 500000 }])],
+      }).commands;
+      const overThreshold = await submitDraftWithAmount(lteOverCommands, 600000);
+      expect(overThreshold.steps[0]).toMatchObject({ status: "skipped" });
+      expect(overThreshold.history.find((event) => event.kind === "auto-skipped")?.detail).toBe(
+        "Total ₹6000 above ₹5000 guard on Manager step",
+      );
+    });
+
+    it("freezes the guard outcome in the claim snapshot: a later flow edit does not change the submitted claim's steps", async () => {
+      const flow = guardedFlow([{ operator: "gte", amountMinor: 500000 }]);
+      const store = new FlowEditingStore(flow, BASE_EMPLOYEES);
+      const { commands } = buildCommands({ store });
+      const submitted = await submitDraftWithAmount(commands, 30000);
+      expect(submitted.steps[0]).toMatchObject({ status: "skipped" });
+
+      // The flow loses its guard after the claim is already in flight: the
+      // claim keeps the policy under which it was submitted.
+      store.setPublishedFlow({
+        ...flow,
+        steps: [roleStep(ROLE_MANAGER.id), roleStep(ROLE_FINANCE_HEAD.id), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+      });
+
+      const reloaded = await commands.getClaim(employee.id, submitted.id);
+      expect(reloaded.steps[0]).toMatchObject({ status: "skipped" });
+      expect(reloaded.history.filter((event) => event.kind === "auto-skipped")).toHaveLength(1);
+    });
+
+    it("re-evaluates the guard on a fresh submission after a rejection", async () => {
+      const flow = guardedFlow([{ operator: "gte", amountMinor: 500000 }]);
+      const store = new FlowEditingStore(flow, BASE_EMPLOYEES);
+      const { commands } = buildCommands({ store });
+      const rejected = await submitDraftWithAmount(commands, 30000);
+      expect(rejected.steps[0]).toMatchObject({ status: "skipped" });
+      // The manager step was auto-skipped, so the claim is now assigned to
+      // the next pending stage's actor (the Finance Head), who rejects it.
+      await commands.rejectClaim("emp-pramod", rejected.id, "Not eligible for reimbursement");
+
+      // The guard loosens to ₹100 between the rejection and the fresh
+      // submission: the new claim is evaluated against the policy in force
+      // at its own submission, so the step now runs.
+      store.setPublishedFlow({
+        ...flow,
+        steps: [guardedStep(ROLE_MANAGER.id, "gte", 10000), roleStep(ROLE_FINANCE_HEAD.id), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+      });
+      const resubmitted = await submitDraftWithAmount(commands, 30000);
+
+      expect(resubmitted.steps[0]).toMatchObject({ status: "pending", assignedActorId: "emp-ada" });
+      expect(resubmitted.history.filter((event) => event.kind === "auto-skipped")).toHaveLength(0);
+
+      const oldClaim = await commands.getClaim(employee.id, rejected.id);
+      expect(oldClaim.status).toBe("rejected");
+      expect(oldClaim.steps[0]).toMatchObject({ status: "skipped" });
+    });
+
+    it("never auto-skips the terminal step by a guard, even when the guard would skip it", async () => {
+      const { commands } = buildCommands({
+        flows: [
+          {
+            id: "flow-guarded-terminal",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              guardedStep(ROLE_MANAGER.id, "gte", 500000),
+              guardedStep(ROLE_FINANCE_EXECUTIVE.id, "gte", 500000),
+            ],
+          },
+        ],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      expect(submitted.steps[0]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[1]).toMatchObject({ status: "pending", assignedActorId: "emp-finance" });
+      expect(submitted).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+      expect(submitted.history.filter((event) => event.kind === "auto-skipped")).toHaveLength(1);
+      expect(submitted.history.find((event) => event.kind === "auto-skipped")?.detail).toBe(
+        "Total ₹300 under ₹5000 guard on Manager step",
+      );
+    });
+
+    it("auto-skips multiple consecutive guarded steps that all fail, landing on the first pending step after them", async () => {
+      const { commands } = buildCommands({
+        flows: [
+          {
+            id: "flow-double-guarded",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              guardedStep(ROLE_MANAGER.id, "gte", 500000),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      expect(submitted.steps[0]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+      expect(submitted.steps[2]).toMatchObject({ status: "pending", assignedActorId: "emp-finance" });
+      expect(submitted).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+      expect(submitted.history.map((event) => event.kind)).toEqual(["draft", "submitted", "auto-skipped", "auto-skipped"]);
+    });
+
+    it("auto-skips a guarded team-lead step, naming the step 'team lead' in the reason", async () => {
+      const { commands } = buildCommands({
+        flows: [
+          {
+            id: "flow-team-lead-guarded",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [guardedTeamLeadStep("gte", 500000), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+          },
+        ],
+      });
+
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      expect(submitted.steps[0]).toMatchObject({ roleId: null, status: "skipped" });
+      expect(submitted).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+      expect(submitted.history.find((event) => event.kind === "auto-skipped")?.detail).toBe(
+        "Total ₹300 under ₹5000 guard on team lead step",
+      );
+    });
   });
 
   describe("hierarchy override takeover", () => {
@@ -1226,6 +1585,58 @@ describe("expense commands", () => {
       expect(takenOver).toMatchObject({ status: "in-approval", currentStage: ROLE_MANAGER.id, currentActorId: "emp-ada" });
       const overrideEvent = takenOver.history.find((event) => event.kind === "takeover");
       expect(overrideEvent?.detail).toContain("team lead");
+    });
+
+    it("lets a Superadmin take over any in-approval claim as an apex bypass, same as Finance Head", async () => {
+      const { commands } = buildCommands({
+        employees: [...BASE_EMPLOYEES, emp("emp-super", "Root Admin", ROLE_SUPERADMIN, { departmentId: "dept-eng" })],
+      });
+      const submitted = await submitStandardDraft(commands);
+
+      const takenOver = await commands.takeOverClaim("emp-super", submitted.id, "Escalated by CEO");
+
+      expect(takenOver).toMatchObject({ status: "in-finance", currentStage: ROLE_FINANCE_EXECUTIVE.id, currentActorId: "emp-finance" });
+      expect(takenOver.steps[0]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[1]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[2]).toMatchObject({ status: "pending" });
+      const overrideEvent = takenOver.history.find((event) => event.kind === "takeover");
+      expect(overrideEvent).toMatchObject({ actorId: "emp-super" });
+      expect(overrideEvent?.detail).toContain("Escalated by CEO");
+    });
+
+    it("never lands a positional takeover on an amount-guard auto-skipped step; an apex actor routes to the terminal stage instead", async () => {
+      const { commands } = buildCommands({
+        flows: [
+          {
+            id: "flow-guarded-head",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              roleStep(ROLE_MANAGER.id),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      // The Finance Head stage was auto-skipped by the amount guard at
+      // submission: ₹300 is under the ₹5000 guard, so the step must never
+      // become current again, even via a Finance Head takeover.
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+
+      const takenOver = await commands.takeOverClaim("emp-pramod", submitted.id, "Urgent resolution");
+
+      expect(takenOver).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+      expect(takenOver.steps[0]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[1]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[2]).toMatchObject({ status: "pending", assignedActorId: "emp-finance" });
+      const overrideEvent = takenOver.history.find((event) => event.kind === "takeover");
+      expect(overrideEvent?.detail).toContain("Urgent resolution");
     });
 
     it("cannot target a team-lead step: the named person's role never matches a role-less step", async () => {
@@ -1493,6 +1904,7 @@ describe("expense commands", () => {
 
       const activity = await commands.listOrganizationActivity("emp-pramod");
       expect(activity).toEqual([
+        expect.objectContaining({ claimId: submitted.id, kind: "submitted", actorId: "emp-shameel" }),
         expect.objectContaining({ claimId: submitted.id, kind: "rejected", actorId: "emp-ada", actorName: "Ada Lovelace" }),
       ]);
     });

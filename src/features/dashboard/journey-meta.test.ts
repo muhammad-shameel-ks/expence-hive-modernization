@@ -1,7 +1,8 @@
 import { describe, expect, it } from "vitest";
 import { Clock } from "lucide-react";
-import { formatMoney, submittedLabel, KIND_META } from "./journey-meta";
-import { getJourneyFlowItems } from "./expense-drawer";
+import { formatMoney, simplifyAutoSkipDetail, submittedLabel, KIND_META } from "./journey-meta";
+import { getJourneyFlowItems } from "./journey-flow";
+import { claimToExpense } from "./expense-read-model";
 
 describe("formatMoney", () => {
   it("always shows two decimals for a consistent financial surface", () => {
@@ -24,6 +25,18 @@ describe("submittedLabel", () => {
   it("falls back to the raw value instead of 'Invalid Date' for malformed input", () => {
     expect(submittedLabel("not-a-date")).toBe("not-a-date");
     expect(submittedLabel("")).toBe("");
+  });
+});
+
+describe("simplifyAutoSkipDetail", () => {
+  it("drops the claim total and keeps just the skip condition", () => {
+    expect(simplifyAutoSkipDetail("Total ₹1999 at or under ₹2000 guard on Finance Head step")).toBe("at or under ₹2000");
+    expect(simplifyAutoSkipDetail("Total ₹300 under ₹5000 guard on Manager step")).toBe("under ₹5000");
+    expect(simplifyAutoSkipDetail("Total ₹6000 above ₹5000 guard on team lead step")).toBe("above ₹5000");
+  });
+
+  it("passes through an unrecognized detail unchanged", () => {
+    expect(simplifyAutoSkipDetail("Something else entirely")).toBe("Something else entirely");
   });
 });
 
@@ -313,5 +326,336 @@ describe("getJourneyFlowItems", () => {
     expect(steps[1]).toMatchObject({ label: "Approved", pending: false });
     expect(steps[1].icon).toBe(KIND_META.approved.icon);
   });
+
+  it("renders an amount-guard auto-skip distinctly from a takeover skip", () => {
+    const expense = {
+      id: "ex-auto",
+      ref: "EXP-AUTO",
+      title: "Small claim",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 6",
+      submittedAt: "2026-08-06T10:00:00Z",
+      status: "in-approval" as const,
+      nextStage: "Manager",
+      nextActor: "Sanil Davis",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 6", actor: "Shameel", kind: "submitted" as const },
+        {
+          id: "h2",
+          date: "Aug 6",
+          actor: "Policy",
+          kind: "auto-skipped" as const,
+          detail: "Total ₹300 under ₹5000 guard on Finance Head step",
+        },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Manager", assignedActorName: "Sanil Davis", status: "pending" as const },
+        {
+          id: "s2",
+          roleId: "r2",
+          roleName: "Finance Head",
+          status: "skipped" as const,
+          skipReason: "Total ₹300 under ₹5000 guard on Finance Head step",
+          decidedAt: "Aug 6",
+        },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    const autoSkip = steps.find((step) => step.id === "auto-skipped-step-s2");
+    expect(autoSkip).toMatchObject({
+      label: "Finance Head",
+      detail: "Skipped: under ₹5000",
+      pending: false,
+      tone: "muted",
+      date: "Aug 6",
+    });
+    expect(autoSkip?.label).not.toBe(KIND_META.skipped.label);
+    expect(autoSkip?.label).not.toBe(KIND_META["auto-skipped"].label);
+  });
+
+  it("renders an auto-skipped step in flow order, titled by its role name with the guard reason as the detail", () => {
+    const expense = {
+      id: "ex-order",
+      ref: "EXP-ORDER",
+      title: "Small claim",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 6",
+      submittedAt: "2026-08-06T10:00:00Z",
+      status: "in-approval" as const,
+      nextStage: "Manager",
+      nextActor: "Sanil Davis",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 6", actor: "Shameel", kind: "submitted" as const },
+        {
+          id: "h2",
+          date: "Aug 6",
+          actor: "Policy",
+          kind: "auto-skipped" as const,
+          detail: "Total ₹300 under ₹5000 guard on Finance Head step",
+        },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Manager", assignedActorName: "Sanil Davis", status: "pending" as const },
+        {
+          id: "s2",
+          roleId: "r2",
+          roleName: "Finance Head",
+          status: "skipped" as const,
+          skipReason: "Total ₹300 under ₹5000 guard on Finance Head step",
+        },
+        {
+          id: "s3",
+          roleId: "r3",
+          roleName: "Finance Executive",
+          assignedActorName: "Rishikesh",
+          status: "pending" as const,
+        },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    const labels = steps.map((step) => step.label);
+    expect(labels).toEqual([
+      "Submitted",
+      "Manager",
+      "Finance Head",
+      "Finance Executive",
+      "Paid",
+    ]);
+    const autoSkip = steps.find((step) => step.label === "Finance Head");
+    expect(autoSkip).toMatchObject({
+      detail: "Skipped: under ₹5000",
+      pending: false,
+      tone: "muted",
+    });
+  });
+
+  it("pulses the first pending stage, not an earlier auto-skipped stage", () => {
+    const expense = {
+      id: "ex-pulse",
+      ref: "EXP-PULSE",
+      title: "Small claim",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 6",
+      submittedAt: "2026-08-06T10:00:00Z",
+      status: "in-finance" as const,
+      nextStage: "Finance Executive",
+      nextActor: "Rishikesh",
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 6", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 6", actor: "Sanil Davis", kind: "approved" as const },
+        {
+          id: "h3",
+          date: "Aug 6",
+          actor: "Policy",
+          kind: "auto-skipped" as const,
+          detail: "Total ₹300 under ₹5000 guard on Finance Head step",
+        },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Manager", assignedActorName: "Sanil Davis", status: "approved" as const },
+        {
+          id: "s2",
+          roleId: "r2",
+          roleName: "Finance Head",
+          status: "skipped" as const,
+          skipReason: "Total ₹300 under ₹5000 guard on Finance Head step",
+          decidedAt: "Aug 6",
+        },
+        {
+          id: "s3",
+          roleId: "r3",
+          roleName: "Finance Executive",
+          assignedActorName: "Rishikesh",
+          status: "pending" as const,
+        },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    const nextStep = steps.find((step) => step.isNext);
+    expect(nextStep?.label).toBe("Finance Executive");
+    const financeHead = steps.find((step) => step.id === "auto-skipped-step-s2");
+    expect(financeHead?.isNext).toBe(false);
+  });
+
+  it("keeps an auto-skipped stage in the timeline after the claim is paid", () => {
+    const expense = {
+      id: "ex-paid-skip",
+      ref: "EXP-PAID-SKIP",
+      title: "Small claim",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 6",
+      submittedAt: "2026-08-06T10:00:00Z",
+      status: "paid" as const,
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 6", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 6", actor: "Sanil Davis", kind: "approved" as const },
+        {
+          id: "h3",
+          date: "Aug 6",
+          actor: "Policy",
+          kind: "auto-skipped" as const,
+          detail: "Total ₹300 under ₹5000 guard on Finance Head step",
+        },
+        { id: "h4", date: "Aug 7", actor: "Rishikesh", kind: "verified" as const },
+        { id: "h5", date: "Aug 7", actor: "Rishikesh", kind: "paid" as const },
+      ],
+      steps: [
+        { id: "s1", roleId: "r1", roleName: "Manager", assignedActorName: "Sanil Davis", status: "approved" as const },
+        {
+          id: "s2",
+          roleId: "r2",
+          roleName: "Finance Head",
+          status: "skipped" as const,
+          skipReason: "Total ₹300 under ₹5000 guard on Finance Head step",
+          decidedAt: "Aug 6",
+        },
+        { id: "s3", roleId: "r3", roleName: "Finance Executive", assignedActorName: "Rishikesh", status: "verified" as const },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    const labels = steps.map((step) => step.label);
+    expect(labels).toEqual([
+      "Submitted",
+      "Approved",
+      "Finance Head",
+      "Finance verified",
+      "Paid",
+    ]);
+    const financeHead = steps.find((step) => step.id === "auto-skipped-step-s2");
+    expect(financeHead).toMatchObject({
+      detail: "Skipped: under ₹5000",
+      pending: false,
+    });
+  });
 });
+
+describe("payment queue claim journey integration", () => {
+  it("renders auto-skipped step with guard reason when payment queue claim is converted via claimToExpense", () => {
+    const claim = {
+      id: "claim-auto-skip",
+      ref: "EXP-8888",
+      organizationId: "org-1",
+      requesterId: "emp-1",
+      title: "Team lunch",
+      category: "Meals",
+      subCategory: "",
+      remark: "",
+      amountMinor: 40000,
+      currency: "INR",
+      expenseDate: "2026-08-05",
+      status: "in-finance" as const,
+      createdAt: "2026-08-05T10:00:00.000Z",
+      submittedAt: "2026-08-05T10:00:00.000Z",
+      version: 1,
+      history: [
+        { id: "h1", kind: "submitted" as const, actorId: "emp-1", createdAt: "2026-08-05T10:00:00.000Z" },
+        { id: "h2", kind: "approved" as const, actorId: "emp-2", createdAt: "2026-08-05T11:00:00.000Z" },
+        {
+          id: "h3",
+          kind: "auto-skipped" as const,
+          actorId: null,
+          detail: "Total ₹400 under ₹5000 guard on Finance Head step",
+          createdAt: "2026-08-05T11:00:00.000Z",
+        },
+      ],
+      steps: [
+        { id: "s1", roleId: "role-manager", status: "approved" as const, decidedAt: "2026-08-05T11:00:00.000Z" },
+        {
+          id: "s2",
+          roleId: "role-finance-head",
+          status: "skipped" as const,
+          skipReason: "Total ₹400 under ₹5000 guard on Finance Head step",
+          decidedAt: "2026-08-05T11:00:00.000Z",
+        },
+        { id: "s3", roleId: "role-finance-executive", status: "pending" as const },
+      ],
+    };
+
+    const employees = [
+      { id: "emp-1", organizationId: "org-1", name: "Ada Lovelace", role: null, active: true, managerId: null },
+      { id: "emp-2", organizationId: "org-1", name: "Grace Hopper", role: null, active: true, managerId: null },
+      {
+        id: "emp-3",
+        organizationId: "org-1",
+        name: "Finance Head User",
+        role: { id: "role-finance-head", code: "finance-head", displayName: "Finance Head" },
+        active: true,
+        managerId: null,
+      },
+    ];
+
+    const expense = claimToExpense(claim, employees);
+    const steps = getJourneyFlowItems(expense);
+
+    const labels = steps.map((s) => s.label);
+    expect(labels).toContain("Finance Head");
+
+    const skippedStep = steps.find((s) => s.id === "auto-skipped-step-s2");
+    expect(skippedStep).toBeDefined();
+    expect(skippedStep).toMatchObject({
+      label: "Finance Head",
+      detail: "Skipped: under ₹5000",
+      actor: "Policy",
+      pending: false,
+      tone: "muted",
+    });
+  });
+
+  it("surfaces journey for a rejected payment queue claim cleanly without pending steps", () => {
+    const claim = {
+      id: "claim-rejected-queue",
+      ref: "EXP-9999",
+      organizationId: "org-1",
+      requesterId: "emp-1",
+      title: "Conference travel",
+      category: "Travel",
+      subCategory: "",
+      remark: "",
+      amountMinor: 150000,
+      currency: "INR",
+      expenseDate: "2026-08-01",
+      status: "rejected" as const,
+      createdAt: "2026-08-01T10:00:00.000Z",
+      submittedAt: "2026-08-01T10:00:00.000Z",
+      version: 1,
+      history: [
+        { id: "h1", kind: "submitted" as const, actorId: "emp-1", createdAt: "2026-08-01T10:00:00.000Z" },
+        { id: "h2", kind: "rejected" as const, actorId: "emp-2", detail: "Exceeds policy allowance", createdAt: "2026-08-02T12:00:00.000Z" },
+      ],
+      steps: [
+        { id: "s1", roleId: "role-manager", status: "rejected" as const, decidedAt: "2026-08-02T12:00:00.000Z" },
+      ],
+    };
+
+    const employees = [
+      { id: "emp-1", organizationId: "org-1", name: "Ada Lovelace", role: null, active: true, managerId: null },
+      { id: "emp-2", organizationId: "org-1", name: "Grace Hopper", role: null, active: true, managerId: null },
+    ];
+
+    const expense = claimToExpense(claim, employees);
+    const steps = getJourneyFlowItems(expense);
+
+    expect(steps.some((s) => s.pending)).toBe(false);
+    const rejectedItem = steps.find((s) => s.label === "Rejected");
+    expect(rejectedItem).toBeDefined();
+    expect(rejectedItem?.detail).toBe("Exceeds policy allowance");
+  });
+});
+
 

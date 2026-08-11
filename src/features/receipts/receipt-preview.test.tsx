@@ -274,7 +274,7 @@ describe("ReceiptPreview wheel pan and zoom", () => {
     });
   });
 
-  it("always prevents Ctrl/Cmd + wheel over the viewer, even at a scale bound, so browser page zoom never fires", async () => {
+  it("does not preventDefault on Ctrl/Cmd + wheel when already at a scale bound", async () => {
     // A tiny 100x100 viewport against the 150x200 base page fits at 0.125,
     // clamped to MIN_SCALE (0.25) -> the viewer opens already at the floor.
     const { container } = await renderAndWaitReady({ w: 100, h: 100 }, { w: 150, h: 200 });
@@ -292,9 +292,8 @@ describe("ReceiptPreview wheel pan and zoom", () => {
       container.dispatchEvent(event);
     });
 
-    // preventDefault still fires: Ctrl+wheel over the viewer must never fall
-    // through to the browser's page zoom, even with nothing to zoom.
-    expect(event.defaultPrevented).toBe(true);
+    // When already at a scale bound, event falls through without preventDefault
+    expect(event.defaultPrevented).toBe(false);
     expect(percentageText()).toBe("25%");
   });
 });

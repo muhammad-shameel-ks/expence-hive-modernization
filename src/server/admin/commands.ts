@@ -56,6 +56,10 @@ const MAX_CODE_LENGTH = 60;
 const MAX_FLOW_STEPS = 15;
 const MAX_EMPLOYEE_ID_LENGTH = 100;
 
+// The four amount guard operators, read as "this step runs only when the
+// claim total satisfies the operator against the guard amount".
+const GUARD_OPERATORS = ["gte", "gt", "lte", "lt"] as const;
+
 export type AdminCommands = {
   listEmployees(actorId: string): Promise<AdminEmployee[]>;
   listFlows(actorId: string): Promise<FlowDraft[]>;
@@ -146,6 +150,9 @@ export function createAdminCommands({
   // Flow steps target either a role (existing, active, org-wide) or the
   // requester's assigned team lead. A team-lead step must not carry a role
   // id and a role step must carry one; anything else is malformed input.
+  // A step may carry an amount guard (operator + positive paise amount),
+  // except the terminal step: the runtime never auto-skips it, so a guard
+  // there would silently strand claims.
   async function validateFlowSteps(organizationId: string, steps: FlowStepInput[]): Promise<void> {
     if (steps.length === 0) {
       throw new AdminError("validation", "Flow needs at least one step.");
@@ -153,17 +160,29 @@ export function createAdminCommands({
     if (steps.length > MAX_FLOW_STEPS) {
       throw new AdminError("validation", "Flow cannot have more than 15 steps.");
     }
-    for (const step of steps) {
+    for (let index = 0; index < steps.length; index += 1) {
+      const step = steps[index];
       if (step.kind === "team-lead") {
         if ("roleId" in step) {
           throw new AdminError("validation", "A team lead step cannot carry a role id.");
         }
-        continue;
+      } else {
+        if (step.kind !== "role") {
+          throw new AdminError("validation", "A flow step must target a role or a team lead.");
+        }
+        await requireActiveRole(organizationId, step.roleId);
       }
-      if (step.kind !== "role") {
-        throw new AdminError("validation", "A flow step must target a role or a team lead.");
+      if (step.guard !== null && step.guard !== undefined) {
+        if (index === steps.length - 1) {
+          throw new AdminError("validation", "The terminal step of a flow cannot be guarded.");
+        }
+        if (!GUARD_OPERATORS.includes(step.guard.operator)) {
+          throw new AdminError("validation", `Unknown guard operator "${step.guard.operator}".`);
+        }
+        if (!Number.isInteger(step.guard.amountMinor) || step.guard.amountMinor <= 0) {
+          throw new AdminError("validation", "The guard amount must be a positive integer (paise).");
+        }
       }
-      await requireActiveRole(organizationId, step.roleId);
     }
   }
 

@@ -60,3 +60,49 @@ _Avoid_: Receipt download, claim report
 The required reason recorded when a claim is rejected.
 It lives only as a history event (kind `rejected`) with actor and timestamp, and is rendered read-only in comment surfaces; it is never written into the claim's comments field (ADR-0009).
 _Avoid_: Rejection note, decline reason
+
+**Amount guard**:
+An optional condition on a workflow node: `operator + amount` (operators `>=`, `>`, `<=`, `<`), read as "this node runs only when the claim total satisfies the operator".
+A guard whose condition fails auto-skips the node; the flow continues at the next node (ADR-0012).
+_Avoid_: Threshold, limit, amount condition branch
+
+**Claim total**:
+The sum of the claim's expense lines, computed server-side once at submission.
+It is the amount every guard evaluates, and it is frozen with the claim like the captured workflow version.
+_Avoid_: Requested amount, total spend
+
+**Auto-skip**:
+A node that is skipped by an amount guard rather than by a person.
+It is recorded as a distinct history event kind (`auto-skipped`) whose actor is the policy, with the guard reason recorded, so the journey timeline and analytics distinguish it from a takeover skip (ADR-0013).
+_Avoid_: Policy skip, automatic waiver
+
+**Amount overrun approval**:
+Retired concept: the requirement of an extra higher-up approval when a claim exceeds an amount.
+It is now expressed as an ordinary amount guard on a node, e.g. "Finance Head approval runs only when total >= 5000" (ADR-0012).
+_Avoid_: Over-limit approval, escalation node
+
+**Takeover**:
+An approver acting on a claim ahead of its currently assigned step, jumping the pending steps in between.
+Implemented client-side by `canTakeOver` (`next-action.ts`) and server-side by `takeOverClaim` (`commands.ts`); recorded as a `takeover` history event with a free-text reason.
+Two shapes exist: apex bypass and positional bypass (below).
+_Avoid_: Override, escalate, reassign
+
+**Apex bypass**:
+The unconditional form of takeover: Finance Head or Superadmin can take over any in-approval claim regardless of their own position in its steps, skipping every pending step up to (not including) the terminal step.
+Distinct from positional bypass, which requires a matching later step.
+_Avoid_: Admin override, full bypass
+
+**Positional bypass**:
+The conditional form of takeover: a role other than Finance Head/Superadmin can take over a claim only if a later pending step targets that role.
+It skips the intervening steps and assigns the matched step to the actor.
+_Avoid_: Skip-ahead, jump approval
+
+**Expense drawer**:
+The single right-side drawer component (`ExpenseDrawer`) that renders a claim's facts, journey timeline, and next actions (approve/reject, verify/pay, takeover, download summary).
+Used from both the dashboard and the payment queue (ADR-0014) - one component, multiple call sites, no per-feature drawer variants.
+_Avoid_: Detail panel, claim modal, side sheet
+
+**Receipt panel**:
+The payment queue's left/inline panel that shows only the claim's receipt PDF (or a "no receipt attached" fallback) while the table shrinks beside it.
+Deliberately does not render the journey timeline - that lives only in the expense drawer (ADR-0014).
+_Avoid_: PDF viewer, cross-check panel, side panel

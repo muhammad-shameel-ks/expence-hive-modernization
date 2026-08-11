@@ -29,6 +29,8 @@ export const KIND_META: Record<HistoryKind, { label: string; tone: TimelineTone;
   note: { label: "Note", tone: "muted", icon: StickyNote },
 };
 
+export { simplifyAutoSkipDetail } from "@/server/shared/amount-guard";
+
 export interface ActionIndicatorStyle {
   label: string;
   badgeClass: string;

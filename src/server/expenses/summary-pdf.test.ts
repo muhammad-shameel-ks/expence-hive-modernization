@@ -233,4 +233,58 @@ describe("expense summary PDF builder", () => {
     expect(text).toContain("Expense summary");
     expect(text).toContain("fallback font in use");
   });
+
+  it("renders an amount-guard auto-skipped step with its reason in the journey", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
+        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
+        emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
+        emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+      ],
+      flows: [
+        {
+          id: "flow-guarded",
+          roleId: ROLE_EXECUTIVE.id,
+          steps: [
+            { kind: "role", roleId: ROLE_MANAGER.id },
+            { kind: "role", roleId: ROLE_FINANCE_HEAD.id, guard: { operator: "gte", amountMinor: 500000 } },
+            { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
+          ],
+        },
+      ],
+    });
+    const commands = createExpenseCommands({
+      store,
+      blobStore: new InMemoryBlobStore(),
+      idFactory: (() => {
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    const submitted = await commands.submitClaim("emp-shameel", (await commands.createDraft("emp-shameel", {
+      title: "Taxi",
+      category: "Travel",
+      subCategory: "Cab/Taxi",
+      remark: "Airport pickup",
+      amountMinor: 30000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    })).id);
+    const [claim, employees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const bytes = await buildExpenseSummaryPdf({ claim, employees });
+
+    const text = await extractText(bytes);
+    expect(text).toContain("Finance Head - Auto-skipped");
+    expect(text).toContain("Total ₹300 under ₹5000 guard on Finance Head step");
+  });
 });
