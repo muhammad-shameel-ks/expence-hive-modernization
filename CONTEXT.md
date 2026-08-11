@@ -127,7 +127,7 @@ _Avoid_: Detail panel, claim modal, side sheet
 
 **Department head**:
 The manager a department is created with; departments require a head (ADR-0019).
-A new employee's manager auto-defaults to their department head at creation, editable in the form and afterward.
+A new employee's manager is locked to their department head at creation (read-only in the create form, blocking submission for a headless department) and changeable only afterward via the existing manager assignment.
 _Avoid_: Department manager, dept lead, department owner
 
 **Receipt panel**:

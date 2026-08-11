@@ -282,6 +282,23 @@ describe("assignDepartment", () => {
     const executive = departments.find((d) => d.id === dept.id);
     expect(executive?.headId).toBe("emp-katherine");
   });
+
+  it("does not auto-assign a department head for a role that merely mentions 'manager'", async () => {
+    const { admin, store } = buildAdmin();
+    const caseManagerRole = await admin.createRole("emp-superadmin", {
+      code: "case-manager",
+      displayName: "Case Manager",
+    });
+    const dept = await admin.createDepartment("emp-superadmin", { name: "Support", headId: "emp-superadmin" });
+    await store.setDepartmentHead(dept.id, "");
+    await admin.assignRole("emp-superadmin", { employeeId: "emp-katherine", roleId: caseManagerRole.id });
+
+    await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: dept.id });
+
+    const departments = await admin.listDepartments("emp-superadmin");
+    const support = departments.find((d) => d.id === dept.id);
+    expect(support?.headId).toBeFalsy();
+  });
 });
 
 describe("departments", () => {
@@ -2292,6 +2309,34 @@ describe("absence timeout setting", () => {
 
   it("rejects a non-admin actor", async () => {
     const { admin } = buildAdmin();
+
+    await expect(admin.getAbsenceTimeoutDays("emp-katherine")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    await expect(admin.setAbsenceTimeoutDays("emp-katherine", 5)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("rejects a custom role with admin-console access that is not Superadmin", async () => {
+    const { admin } = buildAdmin();
+
+    const role = await admin.createRole("emp-superadmin", {
+      code: "ops-admin",
+      displayName: "Ops Admin",
+    });
+    await admin.updateRoleCapabilities("emp-superadmin", role.id, {
+      canSubmit: true,
+      canApprove: false,
+      canAccessFinance: false,
+      canHold: false,
+      canViewOrganizationActivity: false,
+      canAccessAdminConsole: true,
+    });
+    await admin.assignRole("emp-superadmin", { employeeId: "emp-katherine", roleId: role.id });
+
+    // Sanity check: the role does grant admin-console access elsewhere.
+    await expect(admin.getAdminActor("emp-katherine")).resolves.not.toBeNull();
 
     await expect(admin.getAbsenceTimeoutDays("emp-katherine")).rejects.toMatchObject({
       code: "unauthorized",

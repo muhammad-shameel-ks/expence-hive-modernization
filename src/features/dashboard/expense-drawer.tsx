@@ -26,6 +26,7 @@ import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./h
 import { formatMoney, HELD_META, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import { JourneyFlow } from "./journey-flow";
 
 
@@ -872,7 +873,7 @@ export function ExpenseDrawer({
                       Hold
                     </Button>
                   ) : null}
-                  {activeExpense && currentUserRoleCode === "superadmin" && inFlight ? (
+                  {activeExpense && currentUserRoleCode === SUPERADMIN_ROLE_CODE && inFlight ? (
                     <Button
                       variant="outline"
                       className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"

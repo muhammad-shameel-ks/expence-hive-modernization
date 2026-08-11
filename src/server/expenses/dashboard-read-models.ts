@@ -106,6 +106,14 @@ function inFlight(claim: ExpenseClaim): boolean {
   return claim.status === "in-approval" || claim.status === "in-finance";
 }
 
+// "Reimbursed"/"paid out" cards count a claim in the period money actually
+// moved, not the period it was submitted in (ADR-0020): falls back to
+// submittedAt/createdAt only if a paid claim somehow lacks a "paid" event.
+function paidAtFor(claim: ExpenseClaim): string {
+  const paidEvent = [...claim.history].reverse().find((event) => event.kind === "paid");
+  return paidEvent?.createdAt ?? claim.submittedAt ?? claim.createdAt;
+}
+
 function pendingIndex(claim: ExpenseClaim): number {
   return claim.steps.findIndex((step) => step.status === "pending");
 }
@@ -145,7 +153,7 @@ export function employeeAggregates(
         spentMinor += claim.amountMinor;
         spentCount += 1;
       }
-      if (claim.status === "paid" && inPeriod(submittedAt, period, now)) {
+      if (claim.status === "paid" && inPeriod(paidAtFor(claim), period, now)) {
         reimbursedMinor += claim.amountMinor;
         reimbursedCount += 1;
       }
@@ -230,7 +238,7 @@ export function financeAggregates(
       queueTotalMinor += claim.amountMinor;
     }
     const submittedAt = claim.submittedAt ?? claim.createdAt;
-    if (claim.status === "paid" && inPeriod(submittedAt, period, now)) {
+    if (claim.status === "paid" && inPeriod(paidAtFor(claim), period, now)) {
       paidOutMinor += claim.amountMinor;
       paidOutCount += 1;
     }

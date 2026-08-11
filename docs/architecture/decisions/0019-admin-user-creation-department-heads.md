@@ -12,8 +12,9 @@ The company wants the administrator to create users directly, and asked whether 
 
 1. **The department creation flow changes: a department requires a manager (head).**
    Creating a department means assigning its head; the head is stored on the department and remains editable in department management.
-2. **A new employee's manager auto-defaults to their department's head** at creation time, editable in the same form before saving and afterward via the existing manager assignment.
-3. **The admin user-creation flow includes:** name, email, role (predefined or custom, ADR-0015), department (manager auto-filled), with the manager field pre-filled from the department head.
+2. **A new employee's manager is always their department's head at creation time.**
+   The manager field is read-only in the creation form - the department head is not a suggestion the admin can override at creation - and a headless department blocks submission until the admin assigns it a head in department management. The manager can still be changed afterward via the existing manager assignment.
+3. **The admin user-creation flow includes:** name, email, role (predefined or custom, ADR-0015), department, with the manager field locked to the department head.
 4. **Bulk import is part of the flow:** a CSV roster creates many users in one action, with the same defaults (manager from department head) and row-level validation feedback.
 5. **Created users are pre-provisioned records:** the employee simply signs in with company identity and is picked up; no invitation email is sent. Existing first-sign-in provisioning and created records must not duplicate.
 6. Existing departments without a head are surfaced in department management as incomplete and must be assigned one before new members can rely on the default.

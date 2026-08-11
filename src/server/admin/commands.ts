@@ -2,6 +2,7 @@ import {
   removedActionPrivileges,
   resolveRoleCapabilities,
   SUPERADMIN_ROLE_CODE,
+  MANAGER_ROLE_CODE,
   FINANCE_EXECUTIVE_ROLE_CODE,
   type ActionPrivilege,
   type RoleCapabilities,
@@ -54,11 +55,8 @@ export class AdminError extends Error {
   }
 }
 
-function isManagerRole(role?: { code?: string; displayName?: string } | null): boolean {
-  if (!role) return false;
-  const code = (role.code ?? "").toLowerCase();
-  const name = (role.displayName ?? "").toLowerCase();
-  return code === "manager" || code.includes("manager") || name.includes("manager");
+function isManagerRole(role?: { code?: string } | null): boolean {
+  return role?.code === MANAGER_ROLE_CODE;
 }
 
 // The pending-claim impact of a privilege change (ADR-0015): which action
@@ -259,6 +257,16 @@ export function createAdminCommands({
     const actor = await getAdminActor(actorId);
     if (!actor) {
       throw new AdminError("unauthorized", "Only Superadmin can use the admin workspace.");
+    }
+    return actor;
+  }
+
+  // Company auto-skip configuration is a Superadmin-only built-in
+  // (ADR-0015/ADR-0018), never gated by the admin-console toggle.
+  async function requireSuperadmin(actorId: string): Promise<AdminEmployee> {
+    const actor = await store.getEmployee(actorId);
+    if (!actor || actor.role?.code !== SUPERADMIN_ROLE_CODE) {
+      throw new AdminError("unauthorized", "Only Superadmin can change the absence timeout.");
     }
     return actor;
   }
@@ -1043,12 +1051,12 @@ export function createAdminCommands({
     // organization without a settings row resolves to the 3-day default,
     // so existing companies keep today's behavior until the value changes.
     async getAbsenceTimeoutDays(actorId) {
-      const actor = await requireAdmin(actorId);
+      const actor = await requireSuperadmin(actorId);
       return store.getAbsenceTimeoutDays(actor.organizationId);
     },
 
     async setAbsenceTimeoutDays(actorId, days) {
-      const actor = await requireAdmin(actorId);
+      const actor = await requireSuperadmin(actorId);
       if (!Number.isInteger(days) || days < 1 || days > MAX_ABSENCE_TIMEOUT_DAYS) {
         throw new AdminError(
           "validation",

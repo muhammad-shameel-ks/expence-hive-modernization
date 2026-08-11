@@ -178,6 +178,30 @@ describe("employeeAggregates", () => {
     });
   });
 
+  it("buckets reimbursed by the paid date, not the submitted date", () => {
+    const list = [
+      // Submitted in July, paid in August: counts toward August's reimbursed total.
+      claim({
+        id: "c1",
+        requesterId: "emp-approver",
+        status: "paid",
+        amountMinor: 750,
+        submittedAt: "2026-07-28T09:00:00Z",
+        history: [{ id: "h1", kind: "paid", createdAt: "2026-08-03T09:00:00Z" }],
+      }),
+    ];
+    expect(employeeAggregates(list, "emp-approver", "month", NOW)).toMatchObject({
+      reimbursedMinor: 750,
+      reimbursedCount: 1,
+    });
+    // Viewing July's month period: submittedAt is in July, but the paid
+    // date is in August, so the claim must NOT count toward July.
+    expect(employeeAggregates(list, "emp-approver", "month", new Date("2026-07-15T00:00:00Z"))).toMatchObject({
+      reimbursedMinor: 0,
+      reimbursedCount: 0,
+    });
+  });
+
   it("never counts another employee's claims as the viewer's money", () => {
     const list = [
       claim({ id: "mine", requesterId: "emp-approver", status: "in-finance", amountMinor: 1000 }),
@@ -299,6 +323,25 @@ describe("financeAggregates", () => {
     const yearly = financeAggregates(list, 3, "year", NOW);
     expect(yearly.paidOutMinor).toBe(12500);
     expect(yearly.rejectedCount).toBe(2);
+  });
+
+  it("buckets paid out by the paid date, not the submitted date", () => {
+    const list = [
+      // Submitted in July, paid in August: counts toward August's payout total.
+      claim({
+        id: "paid-late",
+        status: "paid",
+        amountMinor: 4000,
+        submittedAt: "2026-07-28T09:00:00Z",
+        history: [{ id: "h1", kind: "paid", createdAt: "2026-08-03T09:00:00Z" }],
+      }),
+    ];
+    expect(financeAggregates(list, 3, "month", NOW)).toMatchObject({ paidOutMinor: 4000, paidOutCount: 1 });
+    // Viewing July's month period: the claim was submitted in July but paid
+    // in August, so it must NOT count toward July's payout total.
+    expect(
+      financeAggregates(list, 3, "month", new Date("2026-07-15T00:00:00Z")),
+    ).toMatchObject({ paidOutMinor: 0, paidOutCount: 0 });
   });
 
   it("ages org-wide stale claims regardless of the current actor", () => {

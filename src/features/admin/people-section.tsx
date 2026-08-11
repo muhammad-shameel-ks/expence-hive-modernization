@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, List, Network, Search, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AdminDepartment, AdminEmployee, AdminRole } from "@/server/admin/ports";
+import { MANAGER_ROLE_CODE } from "@/server/shared/authorization";
 import { BulkImport } from "./bulk-import";
 import { initials } from "./initials";
 import { OrgTree } from "./org-tree";
@@ -139,10 +140,7 @@ export function PeopleSection({
         ),
       );
       if (onDepartmentsChange && person.departmentId) {
-        const isManager =
-          role.code === "manager" ||
-          role.code.includes("manager") ||
-          role.displayName.toLowerCase().includes("manager");
+        const isManager = role.code === MANAGER_ROLE_CODE;
         if (isManager) {
           onDepartmentsChange(
             departments.map((candidate) =>
@@ -186,10 +184,7 @@ export function PeopleSection({
         ),
       );
       if (onDepartmentsChange) {
-        const isManager =
-          person.role?.code === "manager" ||
-          person.role?.code?.includes("manager") ||
-          person.role?.displayName?.toLowerCase().includes("manager");
+        const isManager = person.role?.code === MANAGER_ROLE_CODE;
         onDepartmentsChange(
           departments.map((candidate) => {
             if (candidate.id === dept.id && (!candidate.headId || candidate.headId === "") && isManager) {

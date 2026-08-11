@@ -33,7 +33,7 @@ Seven connected work items, delivered in dependency order: the role model first,
 ### 2. Admin user creation and department heads (ADR-0019)
 
 - Departments require a manager (head); department creation and management include assigning the head, and existing headless departments are surfaced as incomplete.
-- The admin user-creation flow takes name, email, role, and department; the manager field auto-defaults to the department head and stays editable.
+- The admin user-creation flow takes name, email, role, and department; the manager field is locked to the department head, so a headless department blocks creation until an admin assigns it a head.
 - Bulk CSV import creates many users with the same defaults and row-level validation feedback.
 - Created users are pre-provisioned records picked up at first sign-in; provisioning reconciles with pre-created records (match on identity, never overwrite admin-set assignments).
 
@@ -86,7 +86,7 @@ Seven connected work items, delivered in dependency order: the role model first,
 
 6. As a Superadmin, I want to create a department with a required head, so that new members have a manager to default to.
 7. As a Superadmin, I want to create a user with name, email, role, and department, so that the person can sign in and start working.
-8. As a Superadmin, I want the manager auto-filled from the department head and still editable, so that exceptions are expressible.
+8. As a Superadmin, I want the manager locked to the department head at creation, so that every new person has a correct manager from day one; I can still change it afterward via the existing manager assignment.
 9. As a Superadmin, I want to bulk-import a CSV roster, so that onboarding a batch of users is one action.
 10. As an employee, I want to sign in with company identity after being created, so that I need no invitation or extra step.
 

@@ -11,9 +11,10 @@ import type {
 } from "@/server/admin/ports";
 
 // The admin user-creation form (ADR-0019): name, email, role and department
-// up front, with the manager auto-defaulted from the department head and
-// editable in the same form. The server validates everything again; the
-// form only shapes the request.
+// up front; the manager is always the department head, read-only here - a
+// headless department blocks submission until a head is assigned in
+// Departments & Roles. The server validates everything again; the form only
+// shapes the request.
 export function UserCreateForm({
   people,
   roles,
