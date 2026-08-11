@@ -94,8 +94,11 @@ export function canTakeOver(
   }
 
   if (!viewerRoleId) return false;
+  // The target step must still be pending: a later step that was already
+  // auto-skipped by an amount guard is not a valid takeover target
+  // (mirrors the server's positional lookup in takeOverClaim).
   const targetIndex = steps.findIndex(
-    (step, index) => index > currentIndex && step.roleId === viewerRoleId,
+    (step, index) => index > currentIndex && step.status === "pending" && step.roleId === viewerRoleId,
   );
   return targetIndex !== -1;
 }

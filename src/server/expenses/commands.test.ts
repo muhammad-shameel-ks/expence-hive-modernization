@@ -1604,6 +1604,41 @@ describe("expense commands", () => {
       expect(overrideEvent?.detail).toContain("Escalated by CEO");
     });
 
+    it("never lands a positional takeover on an amount-guard auto-skipped step; an apex actor routes to the terminal stage instead", async () => {
+      const { commands } = buildCommands({
+        flows: [
+          {
+            id: "flow-guarded-head",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              roleStep(ROLE_MANAGER.id),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+      const submitted = await submitDraftWithAmount(commands, 30000);
+
+      // The Finance Head stage was auto-skipped by the amount guard at
+      // submission: ₹300 is under the ₹5000 guard, so the step must never
+      // become current again, even via a Finance Head takeover.
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+
+      const takenOver = await commands.takeOverClaim("emp-pramod", submitted.id, "Urgent resolution");
+
+      expect(takenOver).toMatchObject({
+        status: "in-finance",
+        currentStage: ROLE_FINANCE_EXECUTIVE.id,
+        currentActorId: "emp-finance",
+      });
+      expect(takenOver.steps[0]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[1]).toMatchObject({ status: "skipped" });
+      expect(takenOver.steps[2]).toMatchObject({ status: "pending", assignedActorId: "emp-finance" });
+      const overrideEvent = takenOver.history.find((event) => event.kind === "takeover");
+      expect(overrideEvent?.detail).toContain("Urgent resolution");
+    });
+
     it("cannot target a team-lead step: the named person's role never matches a role-less step", async () => {
       const intern: ExpenseEmployee = emp("emp-intern", "Ananya Iyer", ROLE_INTERN, {
         departmentId: "dept-eng",

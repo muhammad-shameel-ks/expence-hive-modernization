@@ -240,4 +240,29 @@ describe("canTakeOver", () => {
   it("returns false for terminal claims", () => {
     expect(canTakeOver({ ...claimInApproval, status: "paid" }, "emp-pramod", "finance-head", "role-finance-head")).toBe(false);
   });
+
+  it("does not offer a positional takeover onto an amount-guard auto-skipped step", () => {
+    const claim = {
+      ...claimInApproval,
+      steps: [
+        { roleId: "role-manager", status: "pending" },
+        { roleId: "role-finance-executive", status: "skipped" },
+      ],
+    };
+    // The Finance Executive's only later step was auto-skipped by an
+    // amount guard: no pending later step targets the role, so the
+    // positional takeover must not be offered (mirrors the server).
+    expect(canTakeOver(claim, "emp-finance", "finance-executive", "role-finance-executive")).toBe(false);
+  });
+
+  it("still offers the apex takeover when the actor's own later step was auto-skipped", () => {
+    const claim = {
+      ...claimInApproval,
+      steps: [
+        { roleId: "role-manager", status: "pending" },
+        { roleId: "role-finance-head", status: "skipped" },
+      ],
+    };
+    expect(canTakeOver(claim, "emp-pramod", "finance-head", "role-finance-head")).toBe(true);
+  });
 });

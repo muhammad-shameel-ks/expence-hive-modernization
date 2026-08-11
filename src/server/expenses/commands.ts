@@ -741,10 +741,13 @@ export function createExpenseCommands({
       const employees = await store.listEmployees(claim.organizationId);
       const requester = employees.find((candidate) => candidate.id === claim.requesterId);
       // Positional takeover: a later step targeting the actor's own role.
-      // Team-lead steps carry a null role id, so they can never be a
-      // takeover target.
+      // The step must still be pending - a later step could have been
+      // auto-skipped by an amount guard at submission, and landing the
+      // claim on an already-skipped stage would strand it there with no
+      // working next action. Team-lead steps carry a null role id, so they
+      // can never be a takeover target.
       const targetIndex = claim.steps.findIndex(
-        (step, index) => index > currentIndex && step.roleId === actorRole.id,
+        (step, index) => index > currentIndex && step.status === "pending" && step.roleId === actorRole.id,
       );
       // Apex bypass: when the actor holds Finance Head or Superadmin and no
       // later step targets their role, they take over by skipping every

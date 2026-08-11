@@ -51,7 +51,7 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
     history: claim.history.map((event) => ({
       id: event.id,
       date: formatHistoryDate(event.createdAt),
-      actor: event.actorId ? names.get(event.actorId) ?? "System" : "System",
+      actor: event.actorName ?? (event.actorId ? names.get(event.actorId) ?? "System" : "System"),
       actorId: event.actorId,
       kind: HISTORY_KINDS[event.kind],
       detail: event.detail,

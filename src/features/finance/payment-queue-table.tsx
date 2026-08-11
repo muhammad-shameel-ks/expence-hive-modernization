@@ -231,8 +231,19 @@ export function PaymentQueueTable({
       closePanel();
       return;
     }
-    // Arrow keys inside the comment inputs move the text caret; never hijack.
-    if ((event.target as HTMLElement).closest("input, textarea, select")) return;
+    // Keys inside the row's own interactive controls (comment inputs,
+    // receipt preview trigger, terminal action button) do their own thing;
+    // never hijack them.
+    if ((event.target as HTMLElement).closest("button, input, textarea, select")) return;
+    // The selected row opens the drawer on Enter, matching the row click
+    // (the drawer is the only surface with the journey, takeover, and
+    // download-summary actions, so it must be keyboard-reachable).
+    if (event.key === "Enter") {
+      event.preventDefault();
+      const claim = rows.find((candidate) => candidate.id === selectedClaimId);
+      if (claim) openDrawer(claim);
+      return;
+    }
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
       const direction = event.key === "ArrowDown" ? 1 : -1;
