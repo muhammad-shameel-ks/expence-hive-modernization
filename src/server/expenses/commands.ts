@@ -779,7 +779,14 @@ export function createExpenseCommands({
         // its position.
         claim.steps[currentIndex].assignedActorId = delegatee.id;
       } else {
+        // An intermediate step already skipped by the absence sweep's
+        // amount guard (a guard-skipped step can sit between two pending
+        // ones) is left untouched: it already carries its own decided
+        // timestamp and 'skipped' history event, and re-stamping it here
+        // would duplicate the audit trail for a step this delegation never
+        // touched.
         for (let index = currentIndex; index < targetIndex; index += 1) {
+          if (claim.steps[index].status !== "pending") continue;
           claim.steps[index].status = "skipped";
           claim.steps[index].decidedAt = decidedAt;
           claim.history.push({

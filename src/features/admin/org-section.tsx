@@ -14,19 +14,19 @@ import {
 import type { AdminDepartment, AdminEmployee, AdminRole } from "@/server/admin/ports";
 import type { PendingRoleStepClaim, RoleCapabilityImpact } from "@/server/admin/commands";
 import {
+  ACTION_PRIVILEGE_LABELS,
   SUBMIT_ONLY_CAPABILITIES,
   SUPERADMIN_CAPABILITIES,
   SUPERADMIN_ROLE_CODE,
   resolveRoleCapabilities,
-  type ActionPrivilege,
   type RoleCapabilities,
 } from "@/server/shared/authorization";
 import { SectionHeading } from "./section-heading";
 
 // The fixed six-privilege catalog (ADR-0015). Delegation and company
 // auto-skip configuration are Superadmin-only built-ins and never appear as
-// toggles. An action privilege (approve / finance verify-pay / hold) may
-// not be removed while claims are pending at the role's steps without the
+// toggles. An action privilege (approve / finance verify-pay) may not be
+// removed while claims are pending at the role's steps without the
 // administrator confirming the removal and its impact.
 const CAPABILITY_LABELS: { key: keyof RoleCapabilities; label: string }[] = [
   { key: "canSubmit", label: "Submit claims" },
@@ -36,13 +36,6 @@ const CAPABILITY_LABELS: { key: keyof RoleCapabilities; label: string }[] = [
   { key: "canViewOrganizationActivity", label: "View org-wide activity" },
   { key: "canAccessAdminConsole", label: "Access the admin console" },
 ];
-
-// The labels the warning dialog uses when naming removed privileges.
-const ACTION_PRIVILEGE_LABELS: Record<ActionPrivilege, string> = {
-  canApprove: "approve",
-  canAccessFinance: "finance access",
-  canHold: "hold",
-};
 
 function PrivilegeSwitch({
   checked,
@@ -220,18 +213,26 @@ export function OrgSection({
   };
 
   // Applies the server's authoritative role record after a capability save
-  // and reports the skip-forward consequence when the removal left pending
-  // steps at the role (ADR-0015).
+  // and reports the removal's consequence for pending steps at the role
+  // (ADR-0015). A step at the terminal stage never auto-skips, so those
+  // claims are called out as stranded rather than skipping forward.
   const applyRoleUpdate = (updated: AdminRole, pendingClaims: PendingRoleStepClaim[]) => {
     onRolesChange(
       roles.map((candidate) => (candidate.id === updated.id ? updated : candidate)),
     );
+    const skipping = pendingClaims.filter((claim) => claim.willSkip).length;
+    const stranded = pendingClaims.length - skipping;
+    const parts: string[] = [];
+    if (skipping > 0) {
+      parts.push(`${skipping} pending ${skipping === 1 ? "step" : "steps"} at this role will skip forward.`);
+    }
+    if (stranded > 0) {
+      parts.push(
+        `${stranded} pending ${stranded === 1 ? "claim" : "claims"} at this role's terminal stage will remain pending with no eligible actor.`,
+      );
+    }
     onMessage(
-      pendingClaims.length > 0
-        ? `${updated.displayName} privileges saved. ${pendingClaims.length} pending ${
-            pendingClaims.length === 1 ? "step" : "steps"
-          } at this role will skip forward.`
-        : `${updated.displayName} privileges saved.`,
+      parts.length > 0 ? `${updated.displayName} privileges saved. ${parts.join(" ")}` : `${updated.displayName} privileges saved.`,
     );
   };
 
@@ -457,9 +458,10 @@ export function OrgSection({
           <div>
             <h3 className="text-sm font-semibold text-[#1c2f46]">Role privileges</h3>
             <p className="mt-1 text-xs text-[#7d8a9b]">
-              Each role holds six privileges. Removing approve, finance verify/pay, or hold while
-              claims are pending at the role&apos;s steps warns before applying, and those pending
-              steps skip forward on the next absence sweep. Delegation and company auto-skip
+              Each role holds six privileges. Removing approve or finance verify/pay while claims
+              are pending at the role&apos;s steps warns before applying: those pending steps skip
+              forward on the next absence sweep, except at the terminal stage, which never
+              auto-skips and is called out separately. Delegation and company auto-skip
               configuration are Superadmin-only built-ins and never appear as toggles.
             </p>
           </div>
@@ -530,7 +532,7 @@ export function OrgSection({
             <DialogDescription>
               {`Removing ${removalLabels} affects ${removalClaimCount} pending claim${
                 removalClaimCount === 1 ? "" : "s"
-              } at this role's steps. Those pending steps will skip forward on the next absence sweep.`}
+              } at this role's steps. Pending steps skip forward on the next absence sweep, except at the terminal stage, which stays pending with no eligible actor.`}
             </DialogDescription>
           </DialogHeader>
           <ul className="space-y-2 text-xs text-[#526278]">
@@ -544,6 +546,11 @@ export function OrgSection({
                 <span className="text-[#8a96a8]">
                   {claim.requesterName} · {claim.stage}
                 </span>
+                {!claim.willSkip ? (
+                  <span className="rounded-full bg-[#fdf0f2] px-2 py-0.5 text-[0.62rem] font-bold uppercase tracking-wider text-[#a8384d]">
+                    Will not skip
+                  </span>
+                ) : null}
               </li>
             ))}
           </ul>

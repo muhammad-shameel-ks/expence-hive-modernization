@@ -730,6 +730,32 @@ describe("role capabilities", () => {
 
     expect(impact.pendingClaims).toEqual([]);
   });
+
+  it("marks a pending step at a role's terminal stage as not skipping, unlike an earlier stage", async () => {
+    const { admin } = buildAdmin(
+      [CUSTOM_REVIEWER_ROLE],
+      [
+        claimWithPendingStepAt("role-reviewer", { title: "Terminal stage claim" }),
+        claimWithPendingStepAt("role-reviewer", {
+          title: "Earlier stage claim",
+          steps: [
+            { id: "step-earlier", roleId: "role-reviewer", assignedActorId: "emp-ada", status: "pending" },
+            { id: "step-later", roleId: "role-other", assignedActorId: "emp-ada", status: "pending" },
+          ],
+        }),
+      ],
+    );
+
+    const impact = await admin.getRoleCapabilityImpact("emp-superadmin", "role-reviewer", {
+      ...MANAGER_CAPABILITIES,
+      canApprove: false,
+    });
+
+    expect(impact.pendingClaims).toEqual([
+      expect.objectContaining({ title: "Terminal stage claim", willSkip: false }),
+      expect.objectContaining({ title: "Earlier stage claim", willSkip: true }),
+    ]);
+  });
 });
 
 describe("createFlow", () => {

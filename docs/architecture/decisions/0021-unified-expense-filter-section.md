@@ -11,7 +11,7 @@ The company wants approved, paid, and rejected filters on the expenses pages, an
 ## Decision
 
 1. **One shared filter/sort component is used on every expense-list surface** - the dashboard and `/expenses/all` - so behavior and visuals never drift.
-2. **Quick chips are one-per-status** (All, Submitted, In approval, Approved, In finance, Paid, Rejected) replacing the grouped chips, so every status is directly reachable.
+2. **Quick chips are one-per-status, generated from the full status catalog** (All, Draft, Submitted, In approval, Approved, In finance, Paid, Rejected) replacing the grouped chips, so every status - including a requester's own drafts - is directly reachable.
    Grouped intents (needs action, in progress) that prove useful remain expressible through the advanced filter layer.
 3. **The advanced layer keeps search, category, amount range, date range, and column sort**, layered on top of the status chips.
 4. **Filter state is shareable via the URL** (query params) so a filtered view survives refresh, navigation, and can be linked.

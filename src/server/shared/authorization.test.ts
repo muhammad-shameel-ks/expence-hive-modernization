@@ -122,23 +122,23 @@ describe("removedActionPrivileges", () => {
     ).toEqual(["canApprove"]);
   });
 
-  it("reports finance access and hold removals", () => {
+  it("reports finance access removals", () => {
     expect(
       removedActionPrivileges(financeHeadCapabilities, {
         ...financeHeadCapabilities,
         canAccessFinance: false,
       }),
     ).toEqual(["canAccessFinance"]);
+  });
+
+  it("ignores hold and other non-action capabilities and additions", () => {
     const holdingRole: RoleCapabilities = { ...managerCapabilities, canHold: true };
     expect(
       removedActionPrivileges(holdingRole, {
         ...holdingRole,
         canHold: false,
       }),
-    ).toEqual(["canHold"]);
-  });
-
-  it("ignores non-action capabilities and additions", () => {
+    ).toEqual([]);
     expect(
       removedActionPrivileges(managerCapabilities, {
         ...managerCapabilities,

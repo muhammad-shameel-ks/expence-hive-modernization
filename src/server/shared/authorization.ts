@@ -55,11 +55,15 @@ export const MANAGER_ROLE_CODE = "manager";
 export const FINANCE_HEAD_ROLE_CODE = "finance-head";
 export const FINANCE_EXECUTIVE_ROLE_CODE = "finance-executive";
 
-// The three action privileges (ADR-0015): removing one of these mid-flight
-// is governed - the caller is warned about the pending claims at the role's
-// steps and must confirm the removal. canSubmit, canViewOrganizationActivity
-// and canAccessAdminConsole are not action privileges.
-export const ACTION_PRIVILEGES = ["canApprove", "canAccessFinance", "canHold"] as const;
+// The two action privileges (ADR-0015): removing one of these mid-flight is
+// governed - the caller is warned about the pending claims at the role's
+// steps and must confirm the removal, because losing either one leaves a
+// pending step with no eligible actor and the absence sweep advances it.
+// canHold is not an action privilege: losing it does not affect a role's
+// ability to progress a pending step, so it never strands or skips a claim.
+// canSubmit, canViewOrganizationActivity and canAccessAdminConsole are not
+// action privileges either.
+export const ACTION_PRIVILEGES = ["canApprove", "canAccessFinance"] as const;
 export type ActionPrivilege = (typeof ACTION_PRIVILEGES)[number];
 
 // The role-record shape resolution reads capabilities from: role refs on
@@ -87,3 +91,11 @@ export function removedActionPrivileges(
 ): ActionPrivilege[] {
   return ACTION_PRIVILEGES.filter((privilege) => before[privilege] && !after[privilege]);
 }
+
+// The removal-warning label for each action privilege, shared by the
+// command-layer conflict message and the console's confirm dialog so the
+// two copies of this text cannot drift.
+export const ACTION_PRIVILEGE_LABELS: Record<ActionPrivilege, string> = {
+  canApprove: "approve",
+  canAccessFinance: "finance access",
+};

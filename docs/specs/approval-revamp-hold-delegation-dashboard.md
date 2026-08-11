@@ -68,7 +68,7 @@ Seven connected work items, delivered in dependency order: the role model first,
 
 ### 7. Unified expense filter and sort section (ADR-0021)
 
-- One shared filter/sort component on the dashboard and `/expenses/all`: quick chips one-per-status (All, Submitted, In approval, Approved, In finance, Paid, Rejected) plus the advanced layer (search, category, amount range, date range, column sort).
+- One shared filter/sort component on the dashboard and `/expenses/all`: quick chips one-per-status (All, Draft, Submitted, In approval, Approved, In finance, Paid, Rejected) plus the advanced layer (search, category, amount range, date range, column sort).
 - Filter state is URL-synced so views survive refresh and navigation.
 - UI/UX is first-class: compact on desktop, collapsible affordance on mobile, WCAG 2.2 AA, never crowding the list.
 

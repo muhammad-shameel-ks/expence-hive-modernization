@@ -84,6 +84,7 @@ const PENDING_CLAIM = {
   requesterId: "emp-ada",
   requesterName: "Ada Lovelace",
   stage: "Manager",
+  willSkip: true,
 };
 
 function renderOrg(departments: AdminDepartment[], roles: AdminRole[] = []) {
@@ -395,7 +396,7 @@ describe("OrgSection privilege toggles", () => {
     expect(screen.getByText("Remove a role privilege?")).toBeInTheDocument();
     expect(
       screen.getByText(
-        "Removing approve affects 1 pending claim at this role's steps. Those pending steps will skip forward on the next absence sweep.",
+        "Removing approve affects 1 pending claim at this role's steps. Pending steps skip forward on the next absence sweep, except at the terminal stage, which stays pending with no eligible actor.",
       ),
     ).toBeInTheDocument();
     expect(screen.getByText("EXP-1001")).toBeInTheDocument();
@@ -495,6 +496,36 @@ describe("OrgSection privilege toggles", () => {
     expect(onError).toHaveBeenCalledWith("The role privileges could not be saved. Please try again.");
     expect(screen.getByRole("dialog")).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Confirm removal" })).toBeEnabled();
+  });
+
+  it("flags a terminal-stage pending claim as not skipping, and reports it as stranded once confirmed", async () => {
+    const terminalClaim = { ...PENDING_CLAIM, willSkip: false };
+    const { onMessage } = renderOrg([], [MANAGER_ROLE]);
+    const updated: AdminRole = {
+      ...MANAGER_ROLE,
+      capabilities: { ...MANAGER_ROLE.capabilities!, canApprove: false },
+    };
+    const fetchMock = vi
+      .fn()
+      .mockResolvedValueOnce(
+        conflictResponse({ removedActionPrivileges: ["canApprove"], pendingClaims: [terminalClaim] }),
+      )
+      .mockResolvedValueOnce(capabilitiesResponse(updated, [terminalClaim]));
+    vi.stubGlobal("fetch", fetchMock);
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("switch", { name: "Manager Approve and reject" }));
+    });
+
+    expect(screen.getByText("Will not skip")).toBeInTheDocument();
+
+    await act(async () => {
+      fireEvent.click(screen.getByRole("button", { name: "Confirm removal" }));
+    });
+
+    expect(onMessage).toHaveBeenCalledWith(
+      "Manager privileges saved. 1 pending claim at this role's terminal stage will remain pending with no eligible actor.",
+    );
   });
 });
 

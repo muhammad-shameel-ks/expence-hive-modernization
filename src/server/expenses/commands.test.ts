@@ -1915,6 +1915,35 @@ describe("expense commands", () => {
       expect(delegated.history.filter((event) => event.kind === "skipped")).toHaveLength(0);
     });
 
+    it("does not re-stamp or duplicate the skipped event for an intermediate step already auto-skipped by an amount guard", async () => {
+      const { commands } = buildCommands({
+        employees: [...BASE_EMPLOYEES, superadmin],
+        flows: [
+          {
+            id: "flow-guarded-middle",
+            roleId: ROLE_EXECUTIVE.id,
+            steps: [
+              roleStep(ROLE_MANAGER.id),
+              guardedStep(ROLE_FINANCE_HEAD.id, "gte", 500000),
+              roleStep(ROLE_FINANCE_EXECUTIVE.id),
+            ],
+          },
+        ],
+      });
+      const submitted = await submitDraftWithAmount(commands, 30000);
+      expect(submitted.steps[1]).toMatchObject({ status: "skipped" });
+      const guardSkipDecidedAt = submitted.steps[1].decidedAt;
+      const guardSkipEventCount = submitted.history.filter((event) => event.kind === "skipped").length;
+
+      const delegated = await commands.delegateClaim(superadmin.id, submitted.id, "emp-finance", "Send to finance");
+
+      expect(delegated.steps[0]).toMatchObject({ status: "skipped", assignedActorId: "emp-ada" });
+      expect(delegated.steps[1]).toMatchObject({ status: "skipped", decidedAt: guardSkipDecidedAt });
+      expect(delegated.steps[2]).toMatchObject({ status: "pending", assignedActorId: "emp-finance" });
+      const skippedEvents = delegated.history.filter((event) => event.kind === "skipped");
+      expect(skippedEvents).toHaveLength(guardSkipEventCount + 1);
+    });
+
     it("re-points the terminal finance stage person in place", async () => {
       const { commands } = buildCommands({
         employees: [

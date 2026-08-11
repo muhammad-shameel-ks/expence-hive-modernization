@@ -12,10 +12,10 @@ The company wants the administrator to create users directly, and asked whether 
 
 1. **The department creation flow changes: a department requires a manager (head).**
    Creating a department means assigning its head; the head is stored on the department and remains editable in department management.
-2. **A new employee's manager is always their department's head at creation time.**
-   The manager field is read-only in the creation form - the department head is not a suggestion the admin can override at creation - and a headless department blocks submission until the admin assigns it a head in department management. The manager can still be changed afterward via the existing manager assignment.
+2. **A new employee's manager is always their department's head at creation time - with one documented exception.**
+   The manager field is read-only in the single-user creation form - the department head is not a suggestion the admin can override there - and a headless department blocks submission until the admin assigns it a head in department management. The manager can still be changed afterward via the existing manager assignment. The bulk-import CSV (point 4) is the one path that accepts an explicit per-row manager override, since a roster import is the practical place to seed a hierarchy that is not yet department-uniform; an empty manager cell still defaults to the department head.
 3. **The admin user-creation flow includes:** name, email, role (predefined or custom, ADR-0015), department, with the manager field locked to the department head.
-4. **Bulk import is part of the flow:** a CSV roster creates many users in one action, with the same defaults (manager from department head) and row-level validation feedback.
+4. **Bulk import is part of the flow:** a CSV roster creates many users in one action, defaulting manager to the department head with row-level validation feedback, and an optional per-row manager column to override that default (point 2).
 5. **Created users are pre-provisioned records:** the employee simply signs in with company identity and is picked up; no invitation email is sent. Existing first-sign-in provisioning and created records must not duplicate.
 6. Existing departments without a head are surfaced in department management as incomplete and must be assigned one before new members can rely on the default.
 

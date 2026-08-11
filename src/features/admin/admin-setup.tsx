@@ -29,6 +29,7 @@ export function AdminSetup({
   roles: initialRoles,
   departments: initialDepartments,
   currentEmployeeId,
+  isSuperadmin,
   absenceTimeoutDays,
   heldClaims,
 }: {
@@ -37,7 +38,8 @@ export function AdminSetup({
   roles: AdminRole[];
   departments: AdminDepartment[];
   currentEmployeeId: string;
-  absenceTimeoutDays: number;
+  isSuperadmin: boolean;
+  absenceTimeoutDays: number | null;
   heldClaims: HeldClaimRow[];
 }) {
   const [activeTab, setActiveTab] = useState<TabSection>("org");
@@ -125,19 +127,21 @@ export function AdminSetup({
           <span className="hidden sm:inline">Audit Log</span>
         </button>
 
-        <button
-          onClick={() => setActiveTab("settings")}
-          aria-current={activeTab === "settings" ? "page" : undefined}
-          className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
-            activeTab === "settings"
-              ? "bg-[#e8f2f6] text-[#175d75]"
-              : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
-          }`}
-        >
-          <Settings className="size-3.5" />
-          <span className="sm:hidden">Settings</span>
-          <span className="hidden sm:inline">Company Settings</span>
-        </button>
+        {isSuperadmin ? (
+          <button
+            onClick={() => setActiveTab("settings")}
+            aria-current={activeTab === "settings" ? "page" : undefined}
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
+              activeTab === "settings"
+                ? "bg-[#e8f2f6] text-[#175d75]"
+                : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
+            }`}
+          >
+            <Settings className="size-3.5" />
+            <span className="sm:hidden">Settings</span>
+            <span className="hidden sm:inline">Company Settings</span>
+          </button>
+        ) : null}
 
         <button
           onClick={() => setActiveTab("holds")}
@@ -232,7 +236,7 @@ export function AdminSetup({
           />
         ) : activeTab === "audit" ? (
           <AuditSection people={peopleState} onError={setError} />
-        ) : activeTab === "settings" ? (
+        ) : activeTab === "settings" && absenceTimeoutDays !== null ? (
           <SettingsSection
             absenceTimeoutDays={absenceTimeoutDays}
             onMessage={setMessage}

@@ -1,4 +1,5 @@
 import {
+  ACTION_PRIVILEGE_LABELS,
   removedActionPrivileges,
   resolveRoleCapabilities,
   SUPERADMIN_ROLE_CODE,
@@ -9,6 +10,7 @@ import {
 } from "../shared/authorization";
 import { MAX_ABSENCE_TIMEOUT_DAYS } from "../shared/absence-timeout";
 import type { ExpenseStore } from "../expenses/ports";
+import { isTerminalIndex } from "../expenses/absence-skip";
 import { parseRosterCsv } from "./roster-csv";
 import {
   type AdminDepartment,
@@ -62,13 +64,16 @@ function isManagerRole(role?: { code?: string } | null): boolean {
 // The pending-claim impact of a privilege change (ADR-0015): which action
 // privileges would be removed, and the in-flight claims with a pending step
 // at the role - ref and title plus the requester and stage for the console
-// warning dialog.
+// warning dialog. willSkip is false for a claim pending at the terminal
+// step: the absence sweep never auto-skips the terminal step, so losing the
+// role's action privilege there strands the claim rather than advancing it.
 export type PendingRoleStepClaim = {
   ref: string;
   title: string;
   requesterId: string;
   requesterName: string;
   stage: string;
+  willSkip: boolean;
 };
 
 export type RoleCapabilityImpact = {
@@ -154,13 +159,6 @@ export function parseRoleCapabilities(value: unknown): RoleCapabilities | null {
   }
   return capabilities;
 }
-
-// The conflict message names the removed privileges in user terms.
-const ACTION_PRIVILEGE_LABELS: Record<ActionPrivilege, string> = {
-  canApprove: "approve",
-  canAccessFinance: "finance access",
-  canHold: "hold",
-};
 
 export type AdminCommands = {
   listEmployees(actorId: string): Promise<AdminEmployee[]>;
@@ -335,16 +333,17 @@ export function createAdminCommands({
     const pending: PendingRoleStepClaim[] = [];
     for (const claim of claims) {
       if (claim.status !== "in-approval" && claim.status !== "in-finance") continue;
-      const step = claim.steps.find(
+      const stepIndex = claim.steps.findIndex(
         (candidate) => candidate.status === "pending" && candidate.roleId === roleId,
       );
-      if (!step) continue;
+      if (stepIndex === -1) continue;
       pending.push({
         ref: claim.ref,
         title: claim.title,
         requesterId: claim.requesterId,
         requesterName: requesterNames.get(claim.requesterId) ?? claim.requesterId,
         stage,
+        willSkip: !isTerminalIndex(claim, stepIndex),
       });
     }
     return pending;
@@ -869,7 +868,7 @@ export function createAdminCommands({
     },
 
     // Changes a role's capability set. Removing an action privilege
-    // (approve / finance access / hold) while claims are pending at the
+    // (approve / finance access) while claims are pending at the
     // role's steps must be confirmed by the caller; the unconfirmed
     // conflict carries the full impact so the console can render the
     // warning dialog from the rejection alone. Confirmed removals leave the
