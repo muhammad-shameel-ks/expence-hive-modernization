@@ -60,8 +60,7 @@ const EMPLOYEES: ExpenseEmployee[] = [
 ];
 
 // A claim mid-approval at the manager step, with a later Finance Head step
-// still pending - the shape a Finance Head apex bypass or manager positional
-// bypass would act on.
+// still pending - the shape a Superadmin delegation would act on.
 function inApprovalClaim(): ExpenseClaim {
   return {
     id: "exp-1",
@@ -106,8 +105,25 @@ function stubFetch() {
   );
 }
 
-describe("OrganizationActivity takeover wiring", () => {
-  it("shows the takeover action for a Finance Head viewer (apex bypass) opened from organization activity", async () => {
+describe("OrganizationActivity delegation wiring", () => {
+  it("shows the Delegate action for a Superadmin viewer opened from organization activity", async () => {
+    stubFetch();
+    render(
+      <OrganizationActivity
+        items={[ITEM]}
+        currentUser="Super Boss"
+        currentUserId="emp-super"
+        currentUserRoleId="role-superadmin"
+        currentUserRoleCode="superadmin"
+      />,
+    );
+
+    fireEvent.click(screen.getByText("Flight ticket"));
+
+    await waitFor(() => expect(screen.getByText("Delegate")).toBeInTheDocument());
+  });
+
+  it("does not show the Delegate action for a Finance Head viewer", async () => {
     stubFetch();
     render(
       <OrganizationActivity
@@ -121,10 +137,11 @@ describe("OrganizationActivity takeover wiring", () => {
 
     fireEvent.click(screen.getByText("Flight ticket"));
 
-    await waitFor(() => expect(screen.getByText("Take over")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByText("EXP-1001")).toBeInTheDocument());
+    expect(screen.queryByText("Delegate")).not.toBeInTheDocument();
   });
 
-  it("does not show the takeover action for the claim's own requester", async () => {
+  it("does not show the Delegate action for the claim's own requester", async () => {
     stubFetch();
     render(
       <OrganizationActivity
@@ -139,24 +156,6 @@ describe("OrganizationActivity takeover wiring", () => {
     fireEvent.click(screen.getByText("Flight ticket"));
 
     await waitFor(() => expect(screen.getByText("EXP-1001")).toBeInTheDocument());
-    expect(screen.queryByText("Take over")).not.toBeInTheDocument();
-  });
-
-  it("does not show the takeover action for a role with no later matching step", async () => {
-    stubFetch();
-    render(
-      <OrganizationActivity
-        items={[ITEM]}
-        currentUser="Rishikesh"
-        currentUserId="emp-finance-exec"
-        currentUserRoleId="role-finance-executive"
-        currentUserRoleCode="finance-executive"
-      />,
-    );
-
-    fireEvent.click(screen.getByText("Flight ticket"));
-
-    await waitFor(() => expect(screen.getByText("EXP-1001")).toBeInTheDocument());
-    expect(screen.queryByText("Take over")).not.toBeInTheDocument();
+    expect(screen.queryByText("Delegate")).not.toBeInTheDocument();
   });
 });

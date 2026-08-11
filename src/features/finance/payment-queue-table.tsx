@@ -51,17 +51,20 @@ export function PaymentQueueTable({
   currentUserId,
   currentUserRoleId,
   currentUserRoleCode,
+  currentUserCanHold,
 }: {
   claims: ExpenseClaim[];
   employees?: ExpenseEmployee[];
-  /** Viewer display name; ExpenseDrawer's next-action/takeover copy addresses the viewer by it. */
+  /** Viewer display name; ExpenseDrawer's next-action/delegate copy addresses the viewer by it. */
   currentUser?: string;
   /** Viewer id; the terminal-stage pool gate uses it to exclude self-claims. */
   currentUserId?: string;
   /** Viewer role id; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
-  /** Viewer role code; ExpenseDrawer's takeover eligibility check uses it. */
+  /** Viewer role code; ExpenseDrawer's delegation eligibility check uses it. */
   currentUserRoleCode?: string;
+  /** Whether the viewer's role carries the can_hold capability (ADR-0015/0016). */
+  currentUserCanHold?: boolean;
 }) {
   const employeeNameById = useMemo(
     () => new Map(employees.map((employee) => [employee.id, employee.name])),
@@ -105,9 +108,10 @@ export function PaymentQueueTable({
   // The terminal action the viewer may take on a claim straight from the
   // queue: any active reviewer holding the terminal step's role may act,
   // mirroring the server's requireTerminalPoolClaim (which checks the
-  // claim's terminal step).
+  // claim's terminal step). A held claim is frozen against verify/pay
+  // (ADR-0016), mirroring the rejected-claim treatment of ADR-0008.
   const terminalActionFor = (claim: ExpenseClaim): "verify" | "pay" | null => {
-    if (claim.status !== "in-finance") return null;
+    if (claim.status !== "in-finance" || claim.heldAt) return null;
     const terminalStep = claim.steps[claim.steps.length - 1];
     if (!terminalStep || (terminalStep.status !== "pending" && terminalStep.status !== "verified")) {
       return null;
@@ -240,7 +244,7 @@ export function PaymentQueueTable({
     // never hijack them.
     if ((event.target as HTMLElement).closest(ROW_INTERACTIVE_SELECTOR)) return;
     // The selected row opens the drawer on Enter, matching the row click
-    // (the drawer is the only surface with the journey, takeover, and
+    // (the drawer is the only surface with the journey, delegate, and
     // download-summary actions, so it must be keyboard-reachable).
     if (event.key === "Enter") {
       event.preventDefault();
@@ -668,6 +672,7 @@ export function PaymentQueueTable({
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
         currentUserRoleCode={currentUserRoleCode}
+        currentUserCanHold={currentUserCanHold}
       />
     </div>
   );

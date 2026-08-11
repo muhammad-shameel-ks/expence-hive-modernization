@@ -1,44 +1,47 @@
+// Role authority (ADR-0015): capabilities are per-role data, resolved from
+// the role record everywhere authorization is checked. The hardcoded
+// code-keyed map is gone; a role record carries its own six privilege
+// toggles, and missing or unknown roles fall back to the safe submit-only
+// default. Superadmin is not a toggleable role: the built-in console owner
+// keeps every privilege by construction, regardless of what a role record
+// says.
+
 export type RoleCapabilities = {
   canSubmit: boolean;
   canApprove: boolean;
   canAccessFinance: boolean;
+  canHold: boolean;
   canViewOrganizationActivity: boolean;
   canAccessAdminConsole: boolean;
 };
 
-const SUBMIT_ONLY: RoleCapabilities = {
+// The safe default for role records that carry no capability data: unknown
+// roles, legacy rows, and role-less employees can submit and grant nothing.
+export const SUBMIT_ONLY_CAPABILITIES: RoleCapabilities = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: false,
+  canHold: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
 
-const APPROVER: RoleCapabilities = {
-  ...SUBMIT_ONLY,
-  canApprove: true,
-};
-
-const FINANCE: RoleCapabilities = {
-  ...SUBMIT_ONLY,
-  canAccessFinance: true,
-};
-
-const FINANCE_HEAD: RoleCapabilities = {
-  ...FINANCE,
-  canViewOrganizationActivity: true,
-};
-
-const SUPERADMIN: RoleCapabilities = {
+// The built-in console owner: every privilege, granted by construction and
+// never exposed as a toggle. Its two exclusive powers (delegation, company
+// auto-skip configuration) are not part of the catalog at all (ADR-0015).
+export const SUPERADMIN_CAPABILITIES: RoleCapabilities = {
   canSubmit: true,
   canApprove: true,
   canAccessFinance: true,
+  canHold: true,
   canViewOrganizationActivity: true,
   canAccessAdminConsole: true,
 };
 
 // The five locked predefined roles plus the built-in Superadmin identity.
 // Superadmin is not assignable as a role; it is the built-in console owner.
+// Locked semantics are unchanged: locked means not deletable, never
+// not editable - the predefined roles' privilege toggles are editable.
 export const LOCKED_ROLE_CODES = [
   "intern",
   "executive",
@@ -52,20 +55,35 @@ export const MANAGER_ROLE_CODE = "manager";
 export const FINANCE_HEAD_ROLE_CODE = "finance-head";
 export const FINANCE_EXECUTIVE_ROLE_CODE = "finance-executive";
 
-// The single source of truth for role authority, shared by the admin
-// console and the expense flow. Only the locked catalog and Superadmin have
-// grants here; custom roles and any other code (HR codes deliberately
-// included) resolve to the submit-only default and grant nothing.
-const CAPABILITIES_BY_ROLE_CODE: Record<string, RoleCapabilities> = {
-  superadmin: SUPERADMIN,
-  intern: SUBMIT_ONLY,
-  executive: SUBMIT_ONLY,
-  manager: APPROVER,
-  "finance-head": FINANCE_HEAD,
-  "finance-executive": FINANCE,
+// The three action privileges (ADR-0015): removing one of these mid-flight
+// is governed - the caller is warned about the pending claims at the role's
+// steps and must confirm the removal. canSubmit, canViewOrganizationActivity
+// and canAccessAdminConsole are not action privileges.
+export const ACTION_PRIVILEGES = ["canApprove", "canAccessFinance", "canHold"] as const;
+export type ActionPrivilege = (typeof ACTION_PRIVILEGES)[number];
+
+// The role-record shape resolution reads capabilities from: role refs on
+// employees and the full role records from the admin store all carry the
+// optional capability set, populated by the stores from the roles table.
+export type RoleCapabilitiesRecord = {
+  code: string;
+  capabilities?: RoleCapabilities | null;
 };
 
-export function resolveRoleCapabilities(roleCode: string | undefined): RoleCapabilities {
-  if (roleCode === undefined) return SUBMIT_ONLY;
-  return CAPABILITIES_BY_ROLE_CODE[roleCode] ?? SUBMIT_ONLY;
+export function resolveRoleCapabilities(
+  role: RoleCapabilitiesRecord | null | undefined,
+): RoleCapabilities {
+  if (role === null || role === undefined) return SUBMIT_ONLY_CAPABILITIES;
+  if (role.code === SUPERADMIN_ROLE_CODE) return SUPERADMIN_CAPABILITIES;
+  return role.capabilities ?? SUBMIT_ONLY_CAPABILITIES;
+}
+
+// The action privileges a change removes, e.g. when a role loses approve.
+// Only removals of action privileges with pending claims at the role's
+// steps require the caller's confirmation (ADR-0015).
+export function removedActionPrivileges(
+  before: RoleCapabilities,
+  after: RoleCapabilities,
+): ActionPrivilege[] {
+  return ACTION_PRIVILEGES.filter((privilege) => before[privilege] && !after[privilege]);
 }

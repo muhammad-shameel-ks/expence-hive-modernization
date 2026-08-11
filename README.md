@@ -40,6 +40,22 @@ npm run db:seed
 
 The seed is idempotent and can be rerun after migrations.
 
+### Absence sweep worker
+
+The absence auto-skip timeout (configurable per company in the admin console, default 3 days) is enforced by a scheduled sweep worker in addition to the lazy read-path catch-up, so stale claims advance even when nobody opens the app (ADR-0018).
+
+Run it with the rest of the stack:
+
+```bash
+docker compose up -d sweep
+```
+
+The `sweep` service runs one pass over every organization every 15 minutes (override with `SWEEP_INTERVAL_MS`), applies pending migrations on start, and reports a heartbeat file that its healthcheck probes. For a single manual pass:
+
+```bash
+npm run sweep
+```
+
 Stop the services while keeping their local data:
 
 ```bash

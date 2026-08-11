@@ -19,11 +19,13 @@ export default async function AdminPage() {
   if (!actor) {
     redirect("/expenses");
   }
-  const [people, flows, roles, departments] = await Promise.all([
+  const [people, flows, roles, departments, absenceTimeoutDays, heldClaims] = await Promise.all([
     admin.listEmployees(actor.id),
     admin.listFlows(actor.id),
     admin.listRoles(actor.id),
     admin.listDepartments(actor.id),
+    admin.getAbsenceTimeoutDays(actor.id),
+    expenseCommands().listHeldClaims(employee.id),
   ]);
   const workspace = await expenseCommands().getWorkspace(employee.id);
   return (
@@ -39,6 +41,8 @@ export default async function AdminPage() {
         roles={roles}
         departments={departments}
         currentEmployeeId={employee.id}
+        absenceTimeoutDays={absenceTimeoutDays}
+        heldClaims={heldClaims}
       />
     </main>
   );

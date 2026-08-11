@@ -1,6 +1,8 @@
-import { SUPERADMIN_ROLE_CODE } from "../shared/authorization";
+import { SUPERADMIN_ROLE_CODE, type RoleCapabilities } from "../shared/authorization";
+import { DEFAULT_ABSENCE_TIMEOUT_DAYS } from "../shared/absence-timeout";
 
 export { SUPERADMIN_ROLE_CODE };
+export { DEFAULT_ABSENCE_TIMEOUT_DAYS };
 
 export type FlowStatus = "draft" | "published" | "archived";
 
@@ -8,6 +10,10 @@ export type AdminRoleRef = {
   id: string;
   code: string;
   displayName: string;
+  // The six privilege toggles (ADR-0015), resolved from the roles table.
+  // Present on records read from the store; absent on legacy data, which
+  // resolves to the submit-only default.
+  capabilities?: RoleCapabilities | null;
 };
 
 export type AdminEmployee = {
@@ -31,10 +37,16 @@ export type AdminDepartment = {
   organizationId: string;
   name: string;
   active: boolean;
+  // The department head (ADR-0019): every department is created with one
+  // and the head remains editable. headId is null for pre-existing
+  // headless departments; the console surfaces those as incomplete.
+  headId: string | null;
+  head: { id: string; name: string } | null;
 };
 
 export type DepartmentInput = {
   name: string;
+  headId: string;
 };
 
 export type AdminRole = AdminRoleRef & {
@@ -50,6 +62,9 @@ export type AdminRole = AdminRoleRef & {
 export type RoleInput = {
   code: string;
   displayName: string;
+  // Custom roles are created with a privilege set (ADR-0015). Absent, the
+  // store defaults to the submit-only grant.
+  capabilities?: RoleCapabilities | null;
 };
 
 import type { AmountGuard, AmountGuardOperator } from "../shared/amount-guard";
@@ -96,23 +111,46 @@ export type AuditFilter = {
   to?: string;
 };
 
+// A fully-specified employee write: creation can carry the role, department
+// and manager up front (admin creation, bulk import), or none of them
+// (first-sign-in provisioning creates a bare record).
+export type EmployeeCreateInput = {
+  id: string;
+  name: string;
+  email: string;
+  roleId?: string | null;
+  departmentId?: string | null;
+  managerId?: string | null;
+};
+
 export interface AdminStore {
   listEmployees(organizationId: string): Promise<AdminEmployee[]>;
   getEmployee(id: string): Promise<AdminEmployee | null>;
+  findEmployeeByEmail(organizationId: string, email: string): Promise<AdminEmployee | null>;
   createEmployee(
     organizationId: string,
-    input: { id: string; name: string; email: string },
+    input: EmployeeCreateInput,
   ): Promise<AdminEmployee>;
+  // Bulk creation with all-or-nothing semantics: either every row is
+  // written or none is (a single transaction in the pg store).
+  createEmployees(
+    organizationId: string,
+    inputs: EmployeeCreateInput[],
+  ): Promise<AdminEmployee[]>;
   setEmployeeRole(employeeId: string, roleId: string): Promise<void>;
   setEmployeeDepartment(employeeId: string, departmentId: string): Promise<void>;
   setEmployeeActive(employeeId: string, active: boolean): Promise<void>;
   setEmployeeManager(employeeId: string, managerId: string | null): Promise<void>;
   listDepartments(organizationId: string): Promise<AdminDepartment[]>;
   createDepartment(organizationId: string, input: DepartmentInput): Promise<AdminDepartment>;
+  setDepartmentHead(departmentId: string, headId: string): Promise<void>;
   deactivateDepartment(departmentId: string): Promise<void>;
   listRoles(organizationId: string): Promise<AdminRole[]>;
   getRole(roleId: string): Promise<AdminRole | null>;
   createRole(organizationId: string, input: RoleInput): Promise<AdminRole>;
+  // Updates the six privilege toggles of a role (ADR-0015). The mid-flight
+  // confirmation guard lives in the command layer; the store only writes.
+  setRoleCapabilities(roleId: string, capabilities: RoleCapabilities): Promise<void>;
   deactivateRole(roleId: string): Promise<void>;
   createFlow(organizationId: string, input: FlowInput): Promise<FlowDraft>;
   updateFlow(flowId: string, input: FlowInput): Promise<FlowDraft>;
@@ -125,4 +163,14 @@ export interface AdminStore {
     filter: AuditFilter,
     pagination: { page: number; pageSize: number },
   ): Promise<{ events: AuditEvent[]; total: number }>;
+  // The company-wise absence auto-skip setting (ADR-0018), stored in
+  // organization_settings. Reading an organization without a row resolves
+  // to the 3-day default, so existing organizations keep today's behavior
+  // until a Superadmin changes the value.
+  getAbsenceTimeoutDays(organizationId: string): Promise<number>;
+  setAbsenceTimeoutDays(organizationId: string, days: number): Promise<void>;
+  // Every organization on the platform, for the scheduled sweep worker
+  // (ADR-0018): the worker scans each organization's in-flight claims
+  // against its own configured timeout.
+  listOrganizations(): Promise<string[]>;
 }

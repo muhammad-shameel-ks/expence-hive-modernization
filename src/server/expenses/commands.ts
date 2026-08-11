@@ -2,12 +2,13 @@ import { createHash } from "node:crypto";
 import { buildBlobKey } from "../blob/keys";
 import type { BlobStore } from "../blob/ports";
 import {
-  FINANCE_HEAD_ROLE_CODE,
   MANAGER_ROLE_CODE,
   SUPERADMIN_ROLE_CODE,
   resolveRoleCapabilities,
 } from "../shared/authorization";
 import { autoSkipDetail, guardSatisfied } from "../shared/amount-guard";
+import { DEFAULT_ABSENCE_TIMEOUT_DAYS } from "../shared/absence-timeout";
+import { catchUpAbsentStages, isTerminalIndex, terminalIndex } from "./absence-skip";
 import {
   ACTIVITY_EVENT_KINDS,
   type ActivityEntry,
@@ -17,22 +18,35 @@ import {
   type ExpenseEmployee,
   type ExpenseStore,
   type FlowStepTarget,
+  type HeldClaimRow,
   type ReceiptData,
   type ReceiptUploadInput,
   type UpdateExpenseDraftInput,
 } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel, resolveReceiptContentType } from "./receipt-validation";
 
-const ABSENCE_TIMEOUT_MS = 3 * 24 * 60 * 60 * 1000;
 const MAX_REASON_CODE_LENGTH = 200;
 
 function canAccessFinance(employee: ExpenseEmployee): boolean {
-  return employee.role !== null && resolveRoleCapabilities(employee.role.code).canAccessFinance;
+  return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessFinance;
+}
+
+function canAccessAdminConsole(employee: ExpenseEmployee): boolean {
+  return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessAdminConsole;
+}
+
+// A held claim is frozen against terminal actions (ADR-0016): the flow
+// status is kept, but approve/reject/verify/pay are all refused until the
+// current stage actor resumes the claim.
+function requireNotHeld(claim: ExpenseClaim): void {
+  if (claim.heldAt) {
+    throw new ExpenseError("conflict", "This claim is held and cannot be acted on until it is resumed.");
+  }
 }
 
 function canViewOrganizationActivity(employee: ExpenseEmployee): boolean {
   return (
-    employee.role !== null && resolveRoleCapabilities(employee.role.code).canViewOrganizationActivity
+    employee.role !== null && resolveRoleCapabilities(employee.role).canViewOrganizationActivity
   );
 }
 
@@ -46,14 +60,6 @@ function maskClaimComments(claim: ExpenseClaim, viewer: ExpenseEmployee): Expens
   const masked = { ...claim };
   delete masked.comments;
   return masked;
-}
-
-function terminalIndex(claim: ExpenseClaim): number {
-  return claim.steps.length - 1;
-}
-
-function isTerminalIndex(claim: ExpenseClaim, index: number): boolean {
-  return index === terminalIndex(claim);
 }
 
 // Routing eligibility for one flow step target. The requester can never be
@@ -85,35 +91,20 @@ function stepTarget(step: ExpenseClaim["steps"][number]): FlowStepTarget {
   return step.roleId === null ? { kind: "team-lead" } : { kind: "role", roleId: step.roleId };
 }
 
-function stepLabel(step: ExpenseClaim["steps"][number]): string {
-  return step.roleId === null ? "team lead" : step.roleId;
+
+// The delegation history detail names the delegatee by display name (and
+// role when they carry one): the audit trail must read the re-routed person
+// without raw ids, mirroring how other events resolve display names.
+function delegationDetail(delegatee: ExpenseEmployee, reason: string): string {
+  const role = delegatee.role ? ` (${delegatee.role.displayName})` : "";
+  return `Delegated to ${delegatee.name}${role} for "${reason}"`;
 }
 
-
-// A pool-stage label for the takeover history detail: team-lead steps are
-// recorded by their named target kind, role steps by their role id.
-function skippedStepLabels(claim: ExpenseClaim, start: number, end: number): string[] {
-  const labels: string[] = [];
-  for (let index = start; index < end; index += 1) {
-    labels.push(stepLabel(claim.steps[index]));
-  }
-  return labels;
-}
-
-function activeIds(employees: ExpenseEmployee[]): string[] {
-  return employees.filter((employee) => employee.active).map((employee) => employee.id);
-}
-
-// The takeover history detail names the skipped stages: team-lead steps are
-// recorded under their "team lead" label (they have no role id), role steps
-// under their role id.
-function takeoverDetail(
-  actor: ExpenseEmployee,
-  reason: string,
-  skippedLabels: string[],
-): string {
-  const skipped = skippedLabels.length > 0 ? `: ${skippedLabels.join(", ")}` : "";
-  return `Took over as ${actor.role?.displayName ?? "unknown"} (reason: ${reason}); skipped ${skippedLabels.length} earlier stage(s)${skipped}`;
+// One intermediate step auto-skipped by a positional delegation (ADR-0017):
+// the step is stamped skipped and a 'skipped' event names the delegation so
+// the timeline explains why the stage was passed over.
+function delegationSkipDetail(delegatee: ExpenseEmployee): string {
+  return `Skipped: delegated to ${delegatee.name}`;
 }
 
 export type ExpenseErrorCode = "unauthorized" | "validation" | "not-found" | "conflict" | "too-large";
@@ -130,6 +121,14 @@ export function isExpenseError(error: unknown): error is ExpenseError {
 }
 
 type IdFactory = (prefix: string) => string;
+
+// Resolves an organization's configured absence auto-skip timeout (the
+// settings seam lives on the admin store, ADR-0018). The expense commands
+// read the value through this seam so the lazy read path and the sweep
+// worker always enforce the same configured timeout.
+export type AbsenceTimeoutReader = {
+  getAbsenceTimeoutDays(organizationId: string): Promise<number>;
+};
 
 export type ExpenseCommands = {
   createDraft(actorId: string, input: CreateExpenseDraftInput): Promise<ExpenseClaim>;
@@ -148,13 +147,36 @@ export type ExpenseCommands = {
   submitClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
   rejectClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
-  takeOverClaim(actorId: string, claimId: string, reasonCode: string): Promise<ExpenseClaim>;
+  // Delegation (ADR-0017): the Superadmin re-points an in-flight claim's
+  // current task to another specific person without acting on it. A
+  // required reason is recorded as a 'delegated' event; when the
+  // delegatee's role appears at a later pending step, the intermediate
+  // pending steps are each auto-skipped with their own 'skipped' event and
+  // the claim lands at that step. A held claim stays held - the new actor
+  // resumes it (ADR-0016).
+  delegateClaim(actorId: string, claimId: string, delegateeId: string, reason: string): Promise<ExpenseClaim>;
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  // Hold (ADR-0016): pauses a claim at its current stage. Only the claim's
+  // current stage actor may hold, their role must carry the can_hold
+  // capability, and a reason is required; the hold is recorded as a 'held'
+  // history event with the reason attached. Resume is positional: the
+  // current stage actor unpauses, recording a 'resumed' event.
+  holdClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
+  resumeClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  // The admin held-claims oversight view (ADR-0016): every held claim in
+  // the organization with display names resolved, for console users only.
+  listHeldClaims(actorId: string): Promise<HeldClaimRow[]>;
   listFinancePaymentQueue(actorId: string): Promise<ExpenseClaim[]>;
   updateComments(actorId: string, claimId: string, comments: string): Promise<ExpenseClaim>;
   listActivity(actorId: string, targetEmployeeId?: string): Promise<ActivityEntry[]>;
   listOrganizationActivity(actorId: string): Promise<ActivityEntry[]>;
+  // System-level absence sweep (ADR-0018): enforces the organization's
+  // configured absence timeout across all of its in-flight claims, applying
+  // the exact same catch-up as the lazy read path and persisting the
+  // resulting skips. Not an actor command: the scheduled sweep worker calls
+  // it with no employee context. Returns the claims it advanced.
+  sweepAbsentClaims(organizationId: string): Promise<ExpenseClaim[]>;
 };
 
 export function createExpenseCommands({
@@ -162,11 +184,16 @@ export function createExpenseCommands({
   blobStore,
   now = () => new Date(),
   idFactory = (prefix) => `${prefix}-${crypto.randomUUID()}`,
+  absenceTimeout,
 }: {
   store: ExpenseStore;
   blobStore: BlobStore;
   now?: () => Date;
   idFactory?: IdFactory;
+  // The settings seam (ADR-0018): without it the 3-day default applies,
+  // which is also what the seam resolves for an organization with no
+  // settings row yet.
+  absenceTimeout?: AbsenceTimeoutReader;
 }): ExpenseCommands {
   async function requireEmployee(actorId: string): Promise<ExpenseEmployee> {
     const employee = await store.getEmployee(actorId);
@@ -176,55 +203,9 @@ export function createExpenseCommands({
     return employee;
   }
 
-  // A pending stage is absent when its role is vacant (no assigned actor,
-  // or the assigned actor is not an active employee) or the assigned actor
-  // has not decided within 3 days of the stage becoming current. Either
-  // condition auto-skips the stage to the next one. The terminal stage is
-  // never auto-skipped: there is nowhere to advance it to, and payment
-  // completion must not be silently bypassed.
-  function catchUpAbsentStages(claim: ExpenseClaim, activeEmployeeIds: Set<string>): boolean {
-    if (claim.status !== "in-approval" && claim.status !== "in-finance") return false;
-    let changed = false;
-    for (;;) {
-      const index = claim.steps.findIndex((step) => step.status === "pending");
-      if (index === -1) break;
-      if (isTerminalIndex(claim, index)) {
-        if (claim.status === "in-approval") {
-          claim.status = "in-finance";
-          changed = true;
-        }
-        break;
-      }
-      const step = claim.steps[index];
-      const vacant = !step.assignedActorId || !activeEmployeeIds.has(step.assignedActorId);
-      const since = claim.currentStageSince ?? claim.submittedAt ?? claim.createdAt;
-      const timedOut = now().getTime() - new Date(since).getTime() >= ABSENCE_TIMEOUT_MS;
-      if (!vacant && !timedOut) break;
-      const decidedAt = now().toISOString();
-      step.status = "skipped";
-      step.decidedAt = decidedAt;
-      claim.history.push({
-        id: idFactory("history"),
-        kind: "skipped",
-        detail: vacant
-          ? "Skipped: no active employee holds this stage"
-          : "Skipped: no response within 3 days",
-        createdAt: decidedAt,
-      });
-      // Advance to the next pending step: steps between could have been
-      // auto-skipped by an amount guard at submission and must be passed
-      // over, never stranding the claim on an already-skipped stage.
-      const nextIndex = claim.steps.findIndex(
-        (candidate, candidateIndex) => candidateIndex > index && candidate.status === "pending",
-      );
-      const next = claim.steps[nextIndex];
-      claim.currentStage = next.roleId ?? undefined;
-      claim.currentActorId = next.assignedActorId;
-      claim.currentStageSince = decidedAt;
-      claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
-      changed = true;
-    }
-    return changed;
+  async function absenceTimeoutDaysFor(organizationId: string): Promise<number> {
+    if (!absenceTimeout) return DEFAULT_ABSENCE_TIMEOUT_DAYS;
+    return absenceTimeout.getAbsenceTimeoutDays(organizationId);
   }
 
   // The runtime half of amount guards (ADR-0012): after a claim's steps
@@ -262,9 +243,17 @@ export function createExpenseCommands({
     }
   }
 
+  // The lazy read-path backstop (ADR-0018): every claim read catches the
+  // claim up against the org's configured absence timeout before the caller
+  // sees it, so the read path behaves identically whether or not the
+  // scheduled sweep has run. The shared catch-up lives in absence-skip.ts;
+  // this wrapper resolves the timeout, bumps the version, and persists.
   async function catchUp(claim: ExpenseClaim): Promise<ExpenseClaim> {
-    const employees = await store.listEmployees(claim.organizationId);
-    if (catchUpAbsentStages(claim, new Set(activeIds(employees)))) {
+    const [employees, absenceTimeoutDays] = await Promise.all([
+      store.listEmployees(claim.organizationId),
+      absenceTimeoutDaysFor(claim.organizationId),
+    ]);
+    if (catchUpAbsentStages(claim, employees, absenceTimeoutDays, now, idFactory)) {
       claim.version += 1;
       await store.updateClaim(claim);
     }
@@ -273,10 +262,12 @@ export function createExpenseCommands({
 
   async function catchUpAll(claims: ExpenseClaim[], organizationId: string): Promise<ExpenseClaim[]> {
     if (claims.length === 0) return claims;
-    const employees = await store.listEmployees(organizationId);
-    const employeeIds = new Set(activeIds(employees));
+    const [employees, absenceTimeoutDays] = await Promise.all([
+      store.listEmployees(organizationId),
+      absenceTimeoutDaysFor(organizationId),
+    ]);
     for (const claim of claims) {
-      if (catchUpAbsentStages(claim, employeeIds)) {
+      if (catchUpAbsentStages(claim, employees, absenceTimeoutDays, now, idFactory)) {
         claim.version += 1;
         await store.updateClaim(claim);
       }
@@ -629,7 +620,13 @@ export function createExpenseCommands({
       claim.currentStage = claim.steps[currentIndex].roleId ?? undefined;
       claim.currentActorId = claim.steps[currentIndex].assignedActorId;
       claim.currentStageSince = submittedAt;
-      catchUpAbsentStages(claim, new Set(activeIds(employees)));
+      await catchUpAbsentStages(
+        claim,
+        employees,
+        await absenceTimeoutDaysFor(claim.organizationId),
+        now,
+        idFactory,
+      );
       await store.updateClaim(claim);
       return claim;
     },
@@ -648,6 +645,7 @@ export function createExpenseCommands({
       if (index === -1 || isTerminalIndex(claim, index) || claim.status !== "in-approval") {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
       }
+      requireNotHeld(claim);
       // Pool semantics (stories 13/14): any eligible pool member may approve
       // the current stage, not only the member it was assigned to. The
       // assignment is the default actor; the pool is the authority.
@@ -675,7 +673,13 @@ export function createExpenseCommands({
       claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
       claim.version += 1;
       const employees = await store.listEmployees(claim.organizationId);
-      catchUpAbsentStages(claim, new Set(activeIds(employees)));
+      await catchUpAbsentStages(
+        claim,
+        employees,
+        await absenceTimeoutDaysFor(claim.organizationId),
+        now,
+        idFactory,
+      );
       await store.updateClaim(claim);
       return claim;
     },
@@ -686,6 +690,7 @@ export function createExpenseCommands({
       if (index === -1 || (claim.status !== "in-approval" && claim.status !== "in-finance")) {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
       }
+      requireNotHeld(claim);
       const trimmedReason = reason.trim();
       if (!trimmedReason) {
         throw new ExpenseError("validation", "A reason is required to reject a claim.");
@@ -707,104 +712,93 @@ export function createExpenseCommands({
       return claim;
     },
 
-    async takeOverClaim(actorId, claimId, reasonCode) {
+    async delegateClaim(actorId, claimId, delegateeId, reason) {
       const actor = await requireEmployee(actorId);
+      // Delegation is a Superadmin-only built-in (ADR-0015/0017): the
+      // administrator re-routes a claim but never acts on it, and the
+      // privilege is not a toggle.
+      if (!actor.role || actor.role.code !== SUPERADMIN_ROLE_CODE) {
+        throw new ExpenseError("unauthorized", "Only Superadmin can delegate a claim.");
+      }
       const claimRow = await store.getClaim(claimId);
       if (!claimRow || claimRow.organizationId !== actor.organizationId) {
         throw new ExpenseError("not-found", "Expense claim does not exist.");
       }
       const claim = await catchUp(claimRow);
-      if (claim.requesterId === actorId) {
-        throw new ExpenseError("unauthorized", "You cannot take over your own expense claim.");
-      }
       if (claim.status !== "in-approval" && claim.status !== "in-finance") {
-        throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
+        throw new ExpenseError("conflict", "Only an in-flight claim can be delegated.");
       }
-      // Validated as free text, not against an admin-managed reason-code
-      // catalog (issue #29 calls for the latter): building that catalog is
-      // out of scope for this pass and tracked as follow-up work.
-      const reason = reasonCode.trim();
-      if (!reason) {
-        throw new ExpenseError("validation", "A reason code is required to take over a claim.");
+      const trimmedReason = reason.trim();
+      if (!trimmedReason) {
+        throw new ExpenseError("validation", "A reason is required to delegate a claim.");
       }
-      if (reason.length > MAX_REASON_CODE_LENGTH) {
-        throw new ExpenseError("validation", "Reason code is too long.");
+      if (trimmedReason.length > MAX_REASON_CODE_LENGTH) {
+        throw new ExpenseError("validation", "Reason is too long.");
       }
-      if (!actor.role) {
-        throw new ExpenseError("unauthorized", "You have no role that is eligible to take over this claim.");
+      const employees = await store.listEmployees(claim.organizationId);
+      const delegatee = employees.find((candidate) => candidate.id === delegateeId);
+      if (!delegatee || !delegatee.active) {
+        throw new ExpenseError("validation", "Choose an active employee to delegate to.");
       }
-      const actorRole = actor.role;
+      // The requester can never act on their own claim, and re-pointing the
+      // task to the person already holding it is a no-op: both would strand
+      // the claim, so both are refused before anything is written.
+      if (delegatee.id === claim.requesterId) {
+        throw new ExpenseError("unauthorized", "A claim cannot be delegated to its requester.");
+      }
+      if (delegatee.id === claim.currentActorId || delegatee.id === actorId) {
+        throw new ExpenseError("validation", "Choose a different person to delegate to.");
+      }
       const currentIndex = claim.steps.findIndex((step) => step.status === "pending");
       if (currentIndex === -1) {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
       }
-      const employees = await store.listEmployees(claim.organizationId);
-      const requester = employees.find((candidate) => candidate.id === claim.requesterId);
-      // Positional takeover: a later step targeting the actor's own role.
-      // The step must still be pending - a later step could have been
-      // auto-skipped by an amount guard at submission, and landing the
-      // claim on an already-skipped stage would strand it there with no
-      // working next action. Team-lead steps carry a null role id, so they
-      // can never be a takeover target.
-      const targetIndex = claim.steps.findIndex(
-        (step, index) => index > currentIndex && step.status === "pending" && step.roleId === actorRole.id,
-      );
-      // Apex bypass: when the actor holds Finance Head or Superadmin and no
-      // later step targets their role, they take over by skipping every
-      // pending stage up to the terminal stage and assigning the terminal
-      // stage to the first eligible holder of its role (a Finance Executive)
-      // rather than to themselves (story 19/20). The terminal stage itself is
-      // never skipped by any takeover.
-      const isApexRole = actorRole.code === FINANCE_HEAD_ROLE_CODE || actorRole.code === SUPERADMIN_ROLE_CODE;
-      const apexTakeover = isApexRole && targetIndex === -1;
       const decidedAt = now().toISOString();
-      if (apexTakeover) {
-        const terminalStepIndex = terminalIndex(claim);
-        const skippedLabels = skippedStepLabels(claim, currentIndex, terminalStepIndex);
-        for (let index = currentIndex; index < terminalStepIndex; index += 1) {
-          claim.steps[index].status = "skipped";
-          claim.steps[index].decidedAt = decidedAt;
-        }
-        const terminalTarget = stepTarget(claim.steps[terminalStepIndex]);
-        const eligible = requester
-          ? employees.find((candidate) => isEligible(requester, candidate, terminalTarget))
-          : undefined;
-        claim.steps[terminalStepIndex].assignedActorId = eligible?.id;
-        claim.history.push({
-          id: idFactory("history"),
-          kind: "takeover",
-          actorId,
-          detail: takeoverDetail(actor, reason, skippedLabels),
-          createdAt: decidedAt,
-        });
-        claim.currentStage = claim.steps[terminalStepIndex].roleId ?? undefined;
-        claim.currentActorId = eligible?.id;
-        claim.currentStageSince = decidedAt;
-        claim.status = "in-finance";
-        claim.version += 1;
-        await store.updateClaim(claim);
-        return claim;
-      }
-      if (targetIndex === -1) {
-        throw new ExpenseError("unauthorized", "You are not eligible to take over this claim.");
-      }
-      const skippedLabels = skippedStepLabels(claim, currentIndex, targetIndex);
-      for (let index = currentIndex; index < targetIndex; index += 1) {
-        claim.steps[index].status = "skipped";
-        claim.steps[index].decidedAt = decidedAt;
-      }
-      claim.steps[targetIndex].assignedActorId = actorId;
       claim.history.push({
         id: idFactory("history"),
-        kind: "takeover",
+        kind: "delegated",
         actorId,
-        detail: takeoverDetail(actor, reason, skippedLabels),
+        detail: delegationDetail(delegatee, trimmedReason),
         createdAt: decidedAt,
       });
-      claim.currentStage = claim.steps[targetIndex].roleId ?? undefined;
-      claim.currentActorId = actorId;
+      // Positional delegation (ADR-0017): when the delegatee's role appears
+      // at a later pending step, the intermediate pending steps are each
+      // auto-skipped (one 'skipped' event per step, each naming the
+      // delegation) and the claim lands at that step. The step must still
+      // be pending - a later step auto-skipped by an amount guard is never
+      // a delegation target, or the claim would strand on a decided stage.
+      const targetIndex =
+        delegatee.role === null
+          ? -1
+          : claim.steps.findIndex(
+              (step, index) =>
+                index > currentIndex && step.status === "pending" && step.roleId === delegatee.role!.id,
+            );
+      if (targetIndex === -1) {
+        // Same-stage delegation: only the person changes, the flow keeps
+        // its position.
+        claim.steps[currentIndex].assignedActorId = delegatee.id;
+      } else {
+        for (let index = currentIndex; index < targetIndex; index += 1) {
+          claim.steps[index].status = "skipped";
+          claim.steps[index].decidedAt = decidedAt;
+          claim.history.push({
+            id: idFactory("history"),
+            kind: "skipped",
+            actorId,
+            detail: delegationSkipDetail(delegatee),
+            createdAt: decidedAt,
+          });
+        }
+        claim.steps[targetIndex].assignedActorId = delegatee.id;
+      }
+      const landedIndex = targetIndex === -1 ? currentIndex : targetIndex;
+      claim.currentStage = claim.steps[landedIndex].roleId ?? undefined;
+      claim.currentActorId = delegatee.id;
+      // The new actor gets a fresh absence window (mirrors resume, ADR-0016):
+      // a long-stuck claim must not be swept the moment it is re-pointed.
       claim.currentStageSince = decidedAt;
-      claim.status = isTerminalIndex(claim, targetIndex) ? "in-finance" : "in-approval";
+      claim.status = isTerminalIndex(claim, landedIndex) ? "in-finance" : "in-approval";
       claim.version += 1;
       await store.updateClaim(claim);
       return claim;
@@ -815,6 +809,7 @@ export function createExpenseCommands({
       if (claim.status !== "in-finance" || step.status !== "pending") {
         throw new ExpenseError("conflict", "This claim is not waiting for Finance verification.");
       }
+      requireNotHeld(claim);
       const verifiedAt = now().toISOString();
       step.status = "verified";
       step.decidedAt = verifiedAt;
@@ -830,6 +825,7 @@ export function createExpenseCommands({
         throw new ExpenseError("conflict", "This claim is not ready for payment.");
       }
       if (step.status !== "verified") throw new ExpenseError("conflict", "Verify the claim before marking payment.");
+      requireNotHeld(claim);
       const paidAt = now().toISOString();
       step.status = "paid";
       step.decidedAt = paidAt;
@@ -840,6 +836,110 @@ export function createExpenseCommands({
       claim.version += 1;
       await store.updateClaim(claim);
       return claim;
+    },
+
+    async holdClaim(actorId, claimId, reason) {
+      const { actor, claim } = await requireClaimForActor(
+        actorId,
+        claimId,
+        "You cannot hold your own expense claim.",
+      );
+      if (claim.status !== "in-approval" && claim.status !== "in-finance") {
+        throw new ExpenseError("conflict", "Only an in-flight claim can be held.");
+      }
+      if (claim.heldAt) {
+        throw new ExpenseError("conflict", "This claim is already held.");
+      }
+      if (claim.currentActorId !== actorId) {
+        throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
+      }
+      // Holding is a per-role privilege (ADR-0015/0016): the actor's own
+      // role must carry the can_hold capability, resolved from the role
+      // record. Superadmin holds it by construction.
+      if (!resolveRoleCapabilities(actor.role).canHold) {
+        throw new ExpenseError("unauthorized", "Your role does not have the hold privilege.");
+      }
+      const trimmedReason = reason.trim();
+      if (!trimmedReason) {
+        throw new ExpenseError("validation", "A reason is required to hold a claim.");
+      }
+      const heldAt = now().toISOString();
+      claim.heldAt = heldAt;
+      claim.heldBy = actorId;
+      claim.heldReason = trimmedReason;
+      claim.history.push({
+        id: idFactory("history"),
+        kind: "held",
+        actorId,
+        detail: trimmedReason,
+        createdAt: heldAt,
+      });
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
+    },
+
+    async resumeClaim(actorId, claimId) {
+      const { claim } = await requireClaimForActor(
+        actorId,
+        claimId,
+        "You cannot resume your own expense claim.",
+      );
+      if (claim.status !== "in-approval" && claim.status !== "in-finance") {
+        throw new ExpenseError("conflict", "Only an in-flight claim can be resumed.");
+      }
+      if (!claim.heldAt) {
+        throw new ExpenseError("conflict", "This claim is not held.");
+      }
+      // Resume authority is positional (ADR-0016): the claim's current
+      // stage actor unpauses it. Delegation (ADR-0017) re-points the actor,
+      // so the new actor resumes instead - no hold capability is needed.
+      if (claim.currentActorId !== actorId) {
+        throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
+      }
+      const resumedAt = now().toISOString();
+      claim.heldAt = undefined;
+      claim.heldBy = undefined;
+      claim.heldReason = undefined;
+      // The hold pauses the absence clock: the resumed stage gets a fresh
+      // timeout window, so a long hold never sweeps the claim the moment it
+      // is unpaused.
+      claim.currentStageSince = resumedAt;
+      claim.history.push({ id: idFactory("history"), kind: "resumed", actorId, createdAt: resumedAt });
+      claim.version += 1;
+      await store.updateClaim(claim);
+      return claim;
+    },
+
+    async listHeldClaims(actorId) {
+      const employee = await requireEmployee(actorId);
+      if (!canAccessAdminConsole(employee)) {
+        throw new ExpenseError("unauthorized", "Only the admin console can view held claims.");
+      }
+      const [claims, employees] = await Promise.all([
+        store.listClaimsForOrganization(employee.organizationId),
+        store.listEmployees(employee.organizationId),
+      ]);
+      const names = new Map(employees.map((candidate) => [candidate.id, candidate.name]));
+      const roleNames = new Map(
+        employees
+          .filter((candidate) => candidate.role)
+          .map((candidate) => [candidate.role!.id, candidate.role!.displayName]),
+      );
+      return claims
+        .filter((claim) => claim.heldAt)
+        .map((claim) => ({
+          claimId: claim.id,
+          ref: claim.ref,
+          title: claim.title,
+          heldBy: claim.heldBy ? (names.get(claim.heldBy) ?? claim.heldBy) : "Unknown",
+          heldReason: claim.heldReason ?? "",
+          heldAt: claim.heldAt!,
+          // A team-lead stage carries no role id; the stage labels itself.
+          stage: claim.currentStage
+            ? (roleNames.get(claim.currentStage) ?? claim.currentStage)
+            : "Team lead",
+        }));
     },
 
     async listFinancePaymentQueue(actorId) {
@@ -893,9 +993,38 @@ export function createExpenseCommands({
         "rejected",
         "verified",
         "paid",
-        "takeover",
+        "delegated",
         "comment",
       ]);
+    },
+
+    // The sweep enforces the configured absence timeout even when nobody
+    // opens the app (ADR-0018). Each claim passes through the same shared
+    // catch-up as the lazy read path, so the two enforcement paths cannot
+    // drift. Concurrent runs are safe: the store's optimistic version check
+    // lets exactly one writer persist a claim, and a claim already advanced
+    // by another pass is a conflict, not a double skip. A conflicting write
+    // is treated as "someone else got there first" and skipped, so one
+    // worker crashing over a race can never abort a pass.
+    async sweepAbsentClaims(organizationId) {
+      const [claims, employees, absenceTimeoutDays] = await Promise.all([
+        store.listClaimsForOrganization(organizationId),
+        store.listEmployees(organizationId),
+        absenceTimeoutDaysFor(organizationId),
+      ]);
+      const advanced: ExpenseClaim[] = [];
+      for (const claim of claims) {
+        if (!catchUpAbsentStages(claim, employees, absenceTimeoutDays, now, idFactory)) continue;
+        claim.version += 1;
+        try {
+          await store.updateClaim(claim);
+        } catch (error) {
+          if (isExpenseError(error) && error.code === "conflict") continue;
+          throw error;
+        }
+        advanced.push(claim);
+      }
+      return advanced;
     },
   };
 }

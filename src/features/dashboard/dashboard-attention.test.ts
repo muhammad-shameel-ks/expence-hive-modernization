@@ -139,4 +139,40 @@ describe("groupAttentionItems", () => {
   it("returns empty groups for an empty list", () => {
     expect(groupAttentionItems([], ME, ME_ID)).toEqual({ pending: [] });
   });
+
+  it("excludes held claims even when I am the assigned actor (ADR-0016)", () => {
+    const list = [
+      expense({
+        id: "a",
+        status: "in-approval",
+        nextActorId: ME_ID,
+        held: { by: "Muhammad Shameel", at: "2026-08-05T10:00:00Z", reason: "Awaiting docs" },
+      }),
+      expense({ id: "b", status: "in-approval", nextActorId: ME_ID }),
+    ];
+    const { pending } = groupAttentionItems(list, ME, ME_ID);
+    expect(pending.map((e) => e.id)).toEqual(["b"]);
+  });
+
+  it("excludes held in-finance claims even from a terminal pool member", () => {
+    const list = [
+      expense({
+        id: "a",
+        status: "in-finance",
+        requesterId: "emp-requester",
+        nextActorId: "emp-finance-1",
+        held: { by: "Rishikesh", at: "2026-08-05T10:00:00Z", reason: "Payment block" },
+        steps: [
+          {
+            id: "s-1",
+            roleId: "role-finance-executive",
+            roleName: "Finance Executive",
+            status: "pending",
+          },
+        ],
+      }),
+    ];
+    const { pending } = groupAttentionItems(list, "Rishikesh 2", "emp-finance-2", "role-finance-executive");
+    expect(pending).toEqual([]);
+  });
 });

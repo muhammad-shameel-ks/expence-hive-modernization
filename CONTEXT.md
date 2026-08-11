@@ -73,8 +73,14 @@ _Avoid_: Requested amount, total spend
 
 **Auto-skip**:
 A node that is skipped by an amount guard rather than by a person.
-It is recorded as a distinct history event kind (`auto-skipped`) whose actor is the policy, with the guard reason recorded, so the journey timeline and analytics distinguish it from a takeover skip (ADR-0013).
+It is recorded as a distinct history event kind (`auto-skipped`) whose actor is the policy, with the guard reason recorded, so the journey timeline and analytics distinguish it from any human skip (ADR-0013).
 _Avoid_: Policy skip, automatic waiver
+
+**Absence auto-skip**:
+A pending stage skipped because its assigned actor has not decided within the company's configured absence timeout, or because the stage is vacant (no active employee holds it).
+The timeout is a single company-wide setting, defaulting to 3 days, configurable by Superadmin in the admin panel and enforced by a scheduled sweep job plus the lazy read-path backstop (ADR-0018).
+Held claims are exempt: a hold outranks the timeout (ADR-0016).
+_Avoid_: Timeout skip, stale-stage skip, no-response skip
 
 **Amount overrun approval**:
 Retired concept: the requirement of an extra higher-up approval when a claim exceeds an amount.
@@ -82,25 +88,47 @@ It is now expressed as an ordinary amount guard on a node, e.g. "Finance Head ap
 _Avoid_: Over-limit approval, escalation node
 
 **Takeover**:
-An approver acting on a claim ahead of its currently assigned step, jumping the pending steps in between.
-Implemented client-side by `canTakeOver` (`next-action.ts`) and server-side by `takeOverClaim` (`commands.ts`); recorded as a `takeover` history event with a free-text reason.
-Two shapes exist: apex bypass and positional bypass (below).
+Retired concept (ADR-0017): an approver acting on a claim ahead of its currently assigned step, jumping the pending steps in between, recorded as a `takeover` history event.
+Takeover is removed entirely and replaced by delegation: the administrator re-routes a claim but never acts on it.
 _Avoid_: Override, escalate, reassign
 
 **Apex bypass**:
-The unconditional form of takeover: Finance Head or Superadmin can take over any in-approval claim regardless of their own position in its steps, skipping every pending step up to (not including) the terminal step.
-Distinct from positional bypass, which requires a matching later step.
+Retired concept (ADR-0017): the unconditional form of takeover, where Finance Head or Superadmin could jump every pending step and act on a claim.
+Replaced by delegation with positional auto-skip: when the admin delegates to someone higher in the flow, the intermediate pending steps skip to that person (ADR-0017).
 _Avoid_: Admin override, full bypass
 
 **Positional bypass**:
-The conditional form of takeover: a role other than Finance Head/Superadmin can take over a claim only if a later pending step targets that role.
-It skips the intervening steps and assigns the matched step to the actor.
+Retired concept (ADR-0017): the conditional form of takeover, where a role could jump ahead only when a later pending step targeted that role.
+Removed with takeover; no remaining feature allows a non-admin to advance a claim ahead of its steps.
 _Avoid_: Skip-ahead, jump approval
 
+**Delegation**:
+The Superadmin-only action of re-pointing an in-flight claim's current task to another specific person, without acting on the claim.
+Delegating to someone whose role sits later in the claim's frozen steps auto-skips the intermediate pending steps and lands the claim at that step; any other target (same stage, or a role absent from the flow) acts at the current stage - only the person changes.
+A required reason is recorded as a `delegated` history event plus one `skipped` event per intermediate step (ADR-0017).
+Delegating a held claim does not clear the hold; the new actor resumes it (ADR-0016).
+_Avoid_: Hand off, reassign, takeover, reassign task
+
+**Hold**:
+A claim paused at any stage by its current actor (a role with the hold privilege), recorded as a `held` history event with a required reason.
+Held claims keep their flow position, show a Held badge everywhere, and are frozen against terminal actions.
+The current stage actor resumes (a `resumed` event); Superadmin keeps a held-claims oversight view, and holds are exempt from the absence sweep (ADR-0016).
+_Avoid_: Freeze, pause, on-hold claim
+
+**Privilege toggle**:
+One of the six fixed role capabilities stored per role record - submit claims, approve/reject, finance verify/pay, hold, view org-wide activity, access the admin console - editable for the five predefined roles and for custom roles.
+Delegation and company auto-skip configuration are Superadmin-only built-ins and are never toggles (ADR-0015).
+_Avoid_: Permission flag, role grant, capability switch
+
 **Expense drawer**:
-The single right-side drawer component (`ExpenseDrawer`) that renders a claim's facts, journey timeline, and next actions (approve/reject, verify/pay, takeover, download summary).
+The single right-side drawer component (`ExpenseDrawer`) that renders a claim's facts, journey timeline, and next actions (approve/reject, verify/pay, hold, download summary, and Superadmin-only delegation).
 Used from both the dashboard and the payment queue (ADR-0014) - one component, multiple call sites, no per-feature drawer variants.
 _Avoid_: Detail panel, claim modal, side sheet
+
+**Department head**:
+The manager a department is created with; departments require a head (ADR-0019).
+A new employee's manager auto-defaults to their department head at creation, editable in the form and afterward.
+_Avoid_: Department manager, dept lead, department owner
 
 **Receipt panel**:
 The payment queue's left/inline panel that shows only the claim's receipt PDF (or a "no receipt attached" fallback) while the table shrinks beside it.

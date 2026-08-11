@@ -65,7 +65,7 @@ export default async function OrganizationActivityPage() {
           Organization activity
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-          Every approval, rejection, verification, payment, takeover, and comment made across the organization.
+          Every approval, rejection, verification, payment, delegation, and comment made across the organization.
         </p>
 
         <div className="mt-8">

@@ -79,9 +79,12 @@ export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: Payme
   });
 }
 
-export type PaymentStatus = "Paid" | "In approval" | "Not Paid" | "Rejected";
+export type PaymentStatus = "Paid" | "In approval" | "Not Paid" | "Rejected" | "Held";
 
 export function paymentStatusFor(claim: ExpenseClaim): PaymentStatus {
+  // A held claim keeps its flow status but is visibly marked Held and
+  // frozen against verify/pay (ADR-0016), mirroring the rejected treatment.
+  if (claim.heldAt) return "Held";
   if (claim.status === "paid") return "Paid";
   if (claim.status === "rejected") return "Rejected";
   if (claim.status === "in-approval") return "In approval";

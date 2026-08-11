@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import { expenses, type Expense } from "./mock-data";
-import { filterAndSortExpenses } from "./expense-query";
+import {
+  expenseFilterKey,
+  expenseFilterParams,
+  filterAndSortExpenses,
+  parseExpenseSearchParams,
+  QUICK_STATUS_CHIPS,
+  type ExpenseFilter,
+  type ExpenseQuery,
+} from "./expense-query";
 
 function expense(overrides: Partial<Expense>): Expense {
   return {
@@ -37,19 +45,32 @@ describe("filterAndSortExpenses", () => {
     expect(filterAndSortExpenses(list, { query: "   " })).toHaveLength(2);
   });
 
-  it("groups statuses into the Needs action, In progress, and Paid filters", () => {
-    const ids = (filter: "All" | "Needs action" | "In progress" | "Paid") =>
-      filterAndSortExpenses(expenses, { filter }).map((e) => e.id);
+  it("filters by one-per-status chips (ADR-0021)", () => {
+    const ids = (filter: ExpenseFilter) => filterAndSortExpenses(expenses, { filter }).map((e) => e.id);
 
-    expect(ids("Needs action")).toHaveLength(1);
-    expect(ids("Needs action")).toContain("ex-team-lunch");
+    expect(ids("All")).toHaveLength(expenses.length);
+    expect(ids("draft")).toEqual(["ex-team-lunch"]);
 
-    expect(ids("In progress")).toHaveLength(5);
-    expect(ids("In progress")).toContain("ex-figma");
+    expect(ids("submitted")).toEqual(["ex-aws"]);
+    expect(ids("in-approval")).toEqual(expect.arrayContaining(["ex-flight", "ex-course"]));
+    expect(ids("approved")).toEqual(["ex-hotel"]);
+    expect(ids("in-finance")).toEqual(["ex-figma"]);
+    expect(ids("paid")).toEqual(expect.arrayContaining(["ex-snacks", "ex-taxi", "ex-karting", "ex-domain"]));
+    expect(ids("rejected")).toEqual(expect.arrayContaining(["ex-dinner", "ex-hub"]));
+  });
 
-    expect(ids("Paid")).toHaveLength(4);
-    expect(ids("Paid")).toContain("ex-snacks");
-    expect(ids("Paid")).not.toContain("ex-figma");
+  it("keeps grouped intents expressible through the status multi-select", () => {
+    // The old "Needs action" group was drafts; "In progress" covered the
+    // submitted..in-finance journey (ADR-0021 keeps them via the advanced layer).
+    const needsAction = filterAndSortExpenses(expenses, { statuses: ["draft"] }).map((e) => e.id);
+    expect(needsAction).toEqual(["ex-team-lunch"]);
+
+    const inProgress = filterAndSortExpenses(expenses, {
+      statuses: ["submitted", "in-approval", "approved", "in-finance"],
+    }).map((e) => e.id);
+    expect(inProgress).toHaveLength(5);
+    expect(inProgress).toContain("ex-figma");
+    expect(inProgress).not.toContain("ex-snacks");
   });
 
   it("sorts by amount in either direction", () => {
@@ -89,7 +110,7 @@ describe("filterAndSortExpenses", () => {
   });
 
   it("combines search and filter", () => {
-    const result = filterAndSortExpenses(expenses, { query: "team", filter: "Needs action" });
+    const result = filterAndSortExpenses(expenses, { query: "team", filter: "draft" });
     expect(result.map((e) => e.id)).toEqual(["ex-team-lunch"]);
   });
 
@@ -163,5 +184,130 @@ describe("filterAndSortExpenses", () => {
       "a",
       "b",
     ]);
+  });
+});
+
+describe("QUICK_STATUS_CHIPS", () => {
+  it("is All followed by one chip per status in STATUS_META order (ADR-0021)", () => {
+    expect(QUICK_STATUS_CHIPS.map((chip) => chip.filter)).toEqual([
+      "All",
+      "draft",
+      "submitted",
+      "in-approval",
+      "approved",
+      "in-finance",
+      "paid",
+      "rejected",
+    ]);
+  });
+
+  it("labels the paid chip Paid while the badge keeps the STATUS_META label", () => {
+    expect(QUICK_STATUS_CHIPS.find((c) => c.filter === "paid")?.label).toBe("Paid");
+    expect(QUICK_STATUS_CHIPS.find((c) => c.filter === "in-finance")?.label).toBe("In finance");
+  });
+});
+
+describe("expense URL round-trip (ADR-0021)", () => {
+  it("parses every filter field from the query string", () => {
+    const parsed = parseExpenseSearchParams(
+      "q=figma&status=approved&cats=Software,Meals&min=50&max=500&from=2026-08-01&to=2026-08-31&sort=amount&dir=asc",
+    );
+    expect(parsed).toEqual({
+      query: "figma",
+      filter: "approved",
+      categories: ["Software", "Meals"],
+      amountMin: 50,
+      amountMax: 500,
+      dateFrom: "2026-08-01",
+      dateTo: "2026-08-31",
+      sortKey: "amount",
+      sortDir: 1,
+    });
+  });
+
+  it("parses the status multi-select and lets it win over the chip on a stale URL", () => {
+    expect(parseExpenseSearchParams("statuses=submitted,paid")).toEqual({
+      statuses: ["submitted", "paid"],
+    });
+    // The chip and the multi-select never intersect (ADR-0021); the explicit
+    // list wins so a stale URL degrades to a usable view instead of nothing.
+    expect(parseExpenseSearchParams("status=approved&statuses=paid,rejected")).toEqual({
+      statuses: ["paid", "rejected"],
+    });
+  });
+
+  it("serializes the same state back to the same params", () => {
+    const query: ExpenseQuery = {
+      query: "figma",
+      filter: "approved",
+      categories: ["Software", "Meals"],
+      amountMin: 50,
+      amountMax: 500,
+      dateFrom: "2026-08-01",
+      dateTo: "2026-08-31",
+      sortKey: "amount",
+      sortDir: 1,
+    };
+    const serialized = expenseFilterParams(query).toString();
+    expect(serialized).toBe(
+      "q=figma&status=approved&cats=Software%2CMeals&min=50&max=500&from=2026-08-01&to=2026-08-31&sort=amount&dir=asc",
+    );
+    expect(parseExpenseSearchParams(serialized)).toEqual(query);
+  });
+
+  it("round-trips a partial state (defaults omitted)", () => {
+    const query: ExpenseQuery = { filter: "paid", amountMin: 100 };
+    const serialized = expenseFilterParams(query).toString();
+    expect(serialized).toBe("status=paid&min=100");
+    expect(parseExpenseSearchParams(serialized)).toEqual({ filter: "paid", amountMin: 100 });
+  });
+
+  it("omits default values entirely (All chip, date sort newest first)", () => {
+    expect(expenseFilterParams({}).toString()).toBe("");
+    expect(expenseFilterParams({ filter: "All" }).toString()).toBe("");
+    expect(expenseFilterParams({ sortKey: "date", sortDir: -1 }).toString()).toBe("");
+  });
+
+  it("keeps the sort key when it is not the default, and keeps dir only when non-default", () => {
+    expect(expenseFilterParams({ sortKey: "amount" }).toString()).toBe("sort=amount");
+    expect(expenseFilterParams({ sortKey: "amount", sortDir: 1 }).toString()).toBe("sort=amount&dir=asc");
+    expect(expenseFilterParams({ sortKey: "date", sortDir: 1 }).toString()).toBe("dir=asc");
+    // A non-default sort with the default direction keeps the key and drops dir.
+    expect(expenseFilterParams({ sortKey: "title", sortDir: 1 }).toString()).toBe("sort=title&dir=asc");
+  });
+
+  it("preserves unrelated params when serializing from a current URL", () => {
+    const current = new URLSearchParams("claim=ex-123&status=paid");
+    expect(expenseFilterParams({ filter: "rejected" }, current).toString()).toBe(
+      "claim=ex-123&status=rejected",
+    );
+  });
+
+  it("ignores malformed or unknown values instead of crashing", () => {
+    const parsed = parseExpenseSearchParams(
+      "status=bogus&statuses=paid,,approved,bogus&cats=Software,,&min=NaN&max=-5&from=08-2026&to=nope&sort=size&dir=sideways",
+    );
+    // Malformed min/max/from/to and unknown status/sort/dir fall back to defaults.
+    expect(parsed).toEqual({ statuses: ["paid", "approved"], categories: ["Software"] });
+    expect(parsed.amountMin).toBeUndefined();
+    expect(parsed.amountMax).toBeUndefined();
+    expect(parsed.sortKey).toBeUndefined();
+    expect(parsed.sortDir).toBeUndefined();
+  });
+
+  it("normalizes duplicate statuses and categories on parse", () => {
+    const parsed = parseExpenseSearchParams("statuses=paid,paid,submitted&cats=Travel,Travel");
+    expect(parsed).toEqual({ statuses: ["paid", "submitted"], categories: ["Travel"] });
+  });
+
+  it("treats an empty query string as the all-default state", () => {
+    expect(parseExpenseSearchParams("")).toEqual({});
+  });
+
+  it("is idempotent: parsing a serialized state yields an equal key", () => {
+    const state = { filter: "approved", categories: ["Software"] } satisfies ExpenseQuery;
+    const key = expenseFilterKey(state);
+    const reparsed = parseExpenseSearchParams(expenseFilterParams(state).toString());
+    expect(expenseFilterKey(reparsed)).toBe(key);
   });
 });

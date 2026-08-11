@@ -1,5 +1,7 @@
 import { AdminError } from "./commands";
 import { auditRangeBounds } from "./audit-filter";
+import { DEFAULT_ABSENCE_TIMEOUT_DAYS } from "../shared/absence-timeout";
+import { SUBMIT_ONLY_CAPABILITIES, type RoleCapabilities } from "../shared/authorization";
 import type {
   AdminDepartment,
   AdminEmployee,
@@ -21,6 +23,7 @@ export class InMemoryAdminStore implements AdminStore {
   private readonly departments: AdminDepartment[] = [];
   private readonly roles: StoredRole[];
   private readonly flows: StoredFlow[] = [];
+  private readonly absenceTimeoutDaysByOrg = new Map<string, number>();
   readonly audit: AuditEvent[] = [];
 
   constructor(employees: readonly AdminEmployee[], roles: readonly AdminRole[] = []) {
@@ -59,6 +62,53 @@ export class InMemoryAdminStore implements AdminStore {
     return employee;
   }
 
+  // All-or-nothing bulk creation mirrors the pg store's transaction: every
+  // row is written through the same path as createEmployee, and a failing
+  // row aborts the whole batch without partial writes.
+  async createEmployees(
+    organizationId: string,
+    inputs: Array<{
+      id: string;
+      name: string;
+      email: string;
+      roleId: string | null;
+      departmentId: string | null;
+      managerId: string | null;
+    }>,
+  ): Promise<AdminEmployee[]> {
+    const created: AdminEmployee[] = [];
+    for (const input of inputs) {
+      const employee = await this.createEmployee(organizationId, {
+        id: input.id,
+        name: input.name,
+        email: input.email,
+      });
+      if (input.departmentId !== null) {
+        await this.setEmployeeDepartment(employee.id, input.departmentId);
+      }
+      if (input.roleId !== null) {
+        await this.setEmployeeRole(employee.id, input.roleId);
+      }
+      if (input.managerId !== null) {
+        await this.setEmployeeManager(employee.id, input.managerId);
+      }
+      created.push(employee);
+    }
+    return created;
+  }
+
+  async findEmployeeByEmail(
+    organizationId: string,
+    email: string,
+  ): Promise<AdminEmployee | null> {
+    return (
+      [...this.employeesById.values()].find(
+        (employee) =>
+          employee.organizationId === organizationId && employee.email === email,
+      ) ?? null
+    );
+  }
+
   // Organization scoping is the caller's contract: the command layer resolves
   // the actor's organization and checks the target belongs to it before
   // calling this store, matching the pg store which is also called only from
@@ -67,7 +117,12 @@ export class InMemoryAdminStore implements AdminStore {
     const employee = this.employeesById.get(employeeId);
     const role = this.roles.find((candidate) => candidate.id === roleId);
     if (employee && role) {
-      employee.role = { id: role.id, code: role.code, displayName: role.displayName };
+      employee.role = {
+        id: role.id,
+        code: role.code,
+        displayName: role.displayName,
+        capabilities: role.capabilities,
+      };
     }
   }
 
@@ -111,14 +166,26 @@ export class InMemoryAdminStore implements AdminStore {
     if (duplicate) {
       throw new AdminError("validation", `A department named "${input.name}" already exists.`);
     }
+    const head = this.employeesById.get(input.headId) ?? null;
     const department: AdminDepartment = {
       id: `dept-${crypto.randomUUID()}`,
       organizationId,
       name: input.name,
       active: true,
+      headId: input.headId,
+      head: head ? { id: head.id, name: head.name } : null,
     };
     this.departments.push(department);
     return department;
+  }
+
+  async setDepartmentHead(departmentId: string, headId: string): Promise<void> {
+    const department = this.departments.find((candidate) => candidate.id === departmentId);
+    const head = this.employeesById.get(headId) ?? null;
+    if (department) {
+      department.headId = headId;
+      department.head = head ? { id: head.id, name: head.name } : null;
+    }
   }
 
   async deactivateDepartment(departmentId: string): Promise<void> {
@@ -153,9 +220,17 @@ export class InMemoryAdminStore implements AdminStore {
       departmentId: null,
       active: true,
       locked: false,
+      capabilities: input.capabilities ?? SUBMIT_ONLY_CAPABILITIES,
     };
     this.roles.push(role);
     return role;
+  }
+
+  async setRoleCapabilities(roleId: string, capabilities: RoleCapabilities): Promise<void> {
+    const role = this.roles.find((candidate) => candidate.id === roleId);
+    if (role) {
+      role.capabilities = { ...capabilities };
+    }
   }
 
   async deactivateRole(roleId: string): Promise<void> {
@@ -251,5 +326,26 @@ export class InMemoryAdminStore implements AdminStore {
       events: sorted.slice(offset, offset + pagination.pageSize),
       total: sorted.length,
     };
+  }
+
+  async getAbsenceTimeoutDays(organizationId: string): Promise<number> {
+    return this.absenceTimeoutDaysByOrg.get(organizationId) ?? DEFAULT_ABSENCE_TIMEOUT_DAYS;
+  }
+
+  async setAbsenceTimeoutDays(organizationId: string, days: number): Promise<void> {
+    this.absenceTimeoutDaysByOrg.set(organizationId, days);
+  }
+
+  async listOrganizations(): Promise<string[]> {
+    // Organizations are not first-class entities in this store (the pg
+    // store queries the organizations table); derive the set from every
+    // entity that references one.
+    const ids = new Set<string>();
+    for (const employee of this.employeesById.values()) ids.add(employee.organizationId);
+    for (const department of this.departments) ids.add(department.organizationId);
+    for (const role of this.roles) ids.add(role.organizationId);
+    for (const flow of this.flows) ids.add(flow.organizationId);
+    for (const organizationId of this.absenceTimeoutDaysByOrg.keys()) ids.add(organizationId);
+    return [...ids].sort();
   }
 }

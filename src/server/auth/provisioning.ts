@@ -29,6 +29,22 @@ export function createDevProvisioner({
         return existing;
       }
 
+      // Reconciliation (ADR-0019): the admin console pre-creates employee
+      // records for people who have never signed in. A known employee
+      // record picks the identity up as-is - the record is registered with
+      // the identity store, and nothing the admin set (role, department,
+      // manager, active flag) is touched.
+      const preCreated = await adminStore.findEmployeeByEmail(organizationId, normalized);
+      if (preCreated) {
+        const employee: Employee = {
+          id: preCreated.id,
+          email: normalized,
+          name: preCreated.name,
+        };
+        identityProvider.register(employee);
+        return employee;
+      }
+
       const roles = await adminStore.listRoles(organizationId);
       const defaultRole = roles.find((role) => role.code === defaultRoleCode);
       if (!defaultRole) {

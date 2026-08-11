@@ -1,4 +1,4 @@
-import { isAdminError, type AdminCommands } from "./commands";
+import { isAdminError, parseRoleCapabilities, type AdminCommands } from "./commands";
 import type { AuditFilter, FlowStepInput } from "./ports";
 import { GUARD_OPERATORS, type AmountGuardOperator } from "../shared/amount-guard";
 
@@ -13,7 +13,7 @@ function isBareDate(value: string): boolean {
   return date.toISOString().slice(0, 10) === value;
 }
 
-export function adminErrorResponse(error: { code: string }): Response {
+export function adminErrorResponse(error: { code: string; impact?: unknown }): Response {
   const status =
     error.code === "unauthorized"
       ? 403
@@ -22,7 +22,7 @@ export function adminErrorResponse(error: { code: string }): Response {
         : error.code === "conflict"
           ? 409
           : 422;
-  return Response.json({ error: error.code }, { status });
+  return Response.json({ error: error.code, impact: error.impact }, { status });
 }
 
 export function internalErrorResponse(): Response {
@@ -257,15 +257,104 @@ export async function handleCreateDepartmentRequest(
   return handle(
     request,
     (body) => {
-      const { name } = body as { name?: unknown };
-      if (typeof name !== "string") return null;
-      return { name };
+      const { name, headId } = body as { name?: unknown; headId?: unknown };
+      if (typeof name !== "string" || typeof headId !== "string") return null;
+      return { name, headId };
     },
     async (input) => {
       const department = await commands.createDepartment(actorId, input);
       return Response.json({ ok: true, department }, { status: 201 });
     },
   );
+}
+
+export async function handleSetDepartmentHeadRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { departmentId, headId } = body as { departmentId?: unknown; headId?: unknown };
+      if (typeof departmentId !== "string" || typeof headId !== "string") return null;
+      return { departmentId, headId };
+    },
+    async (input) => {
+      await commands.setDepartmentHead(actorId, input);
+      return Response.json({ ok: true });
+    },
+  );
+}
+
+export async function handleCreateEmployeeRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { name, email, roleId, departmentId, managerId } = body as {
+        name?: unknown;
+        email?: unknown;
+        roleId?: unknown;
+        departmentId?: unknown;
+        managerId?: unknown;
+      };
+      if (
+        typeof name !== "string" ||
+        typeof email !== "string" ||
+        typeof roleId !== "string" ||
+        typeof departmentId !== "string"
+      ) {
+        return null;
+      }
+      if (managerId !== undefined && managerId !== null && typeof managerId !== "string") {
+        return null;
+      }
+      return {
+        name,
+        email,
+        roleId,
+        departmentId,
+        managerId: (managerId as string | null | undefined) ?? null,
+      };
+    },
+    async (input) => {
+      const employee = await commands.createEmployee(actorId, input);
+      return Response.json({ ok: true, employee }, { status: 201 });
+    },
+  );
+}
+
+export async function handleBulkImportEmployeesRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const body = await readJsonBody(request);
+    if (body === null) {
+      return invalidBodyResponse();
+    }
+    const { csv } = body as { csv?: unknown };
+    if (typeof csv !== "string") {
+      return invalidBodyResponse();
+    }
+    const result = await commands.importEmployees(actorId, { csv });
+    if (result.failed.length > 0) {
+      // All-or-nothing: the import was refused, and the per-row failures
+      // tell the console exactly which rows were wrong and why.
+      return Response.json({ error: "validation", result }, { status: 422 });
+    }
+    return Response.json({ ok: true, result }, { status: 201 });
+  } catch (error) {
+    if (isAdminError(error)) {
+      return adminErrorResponse(error);
+    }
+    return handleUnexpectedError(error);
+  }
 }
 
 export async function handleDeactivateDepartmentRequest(
@@ -295,18 +384,85 @@ export async function handleCreateRoleRequest(
   return handle(
     request,
     (body) => {
-      const { code, displayName } = body as {
+      const { code, displayName, capabilities } = body as {
         code?: unknown;
         displayName?: unknown;
+        capabilities?: unknown;
       };
       if (typeof code !== "string" || typeof displayName !== "string") {
         return null;
       }
-      return { code, displayName };
+      // Custom roles are created with a privilege set (ADR-0015); an
+      // absent set falls back to the submit-only default, a malformed one
+      // is rejected here rather than half-written to the store.
+      const parsedCapabilities =
+        capabilities === undefined || capabilities === null
+          ? undefined
+          : parseRoleCapabilities(capabilities);
+      if (capabilities !== undefined && capabilities !== null && !parsedCapabilities) {
+        return null;
+      }
+      return { code, displayName, capabilities: parsedCapabilities ?? undefined };
     },
     async (input) => {
       const role = await commands.createRole(actorId, input);
       return Response.json({ ok: true, role }, { status: 201 });
+    },
+  );
+}
+
+export async function handleGetRoleCapabilityImpactRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { roleId, capabilities } = body as { roleId?: unknown; capabilities?: unknown };
+      if (typeof roleId !== "string") return null;
+      const parsedCapabilities = parseRoleCapabilities(capabilities);
+      if (!parsedCapabilities) return null;
+      return { roleId, capabilities: parsedCapabilities };
+    },
+    async (input) => {
+      const impact = await commands.getRoleCapabilityImpact(
+        actorId,
+        input.roleId,
+        input.capabilities,
+      );
+      return Response.json({ ok: true, ...impact });
+    },
+  );
+}
+
+export async function handleUpdateRoleCapabilitiesRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { roleId, capabilities, confirmed } = body as {
+        roleId?: unknown;
+        capabilities?: unknown;
+        confirmed?: unknown;
+      };
+      if (typeof roleId !== "string") return null;
+      const parsedCapabilities = parseRoleCapabilities(capabilities);
+      if (!parsedCapabilities) return null;
+      if (confirmed !== undefined && typeof confirmed !== "boolean") return null;
+      return { roleId, capabilities: parsedCapabilities, confirmed: confirmed === true };
+    },
+    async (input) => {
+      const result = await commands.updateRoleCapabilities(
+        actorId,
+        input.roleId,
+        input.capabilities,
+        { confirmed: input.confirmed },
+      );
+      return Response.json({ ok: true, ...result });
     },
   );
 }
@@ -439,4 +595,43 @@ export async function handleListAuditRequest(
     }
     return handleUnexpectedError(error);
   }
+}
+
+export async function handleGetAbsenceTimeoutRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const absenceTimeoutDays = await commands.getAbsenceTimeoutDays(actorId);
+    return Response.json({ absenceTimeoutDays });
+  } catch (error) {
+    if (isAdminError(error)) {
+      return adminErrorResponse(error);
+    }
+    return handleUnexpectedError(error);
+  }
+}
+
+// The company-wise absence auto-skip setting (ADR-0018): a whole number of
+// days; the command layer validates the bounds.
+export async function handleSetAbsenceTimeoutRequest(
+  request: Request,
+  commands: AdminCommands,
+  actorId: string,
+): Promise<Response> {
+  return handle(
+    request,
+    (body) => {
+      const { absenceTimeoutDays } = body as { absenceTimeoutDays?: unknown };
+      if (typeof absenceTimeoutDays !== "number" || !Number.isInteger(absenceTimeoutDays)) {
+        return null;
+      }
+      return { absenceTimeoutDays };
+    },
+    async (input) => {
+      await commands.setAbsenceTimeoutDays(actorId, input.absenceTimeoutDays);
+      return Response.json({ ok: true, absenceTimeoutDays: input.absenceTimeoutDays });
+    },
+  );
 }

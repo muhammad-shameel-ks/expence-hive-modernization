@@ -29,6 +29,18 @@ export class InMemoryExpenseStore implements ExpenseStore {
     }
   }
 
+  // Mirrors what the admin console's role-privilege editing does against
+  // the pg store (ADR-0015): lets tests verify that a role losing its
+  // action privileges mid-flow is swept forward like a vacant stage. Not
+  // part of the ExpenseStore contract; the real store is mutated through
+  // the admin commands.
+  setEmployeeRole(employeeId: string, role: ExpenseEmployee["role"]): void {
+    const employee = this.employees.find((candidate) => candidate.id === employeeId);
+    if (employee) {
+      employee.role = role;
+    }
+  }
+
   async listEmployees(organizationId: string): Promise<ExpenseEmployee[]> {
     return this.employees.filter((employee) => employee.organizationId === organizationId);
   }

@@ -110,7 +110,9 @@ function renderPaymentStatus(claim: ExpenseClaim, helpers: PaymentQueueColumnHel
             ? "bg-red-500/15 text-red-700 dark:text-red-400"
             : paymentStatus === "Paid"
               ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-              : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+              : paymentStatus === "Held"
+                ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
+                : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
         )}
       >
         {paymentStatus}

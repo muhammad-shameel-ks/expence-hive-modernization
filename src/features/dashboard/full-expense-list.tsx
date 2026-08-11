@@ -5,6 +5,7 @@ import { useState } from "react";
 import { Plus } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { ExpenseDrawer } from "./expense-drawer";
+import { ExpenseFilterSection } from "./expense-filter-section";
 import { ExpenseTable } from "./expense-table";
 import type { Expense } from "./mock-data";
 
@@ -14,12 +15,15 @@ export function FullExpenseList({
   currentUserId,
   currentUserRoleId,
   currentUserRoleCode,
+  currentUserCanHold,
 }: {
   expenses: Expense[];
   currentUser: string;
   currentUserId?: string;
   currentUserRoleId?: string;
   currentUserRoleCode?: string;
+  /** Whether the viewer's role carries the can_hold capability (ADR-0015/0016). */
+  currentUserCanHold?: boolean;
 }) {
   const [selected, setSelected] = useState<Expense | null>(null);
   const [open, setOpen] = useState(false);
@@ -45,14 +49,18 @@ export function FullExpenseList({
           </a>
         </Button>
       </header>
-      <ExpenseTable
-        expenses={expenses}
-        currentUser={currentUser}
-        currentUserId={currentUserId}
-        onOpen={openExpense}
-        searchable
-        filterable
-      />
+      <ExpenseFilterSection expenses={expenses}>
+        {({ rows, sort, onSort }) => (
+          <ExpenseTable
+            rows={rows}
+            sort={sort}
+            onSort={onSort}
+            currentUser={currentUser}
+            currentUserId={currentUserId}
+            onOpen={openExpense}
+          />
+        )}
+      </ExpenseFilterSection>
 
       <ExpenseDrawer
         open={open}
@@ -62,6 +70,7 @@ export function FullExpenseList({
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
         currentUserRoleCode={currentUserRoleCode}
+        currentUserCanHold={currentUserCanHold}
       />
     </section>
   );

@@ -49,6 +49,30 @@ const EMPLOYEES: ExpenseEmployee[] = [
     active: true,
     managerId: null,
   },
+  {
+    id: "emp-sanil",
+    organizationId: "org-1",
+    name: "Sanil Davis",
+    role: { id: "role-manager", code: "manager", displayName: "Manager" },
+    active: true,
+    managerId: null,
+  },
+  {
+    id: "emp-super",
+    organizationId: "org-1",
+    name: "Super Boss",
+    role: { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" },
+    active: true,
+    managerId: null,
+  },
+  {
+    id: "emp-inactive",
+    organizationId: "org-1",
+    name: "Gone Person",
+    role: { id: "role-executive", code: "executive", displayName: "Executive" },
+    active: false,
+    managerId: null,
+  },
 ];
 
 function verifiedResponse(): Response {
@@ -597,6 +621,559 @@ describe("ExpenseDrawer verification and payment workflow", () => {
 
     fireEvent.click(screen.getByRole("button", { name: "Close details" }));
     expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("ExpenseDrawer hold and resume (ADR-0016)", () => {
+  const defaultUser = "Finance Officer";
+  const defaultUserId = "emp-finance";
+
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    mockPush.mockReset();
+    downloadBlobMock.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function heldClaimResponse(): Response {
+    const held = buildClaim({
+      status: "in-finance",
+      currentStage: "role-finance-executive",
+      currentActorId: "emp-finance",
+      heldAt: "2026-08-05T12:00:00.000Z",
+      heldBy: "emp-finance",
+      heldReason: "Awaiting the missing invoice",
+      steps: [
+        {
+          id: "s-1",
+          roleId: "role-finance-head",
+          assignedActorId: "emp-pramod",
+          status: "approved",
+          decidedAt: "2026-08-05T09:00:00.000Z",
+        },
+        {
+          id: "s-2",
+          roleId: "role-finance-executive",
+          assignedActorId: "emp-finance",
+          status: "pending",
+        },
+      ],
+      history: [
+        ...BASE_HISTORY,
+        {
+          id: "h-3",
+          kind: "held",
+          actorId: "emp-finance",
+          detail: "Awaiting the missing invoice",
+          createdAt: "2026-08-05T12:00:00.000Z",
+        },
+      ],
+      version: 4,
+    });
+    return new Response(JSON.stringify({ claim: held, employees: EMPLOYEES }), { status: 200 });
+  }
+
+  function heldExpense(): Expense {
+    return buildExpense({
+      held: {
+        by: "Finance Officer",
+        at: "2026-08-05T12:00:00.000Z",
+        reason: "Awaiting the missing invoice",
+      },
+      primaryAction: undefined,
+    });
+  }
+
+  it("offers the Hold action to the current stage actor whose role can hold", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+        currentUserCanHold
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Hold" })).toBeInTheDocument();
+  });
+
+  it("hides the Hold action when the viewer's role cannot hold", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Hold" })).not.toBeInTheDocument();
+  });
+
+  it("hides the Hold action from a pool member who is not the assigned actor", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense({ nextActorId: "emp-finance-other" })}
+        currentUser="Rishikesh 2"
+        currentUserId="emp-rishikesh"
+        currentUserRoleId="role-finance-executive"
+        currentUserCanHold
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Verify for payment" })).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Hold" })).not.toBeInTheDocument();
+  });
+
+  it("holds a claim through the reason prompt, requiring a reason", async () => {
+    const fetchMock = vi.fn().mockResolvedValue(heldClaimResponse());
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+        currentUserCanHold
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hold" }));
+    expect(screen.getByRole("dialog", { name: "Hold this claim" })).toBeInTheDocument();
+
+    // An empty reason is refused client-side with an inline error.
+    fireEvent.click(screen.getByRole("button", { name: "Hold claim" }));
+    expect(screen.getByText("Enter a reason for holding this claim.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalled();
+
+    fireEvent.change(screen.getByLabelText("Reason"), {
+      target: { value: "Awaiting the missing invoice" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Hold claim" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/expenses/exp-123/hold", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Awaiting the missing invoice" }),
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Hold this claim" })).not.toBeInTheDocument();
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("surfaces the server's hold error inside the prompt", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "This claim is already held." }), { status: 409 }),
+      ),
+    );
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+        currentUserCanHold
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Hold" }));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Hold again" } });
+    fireEvent.click(screen.getByRole("button", { name: "Hold claim" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("This claim is already held.")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: "Hold this claim" })).toBeInTheDocument();
+  });
+
+  it("renders a held claim with the Held badge and no terminal actions", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={heldExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+        currentUserCanHold
+      />,
+    );
+
+    expect(screen.getByText("Held")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Hold" })).not.toBeInTheDocument();
+    expect(screen.getByText("This claim is on hold.")).toBeInTheDocument();
+    expect(screen.getByText("Awaiting the missing invoice")).toBeInTheDocument();
+  });
+
+  it("offers Resume to the current stage actor of a held claim", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({ claim: buildClaim({ history: [...BASE_HISTORY] }), employees: EMPLOYEES }),
+          { status: 200 },
+        ),
+      ),
+    );
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={heldExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    const resumeBtn = screen.getByRole("button", { name: "Resume claim" });
+    fireEvent.click(resumeBtn);
+
+    expect(fetch).toHaveBeenCalledWith("/api/expenses/exp-123/resume", { method: "POST" });
+
+    await waitFor(() => {
+      expect(mockRefresh).toHaveBeenCalledTimes(1);
+    });
+    // The stamped claim is un-held: the drawer flips back to the primary
+    // action and the Held badge animates out.
+    await waitFor(() => {
+      expect(screen.getByRole("button", { name: "Verify for payment" })).toBeInTheDocument();
+    });
+    await waitFor(() => {
+      expect(screen.queryByText("Held")).not.toBeInTheDocument();
+    });
+  });
+
+  it("shows a disabled On hold state to a viewer who is not the current actor", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={heldExpense()}
+        currentUser="Pramod"
+        currentUserId="emp-pramod"
+        currentUserRoleId="role-finance-head"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "On hold" })).toBeDisabled();
+    expect(screen.queryByRole("button", { name: "Resume claim" })).not.toBeInTheDocument();
+  });
+
+  it("surfaces the server's resume error in the footer banner", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(JSON.stringify({ message: "This expense claim is not assigned to you." }), {
+          status: 403,
+        }),
+      ),
+    );
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={heldExpense()}
+        currentUser={defaultUser}
+        currentUserId={defaultUserId}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Resume claim" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("This expense claim is not assigned to you."),
+      ).toBeInTheDocument();
+    });
+    expect(mockRefresh).not.toHaveBeenCalled();
+  });
+});
+
+describe("ExpenseDrawer delegation (ADR-0017)", () => {
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    mockPush.mockReset();
+    downloadBlobMock.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function employeesResponse(): Response {
+    return new Response(JSON.stringify({ claim: buildClaim(), employees: EMPLOYEES }), { status: 200 });
+  }
+
+  function delegatedClaimResponse(): Response {
+    const delegated = buildClaim({
+      currentActorId: "emp-sanil",
+      steps: [
+        {
+          id: "s-1",
+          roleId: "role-finance-head",
+          assignedActorId: "emp-pramod",
+          status: "approved",
+          decidedAt: "2026-08-05T09:00:00.000Z",
+        },
+        {
+          id: "s-2",
+          roleId: "role-finance-executive",
+          assignedActorId: "emp-sanil",
+          status: "pending",
+        },
+      ],
+      history: [
+        ...BASE_HISTORY,
+        {
+          id: "h-4",
+          kind: "delegated",
+          actorId: "emp-super",
+          detail: 'Delegated to Sanil Davis (Manager) for "Pramod is away"',
+          createdAt: "2026-08-05T11:00:00.000Z",
+        },
+      ],
+      version: 4,
+    });
+    return new Response(JSON.stringify({ claim: delegated, employees: EMPLOYEES }), { status: 200 });
+  }
+
+  function heldExpenseForDelegate(): Expense {
+    return buildExpense({
+      held: {
+        by: "Finance Officer",
+        at: "2026-08-05T12:00:00.000Z",
+        reason: "Awaiting the missing invoice",
+      },
+      primaryAction: undefined,
+    });
+  }
+
+  it("shows the Delegate action to a Superadmin viewer on an in-flight claim", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser="Super Boss"
+        currentUserId="emp-super"
+        currentUserRoleCode="superadmin"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Delegate" })).toBeInTheDocument();
+  });
+
+  it("hides the Delegate action from non-Superadmin viewers", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser="Rishikesh"
+        currentUserId="emp-finance"
+        currentUserRoleCode="finance-executive"
+      />,
+    );
+
+    expect(screen.queryByRole("button", { name: "Delegate" })).not.toBeInTheDocument();
+  });
+
+  it("does not offer the Delegate action on drafts or terminal claims", () => {
+    for (const status of ["draft", "paid", "rejected"] as const) {
+      cleanup();
+      render(
+        <ExpenseDrawer
+          open={true}
+          onOpenChange={vi.fn()}
+          expense={buildExpense({ status, primaryAction: undefined })}
+          currentUser="Super Boss"
+          currentUserId="emp-super"
+          currentUserRoleCode="superadmin"
+        />,
+      );
+      expect(screen.queryByRole("button", { name: "Delegate" })).not.toBeInTheDocument();
+    }
+  });
+
+  it("offers the Delegate action on a held claim so the claim can be re-routed while paused", () => {
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={heldExpenseForDelegate()}
+        currentUser="Super Boss"
+        currentUserId="emp-super"
+        currentUserRoleCode="superadmin"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Delegate" })).toBeInTheDocument();
+  });
+
+  it("delegates through the person picker: active employees only, current actor excluded, reason required", async () => {
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url.endsWith("/delegate")) return Promise.resolve(delegatedClaimResponse());
+      return Promise.resolve(employeesResponse());
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser="Super Boss"
+        currentUserId="emp-super"
+        currentUserRoleCode="superadmin"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delegate" }));
+    expect(screen.getByRole("dialog", { name: "Delegate this claim" })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalledWith("/api/expenses/exp-123");
+
+    await waitFor(() => {
+      expect(screen.getByText("Sanil Davis")).toBeInTheDocument();
+    });
+    // Active employees show up; the current actor (Rishikesh) and inactive
+    // employees are excluded from the picker.
+    expect(screen.getByText("Pramod")).toBeInTheDocument();
+    expect(screen.queryByText("Rishikesh")).not.toBeInTheDocument();
+    expect(screen.queryByText("Gone Person")).not.toBeInTheDocument();
+
+    // A missing selection is refused client-side.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delegation" }));
+    expect(screen.getByText("Choose a person to delegate to.")).toBeInTheDocument();
+    expect(fetchMock).not.toHaveBeenCalledWith(
+      "/api/expenses/exp-123/delegate",
+      expect.anything(),
+    );
+
+    // Search narrows the picker.
+    fireEvent.change(screen.getByLabelText("Person"), { target: { value: "Sanil" } });
+    expect(screen.getByText("Sanil Davis")).toBeInTheDocument();
+    expect(screen.queryByText("Pramod")).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText("Sanil Davis"));
+    // An empty reason is refused client-side.
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delegation" }));
+    expect(screen.getByText("Enter a reason for delegating this claim.")).toBeInTheDocument();
+
+    fireEvent.change(screen.getByLabelText("Reason"), {
+      target: { value: "Pramod is away" },
+    });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delegation" }));
+
+    expect(fetchMock).toHaveBeenCalledWith("/api/expenses/exp-123/delegate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ delegateeId: "emp-sanil", reason: "Pramod is away" }),
+    });
+
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog", { name: "Delegate this claim" })).not.toBeInTheDocument();
+    });
+    expect(mockRefresh).toHaveBeenCalledTimes(1);
+  });
+
+  it("shows the held note in the delegate dialog when the claim is held", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue(employeesResponse()));
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={heldExpenseForDelegate()}
+        currentUser="Super Boss"
+        currentUserId="emp-super"
+        currentUserRoleCode="superadmin"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delegate" }));
+
+    await waitFor(() => {
+      expect(
+        screen.getByText("This claim is held. Delegating keeps it held - the new actor resumes it."),
+      ).toBeInTheDocument();
+    });
+  });
+
+  it("surfaces the server's delegate error inside the dialog", async () => {
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string) => {
+        if (url.endsWith("/delegate")) {
+          return Promise.resolve(
+            new Response(JSON.stringify({ message: "Choose a different person to delegate to." }), {
+              status: 422,
+            }),
+          );
+        }
+        return Promise.resolve(employeesResponse());
+      }),
+    );
+
+    render(
+      <ExpenseDrawer
+        open={true}
+        onOpenChange={vi.fn()}
+        expense={buildExpense()}
+        currentUser="Super Boss"
+        currentUserId="emp-super"
+        currentUserRoleCode="superadmin"
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("button", { name: "Delegate" }));
+    await waitFor(() => {
+      expect(screen.getByText("Sanil Davis")).toBeInTheDocument();
+    });
+    fireEvent.click(screen.getByText("Sanil Davis"));
+    fireEvent.change(screen.getByLabelText("Reason"), { target: { value: "Handover" } });
+    fireEvent.click(screen.getByRole("button", { name: "Confirm delegation" }));
+
+    await waitFor(() => {
+      expect(screen.getByText("Choose a different person to delegate to.")).toBeInTheDocument();
+    });
+    expect(screen.getByRole("dialog", { name: "Delegate this claim" })).toBeInTheDocument();
+    expect(mockRefresh).not.toHaveBeenCalled();
   });
 });
 

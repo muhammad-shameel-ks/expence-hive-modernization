@@ -492,4 +492,475 @@ describe("PostgresAdminStore", () => {
     expect(poolQuery.mock.calls[0]?.[1]).toEqual(["org-1", 50, 0]);
     expect(result).toEqual({ events: [], total: 0 });
   });
+
+  it("listDepartments joins the head employee for name and id", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          id: "dept-1",
+          organization_id: "org-1",
+          name: "Engineering",
+          active: true,
+          head_id: "emp-2",
+          head_name: "Ada Lovelace",
+        },
+        {
+          id: "dept-2",
+          organization_id: "org-1",
+          name: "Legacy",
+          active: true,
+          head_id: null,
+          head_name: null,
+        },
+      ],
+    });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const departments = await store.listDepartments("org-1");
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("LEFT JOIN employees h ON h.id = d.head_id");
+    expect(sql).toContain("d.head_id");
+    expect(sql).toContain("h.name AS head_name");
+    expect(departments).toEqual([
+      {
+        id: "dept-1",
+        organizationId: "org-1",
+        name: "Engineering",
+        active: true,
+        headId: "emp-2",
+        head: { id: "emp-2", name: "Ada Lovelace" },
+      },
+      {
+        id: "dept-2",
+        organizationId: "org-1",
+        name: "Legacy",
+        active: true,
+        headId: null,
+        head: null,
+      },
+    ]);
+  });
+
+  it("createDepartment inserts the head id and maps the head back", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockResolvedValueOnce({ rows: [{ id: "emp-2", name: "Ada Lovelace" }] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const department = await store.createDepartment("org-1", {
+      name: "Engineering",
+      headId: "emp-2",
+    });
+
+    expect(query).toHaveBeenNthCalledWith(
+      1,
+      "INSERT INTO departments (id, organization_id, name, head_id) VALUES ($1, $2, $3, $4)",
+      [expect.any(String), "org-1", "Engineering", "emp-2"],
+    );
+    expect(department).toMatchObject({
+      name: "Engineering",
+      active: true,
+      headId: "emp-2",
+      head: { id: "emp-2", name: "Ada Lovelace" },
+    });
+  });
+
+  it("createDepartment maps a duplicate name to a validation error", async () => {
+    const query = vi.fn().mockRejectedValueOnce(
+      Object.assign(new Error("duplicate department"), {
+        code: "23505",
+        constraint: "idx_departments_org_name",
+      }),
+    );
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await expect(
+      store.createDepartment("org-1", { name: "Engineering", headId: "emp-2" }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: 'A department named "Engineering" already exists.',
+    });
+  });
+
+  it("setDepartmentHead updates departments.head_id", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await store.setDepartmentHead("dept-1", "emp-2");
+
+    expect(query).toHaveBeenCalledWith("UPDATE departments SET head_id = $1 WHERE id = $2", [
+      "emp-2",
+      "dept-1",
+    ]);
+  });
+
+  it("findEmployeeByEmail selects the org-scoped employee", async () => {
+    const query = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          id: "emp-1",
+          organization_id: "org-1",
+          name: "Ada Lovelace",
+          email: "ada@hive.local",
+          active: true,
+          department_id: null,
+          department_name: null,
+          role_id: null,
+          role_code: null,
+          role_name: null,
+          manager_id: null,
+        },
+      ],
+    });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const employee = await store.findEmployeeByEmail("org-1", "ada@hive.local");
+
+    expect(query).toHaveBeenCalledWith(expect.any(String), ["org-1", "ada@hive.local"]);
+    expect(employee).toMatchObject({ id: "emp-1", email: "ada@hive.local" });
+  });
+
+  it("findEmployeeByEmail returns null when nothing matches", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await expect(store.findEmployeeByEmail("org-1", "nobody@hive.local")).resolves.toBeNull();
+  });
+
+  it("createEmployees writes every row inside one transaction", async () => {
+    const query = vi
+      .fn()
+      .mockImplementation((sql: string) =>
+        typeof sql === "string" && sql.includes("INSERT INTO employees")
+          ? Promise.resolve({
+              rows: [
+                {
+                  id: "emp-a",
+                  organization_id: "org-1",
+                  name: "Ada Lovelace",
+                  email: "ada@hive.local",
+                  active: true,
+                },
+              ],
+            })
+          : Promise.resolve({ rows: [] }),
+      );
+    const release = vi.fn();
+    const pool = {
+      connect: vi.fn().mockResolvedValue({ query, release }),
+    } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const created = await store.createEmployees("org-1", [
+      {
+        id: "emp-a",
+        name: "Ada Lovelace",
+        email: "ada@hive.local",
+        roleId: "role-1",
+        departmentId: "dept-1",
+        managerId: "emp-2",
+      },
+      {
+        id: "emp-b",
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: null,
+        departmentId: null,
+        managerId: null,
+      },
+    ]);
+
+    expect(query).toHaveBeenNthCalledWith(1, "BEGIN");
+    const employeeInserts = query.mock.calls.filter(
+      ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO employees"),
+    );
+    expect(employeeInserts).toHaveLength(2);
+    expect(employeeInserts[0]?.[1]).toEqual([
+      "emp-a",
+      "org-1",
+      "Ada Lovelace",
+      "ada@hive.local",
+      "dept-1",
+    ]);
+    expect(employeeInserts[1]?.[1]).toEqual([
+      "emp-b",
+      "org-1",
+      "Grace Hopper",
+      "grace@hive.local",
+      null,
+    ]);
+    const roleInserts = query.mock.calls.filter(
+      ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO employee_roles"),
+    );
+    expect(roleInserts).toHaveLength(1);
+    expect(roleInserts[0]?.[1]).toEqual(["emp-a", "role-1"]);
+    const hierarchyInserts = query.mock.calls.filter(
+      ([sql]) => typeof sql === "string" && sql.includes("INSERT INTO hierarchy_assignments"),
+    );
+    expect(hierarchyInserts).toHaveLength(1);
+    expect(hierarchyInserts[0]?.[1]).toEqual(["emp-a", "emp-2"]);
+    expect(query.mock.calls[query.mock.calls.length - 1]).toEqual(["COMMIT"]);
+    expect(release).toHaveBeenCalledOnce();
+    expect(created).toHaveLength(2);
+    expect(created[0]).toMatchObject({ id: "emp-a", email: "ada@hive.local" });
+  });
+
+  it("createEmployees rolls back the whole batch on a duplicate email", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValueOnce({ rows: [] })
+      .mockRejectedValueOnce(
+        Object.assign(new Error("duplicate email"), {
+          code: "23505",
+          constraint: "employees_email_key",
+        }),
+      );
+    const release = vi.fn();
+    const pool = {
+      connect: vi.fn().mockResolvedValue({ query, release }),
+    } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const promise = store.createEmployees("org-1", [
+      {
+        id: "emp-a",
+        name: "Ada Lovelace",
+        email: "ada@hive.local",
+        roleId: null,
+        departmentId: null,
+        managerId: null,
+      },
+      {
+        id: "emp-b",
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: null,
+        departmentId: null,
+        managerId: null,
+      },
+    ]);
+
+    await expect(promise).rejects.toMatchObject({
+      code: "validation",
+      message: "One of the imported email addresses already exists.",
+    });
+    expect(query).toHaveBeenNthCalledWith(1, "BEGIN");
+    expect(query).toHaveBeenLastCalledWith("ROLLBACK");
+    expect(release).toHaveBeenCalledOnce();
+  });
+});
+
+describe("organization settings", () => {
+  it("resolves the 3-day default for an organization without a settings row", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await expect(store.getAbsenceTimeoutDays("org-1")).resolves.toBe(3);
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("SELECT absence_timeout_days FROM organization_settings"),
+      ["org-1"],
+    );
+  });
+
+  it("reads back a stored timeout", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ absence_timeout_days: 10 }] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await expect(store.getAbsenceTimeoutDays("org-1")).resolves.toBe(10);
+  });
+
+  it("upserts a timeout row so a second write updates in place", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await store.setAbsenceTimeoutDays("org-1", 7);
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("INSERT INTO organization_settings");
+    expect(sql).toContain("ON CONFLICT (organization_id) DO UPDATE");
+    expect(query).toHaveBeenCalledWith(expect.any(String), ["org-1", 7]);
+  });
+
+  it("lists every organization id in order", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [{ id: "org-2" }, { id: "org-1" }] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await expect(store.listOrganizations()).resolves.toEqual(["org-2", "org-1"]);
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("SELECT id FROM organizations"));
+  });
+});
+
+describe("role capabilities", () => {
+  const roleRow = (overrides: Record<string, unknown> = {}) => ({
+    id: "role-1",
+    organization_id: "org-1",
+    code: "manager",
+    display_name: "Manager",
+    department_id: null,
+    active: true,
+    locked: true,
+    can_submit: true,
+    can_approve: true,
+    can_access_finance: false,
+    can_hold: false,
+    can_view_org_activity: false,
+    can_access_admin_console: false,
+    ...overrides,
+  });
+
+  it("maps the six capability columns on role rows", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [roleRow()] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const roles = await store.listRoles("org-1");
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("can_submit, can_approve, can_access_finance"),
+      ["org-1"],
+    );
+    expect(roles).toEqual([
+      {
+        id: "role-1",
+        organizationId: "org-1",
+        code: "manager",
+        displayName: "Manager",
+        departmentId: null,
+        active: true,
+        locked: true,
+        capabilities: {
+          canSubmit: true,
+          canApprove: true,
+          canAccessFinance: false,
+          canHold: false,
+          canViewOrganizationActivity: false,
+          canAccessAdminConsole: false,
+        },
+      },
+    ]);
+  });
+
+  it("getRole maps the capability columns too", async () => {
+    const query = vi
+      .fn()
+      .mockResolvedValue({ rows: [roleRow({ can_hold: true, can_access_admin_console: true })] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const role = await store.getRole("role-1");
+
+    expect(role?.capabilities).toMatchObject({ canHold: true, canAccessAdminConsole: true });
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("FROM roles WHERE id = $1"), [
+      "role-1",
+    ]);
+  });
+
+  it("createRole inserts the capability columns, defaulting to submit-only when absent", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    const role = await store.createRole("org-1", {
+      code: "reviewer",
+      displayName: "Reviewer",
+    });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("can_submit, can_approve, can_access_finance, can_hold");
+    expect(sql).toContain("VALUES ($1, $2, $3, $4, false, $5, $6, $7, $8, $9, $10)");
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      expect.any(String),
+      "org-1",
+      "reviewer",
+      "Reviewer",
+      true,
+      false,
+      false,
+      false,
+      false,
+      false,
+    ]);
+    expect(role.capabilities).toEqual({
+      canSubmit: true,
+      canApprove: false,
+      canAccessFinance: false,
+      canHold: false,
+      canViewOrganizationActivity: false,
+      canAccessAdminConsole: false,
+    });
+  });
+
+  it("createRole persists an explicit capability set", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await store.createRole("org-1", {
+      code: "reviewer",
+      displayName: "Reviewer",
+      capabilities: {
+        canSubmit: true,
+        canApprove: true,
+        canAccessFinance: false,
+        canHold: true,
+        canViewOrganizationActivity: false,
+        canAccessAdminConsole: false,
+      },
+    });
+
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      expect.any(String),
+      "org-1",
+      "reviewer",
+      "Reviewer",
+      true,
+      true,
+      false,
+      true,
+      false,
+      false,
+    ]);
+  });
+
+  it("setRoleCapabilities updates all six toggle columns", async () => {
+    const query = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresAdminStore(pool);
+
+    await store.setRoleCapabilities("role-1", {
+      canSubmit: true,
+      canApprove: false,
+      canAccessFinance: true,
+      canHold: false,
+      canViewOrganizationActivity: true,
+      canAccessAdminConsole: false,
+    });
+
+    const sql = String(query.mock.calls[0]?.[0]);
+    expect(sql).toContain("UPDATE roles SET");
+    expect(sql).toContain("can_submit = $2");
+    expect(sql).toContain("can_access_admin_console = $7");
+    expect(query).toHaveBeenCalledWith(expect.any(String), [
+      "role-1",
+      true,
+      false,
+      true,
+      false,
+      true,
+      false,
+    ]);
+  });
 });

@@ -7,10 +7,22 @@ import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee } from "./ports";
 import { buildExpenseSummaryPdf } from "./summary-pdf";
 
-const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive" };
-const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
-const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head" };
-const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" };
+// The default privilege catalog (ADR-0015) the migration and seeds backfill:
+// submit-only except Manager +approve, Finance Head +finance +org activity,
+// Finance Executive +finance.
+const SUBMIT_ONLY = {
+  canSubmit: true,
+  canApprove: false,
+  canAccessFinance: false,
+  canHold: false,
+  canViewOrganizationActivity: false,
+  canAccessAdminConsole: false,
+};
+
+const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive", capabilities: { ...SUBMIT_ONLY } };
+const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager", capabilities: { ...SUBMIT_ONLY, canApprove: true } };
+const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true, canViewOrganizationActivity: true } };
+const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true } };
 
 const PDF_RECEIPT = new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d, 0x31, 0x2e, 0x34, 0x0a]); // "%PDF-1.4\n"
 

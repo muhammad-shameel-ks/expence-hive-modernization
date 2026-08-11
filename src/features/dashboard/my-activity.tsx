@@ -6,6 +6,7 @@
 
 import { useMemo, useState } from "react";
 import { Search, X, Activity, Filter } from "lucide-react";
+import { inPeriod, type DashboardPeriod } from "@/server/expenses/dashboard-read-models";
 import { KIND_META, FILTER_DOT_COLOR, formatMoney } from "./journey-meta";
 import { ActivityItemRow } from "./activity-item-row";
 import type { ActivityItem, HistoryKind } from "./mock-data";
@@ -20,7 +21,7 @@ export const KIND_FILTERS: { value: ActivityKindFilter; label: string }[] = [
   { value: "rejected", label: "Rejected" },
   { value: "verified", label: "Verified" },
   { value: "paid", label: "Paid" },
-  { value: "takeover", label: "Taken over" },
+  { value: "delegated", label: "Delegated" },
   { value: "comment", label: "Commented" },
 ];
 
@@ -46,22 +47,33 @@ export function matchesActivityQuery(item: ActivityItem, query: string): boolean
 
 export function MyActivity({
   items,
+  period,
   onOpen,
   loadingClaimId,
 }: {
   items: ActivityItem[];
+  /** The dashboard's period switch (ADR-0020): the feed is bucketed to the same period as the cards. */
+  period: DashboardPeriod;
   onOpen?: (claimId: string) => void;
   loadingClaimId?: string | null;
 }) {
   const [query, setQuery] = useState("");
   const [kindFilter, setKindFilter] = useState<ActivityKindFilter>("all");
 
+  // The period is the outer scope; search and the kind filter refine within
+  // it. Items without a raw timestamp (test fixtures) only surface in the
+  // overall view.
+  const periodItems = useMemo(
+    () => items.filter((item) => inPeriod(item.createdAt ?? "", period, new Date())),
+    [items, period],
+  );
+
   const filtered = useMemo(
     () =>
-      items
+      periodItems
         .filter((item) => kindFilter === "all" || item.kind === kindFilter)
         .filter((item) => matchesActivityQuery(item, query)),
-    [items, query, kindFilter],
+    [periodItems, query, kindFilter],
   );
 
   return (
@@ -82,7 +94,7 @@ export function MyActivity({
           </p>
         </div>
 
-        {items.length > 0 ? (
+        {periodItems.length > 0 ? (
           <div className="flex w-full flex-col gap-2.5 sm:w-auto sm:flex-row sm:items-center">
             {/* Search Input */}
             <div className="relative flex-1 sm:w-64 sm:flex-none">
@@ -127,7 +139,7 @@ export function MyActivity({
       </div>
 
       {/* Quick Filter Chips (Pills with Status Indicator Dots) */}
-      {items.length > 0 ? (
+      {periodItems.length > 0 ? (
         <div className="mt-4 hidden flex-wrap items-center gap-1.5 border-t border-border/60 pt-4 sm:flex">
           <span className="mr-1 inline-flex items-center gap-1 text-xs font-medium text-muted-foreground">
             <Filter className="h-3.5 w-3.5" /> Filter:
@@ -160,6 +172,11 @@ export function MyActivity({
           <Activity className="h-8 w-8 text-muted-foreground/50" />
           <p className="mt-2 text-sm font-medium text-foreground">You have not acted on any claims yet</p>
           <p className="mt-1 text-xs text-muted-foreground">Your decisions and comments will appear here.</p>
+        </div>
+      ) : periodItems.length === 0 ? (
+        <div className="mt-8 flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">
+          <p className="text-sm font-medium text-foreground">No activity in this period</p>
+          <p className="mt-1 text-xs text-muted-foreground">Switch to Overall to see everything.</p>
         </div>
       ) : filtered.length === 0 ? (
         <div className="mt-8 flex flex-col items-center justify-center rounded-xl border border-dashed border-border py-10 text-center">

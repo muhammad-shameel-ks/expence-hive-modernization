@@ -1,52 +1,158 @@
-import type { Expense } from "./mock-data";
+// Role-specific dashboard card sets (ADR-0020): display-only mapping from
+// the server-computed aggregates (dashboard-read-models.ts) to the four-card
+// grid. Money math stays server-side; these modules only pick labels,
+// formatted values, hint copy (with per-card empty states), and task CTAs.
 
-export interface DashboardStats {
-  spentThisMonth: number;
-  spentThisMonthCount: number;
-  pendingApproval: number;
-  rejected: number;
-  reimbursedThisMonth: number;
+import type {
+  ApproverAggregates,
+  EmployeeAggregates,
+  FinanceAggregates,
+} from "@/server/expenses/dashboard-read-models";
+import { formatMoney } from "./journey-meta";
+
+export interface StatCardAction {
+  label: string;
+  /** A navigation CTA, e.g. the finance queue card linking to the queue page. */
+  href?: string;
+  /** An in-page CTA, e.g. opening the drawer on a draft or a held claim. */
+  onClick?: () => void;
 }
 
-// The money stats are the viewer's own spend: the workspace list also
-// carries pool claims (in-finance claims the viewer's role can verify), so
-// those must never count as money the viewer spent. Rejected claims are also
-// viewer-scoped via isMine, while pending remains list-scoped to reflect claims
-// awaiting attention across the workspace list.
-export function dashboardStats(
-  expenses: Expense[],
-  month: string,
-  currentUserId?: string,
-): DashboardStats {
-  const inMonth = (e: Expense) => e.submittedAt.startsWith(month);
-  const isMine = (e: Expense) => !currentUserId || e.requesterId === currentUserId;
+export interface StatCard {
+  label: string;
+  /** Fully formatted display value, e.g. "₹594.00" or "4". */
+  value: string;
+  /** Supporting copy; when the card has nothing to show it becomes the empty-state hint. */
+  hint: string;
+  /** The card's task CTA; only rendered when the card has something to act on. */
+  action?: StatCardAction;
+}
 
-  let spentThisMonth = 0;
-  let spentThisMonthCount = 0;
-  let pendingApproval = 0;
-  let rejected = 0;
-  let reimbursedThisMonth = 0;
+const noun = (count: number, singular: string, plural: string): string =>
+  count === 1 ? singular : plural;
 
-  for (const expense of expenses) {
-    if (
-      expense.status === "submitted" ||
-      expense.status === "in-approval" ||
-      expense.status === "in-finance"
-    ) {
-      pendingApproval += 1;
-    }
-    if (expense.status === "rejected" && isMine(expense)) {
-      rejected += 1;
-    }
-    if (!inMonth(expense) || !isMine(expense)) continue;
-    if (expense.status === "paid") {
-      reimbursedThisMonth += expense.amount;
-    }
-    if (expense.status !== "draft") {
-      spentThisMonth += expense.amount;
-      spentThisMonthCount += 1;
-    }
-  }
+export function employeeStatCards(
+  cards: EmployeeAggregates,
+  periodLabel: string,
+  actions: { onResumeDraft: () => void },
+): StatCard[] {
+  const lowerPeriod = periodLabel.toLowerCase();
+  return [
+    {
+      label: `Spent ${periodLabel}`,
+      value: formatMoney(cards.spentMinor / 100),
+      hint:
+        cards.spentCount > 0
+          ? `${cards.spentCount} ${noun(cards.spentCount, "expense", "expenses")}`
+          : `Nothing spent ${lowerPeriod}`,
+    },
+    {
+      label: "Pending reimbursements",
+      value: formatMoney(cards.pendingMinor / 100),
+      hint:
+        cards.pendingCount > 0
+          ? `${cards.pendingCount} ${noun(cards.pendingCount, "claim", "claims")} awaiting payment`
+          : "Nothing awaiting payment",
+    },
+    {
+      label: "Drafts",
+      value: String(cards.draftsCount),
+      hint:
+        cards.draftsCount > 0
+          ? "Resume drafting from the list below"
+          : "No drafts yet - submit a new claim",
+      action:
+        cards.draftsCount > 0
+          ? { label: "Resume draft", onClick: actions.onResumeDraft }
+          : undefined,
+    },
+    {
+      label: `Reimbursed ${periodLabel}`,
+      value: formatMoney(cards.reimbursedMinor / 100),
+      hint:
+        cards.reimbursedCount > 0
+          ? `${cards.reimbursedCount} ${noun(cards.reimbursedCount, "payment", "payments")} received`
+          : `Nothing reimbursed ${lowerPeriod}`,
+    },
+  ];
+}
 
-  return { spentThisMonth, spentThisMonthCount, pendingApproval, rejected, reimbursedThisMonth };
+export function approverStatCards(
+  cards: ApproverAggregates,
+  absenceTimeoutDays: number,
+  actions: { onResumeHold: () => void; onReviewAged: () => void },
+): StatCard[] {
+  return [
+    {
+      label: "Awaiting my action",
+      value: formatMoney(cards.awaitingMyActionTotalMinor / 100),
+      hint:
+        cards.awaitingMyActionCount > 0
+          ? `${cards.awaitingMyActionCount} ${noun(cards.awaitingMyActionCount, "claim", "claims")} need a decision`
+          : "Nothing needs your decision",
+    },
+    {
+      label: "My holds",
+      value: String(cards.myHoldsCount),
+      hint:
+        cards.myHoldsCount > 0
+          ? "Paused by you - resume from the drawer"
+          : "You have no held claims",
+      action: cards.myHoldsCount > 0 ? { label: "Resume a hold", onClick: actions.onResumeHold } : undefined,
+    },
+    {
+      label: "Aging",
+      value: String(cards.agedCount),
+      hint:
+        cards.agedCount > 0
+          ? `Stuck beyond the ${absenceTimeoutDays}-day timeout`
+          : `Nothing past the ${absenceTimeoutDays}-day timeout`,
+      action: cards.agedCount > 0 ? { label: "Review oldest", onClick: actions.onReviewAged } : undefined,
+    },
+  ];
+}
+
+export function financeStatCards(
+  cards: FinanceAggregates,
+  periodLabel: string,
+  absenceTimeoutDays: number,
+  actions: { onReviewAged: () => void },
+): StatCard[] {
+  const lowerPeriod = periodLabel.toLowerCase();
+  return [
+    {
+      label: "Queue backlog",
+      value: formatMoney(cards.queueTotalMinor / 100),
+      hint:
+        cards.queueCount > 0
+          ? `${cards.queueCount} ${noun(cards.queueCount, "claim", "claims")} awaiting verification or payment`
+          : "Queue is clear",
+      action: { label: "Open queue", href: "/finance/payments" },
+    },
+    {
+      label: `Paid out ${periodLabel}`,
+      value: formatMoney(cards.paidOutMinor / 100),
+      hint:
+        cards.paidOutCount > 0
+          ? `${cards.paidOutCount} ${noun(cards.paidOutCount, "claim", "claims")} paid`
+          : `Nothing paid out ${lowerPeriod}`,
+    },
+    {
+      label: "Aged claims",
+      value: String(cards.agedCount),
+      hint:
+        cards.agedCount > 0
+          ? `Stuck beyond the ${absenceTimeoutDays}-day timeout`
+          : `Nothing past the ${absenceTimeoutDays}-day timeout`,
+      action: cards.agedCount > 0 ? { label: "Review oldest", onClick: actions.onReviewAged } : undefined,
+    },
+    {
+      label: `Rejected ${periodLabel}`,
+      value: String(cards.rejectedCount),
+      hint:
+        cards.rejectedCount > 0
+          ? `${formatMoney(cards.rejectedTotalMinor / 100)} rejected`
+          : `Nothing rejected ${lowerPeriod}`,
+    },
+  ];
 }

@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { Clock } from "lucide-react";
-import { formatMoney, simplifyAutoSkipDetail, submittedLabel, KIND_META } from "./journey-meta";
+import { Clock, PauseCircle, PlayCircle } from "lucide-react";
+import { formatMoney, HELD_META, simplifyAutoSkipDetail, submittedLabel, KIND_META } from "./journey-meta";
 import { getJourneyFlowItems } from "./journey-flow";
 import { claimToExpense } from "./expense-read-model";
 
@@ -37,6 +37,107 @@ describe("simplifyAutoSkipDetail", () => {
 
   it("passes through an unrecognized detail unchanged", () => {
     expect(simplifyAutoSkipDetail("Something else entirely")).toBe("Something else entirely");
+  });
+});
+
+describe("hold journey meta", () => {
+  it("maps held and resumed history kinds to their timeline entries", () => {
+    expect(KIND_META.held).toMatchObject({ label: "Held", tone: "warning", icon: PauseCircle });
+    expect(KIND_META.resumed).toMatchObject({ label: "Resumed", tone: "primary", icon: PlayCircle });
+  });
+
+  it("exposes the held badge meta with a warning tone", () => {
+    expect(HELD_META).toEqual({ label: "Held", tone: "warning" });
+  });
+
+  it("renders held and resumed events on the timeline in order", () => {
+    const expense = {
+      id: "ex-held",
+      ref: "EXP-HELD",
+      title: "Held claim",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 5",
+      submittedAt: "2026-08-05T10:00:00Z",
+      status: "in-approval" as const,
+      held: {
+        by: "Sanil Davis",
+        at: "2026-08-06T10:00:00Z",
+        reason: "Awaiting the missing invoice",
+      },
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
+        {
+          id: "h2",
+          date: "Aug 6",
+          actor: "Sanil Davis",
+          actorId: "emp-sanil",
+          kind: "held" as const,
+          detail: "Awaiting the missing invoice",
+        },
+      ],
+      steps: [
+        {
+          id: "s1",
+          roleId: "r1",
+          roleName: "Manager",
+          assignedActorName: "Sanil Davis",
+          status: "pending" as const,
+        },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    expect(steps[0]).toMatchObject({ label: "Submitted", pending: false });
+    expect(steps[1]).toMatchObject({ label: "Held", pending: false, icon: PauseCircle });
+    // A held claim pulses nothing as next: the hold outranks the pending
+    // stage, and the stage reads as on hold.
+    const heldStage = steps[2];
+    expect(heldStage).toMatchObject({ label: "Manager", pending: true, detail: "On hold - awaiting resume" });
+    expect(heldStage.isNext).toBe(false);
+    expect(steps.filter((step) => step.isNext)).toHaveLength(0);
+  });
+
+  it("marks the held event as the current point of the journey", () => {
+    const expense = {
+      id: "ex-held-2",
+      ref: "EXP-HELD-2",
+      title: "Held claim",
+      category: "Travel",
+      amount: 300,
+      currency: "INR",
+      date: "Aug 5",
+      submittedAt: "2026-08-05T10:00:00Z",
+      status: "in-approval" as const,
+      held: { by: "Sanil Davis", at: "2026-08-06T10:00:00Z", reason: "Awaiting docs" },
+      attachments: [],
+      history: [
+        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
+        { id: "h2", date: "Aug 5", actor: "Sanil Davis", kind: "approved" as const },
+        {
+          id: "h3",
+          date: "Aug 6",
+          actor: "Sanil Davis",
+          kind: "held" as const,
+          detail: "Awaiting docs",
+        },
+      ],
+      steps: [
+        {
+          id: "s1",
+          roleId: "r1",
+          roleName: "Manager",
+          assignedActorName: "Sanil Davis",
+          status: "pending" as const,
+        },
+      ],
+    };
+
+    const steps = getJourneyFlowItems(expense);
+    const heldEvent = steps.find((step) => step.label === "Held");
+    expect(heldEvent?.isCurrent).toBe(true);
   });
 });
 
@@ -327,7 +428,7 @@ describe("getJourneyFlowItems", () => {
     expect(steps[1].icon).toBe(KIND_META.approved.icon);
   });
 
-  it("renders an amount-guard auto-skip distinctly from a takeover skip", () => {
+  it("renders an amount-guard auto-skip distinctly from a stage-skipped entry", () => {
     const expense = {
       id: "ex-auto",
       ref: "EXP-AUTO",

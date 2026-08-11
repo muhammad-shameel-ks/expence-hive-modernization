@@ -5,18 +5,23 @@ import {
   Building2,
   CheckCircle2,
   CircleAlert,
+  PauseCircle,
   ScrollText,
+  Settings,
   Users,
   Workflow,
   X,
 } from "lucide-react";
 import type { AdminDepartment, AdminEmployee, AdminRole, FlowDraft } from "@/server/admin/ports";
+import type { HeldClaimRow } from "@/server/expenses/ports";
 import { AuditSection } from "./audit-section";
 import { FlowSection } from "./flow-section";
+import { HeldSection } from "./held-section";
 import { OrgSection } from "./org-section";
 import { PeopleSection } from "./people-section";
+import { SettingsSection } from "./settings-section";
 
-type TabSection = "org" | "people" | "flows" | "audit";
+type TabSection = "org" | "people" | "flows" | "audit" | "settings" | "holds";
 
 export function AdminSetup({
   people,
@@ -24,18 +29,23 @@ export function AdminSetup({
   roles: initialRoles,
   departments: initialDepartments,
   currentEmployeeId,
+  absenceTimeoutDays,
+  heldClaims,
 }: {
   people: AdminEmployee[];
   flows: FlowDraft[];
   roles: AdminRole[];
   departments: AdminDepartment[];
   currentEmployeeId: string;
+  absenceTimeoutDays: number;
+  heldClaims: HeldClaimRow[];
 }) {
   const [activeTab, setActiveTab] = useState<TabSection>("org");
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
   const [rolesState, setRolesState] = useState(initialRoles);
   const [departmentsState, setDepartmentsState] = useState(initialDepartments);
+  const [peopleState, setPeopleState] = useState(people);
 
   return (
     <>
@@ -114,6 +124,39 @@ export function AdminSetup({
           <span className="sm:hidden">Audit</span>
           <span className="hidden sm:inline">Audit Log</span>
         </button>
+
+        <button
+          onClick={() => setActiveTab("settings")}
+          aria-current={activeTab === "settings" ? "page" : undefined}
+          className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
+            activeTab === "settings"
+              ? "bg-[#e8f2f6] text-[#175d75]"
+              : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
+          }`}
+        >
+          <Settings className="size-3.5" />
+          <span className="sm:hidden">Settings</span>
+          <span className="hidden sm:inline">Company Settings</span>
+        </button>
+
+        <button
+          onClick={() => setActiveTab("holds")}
+          aria-current={activeTab === "holds" ? "page" : undefined}
+          className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
+            activeTab === "holds"
+              ? "bg-[#e8f2f6] text-[#175d75]"
+              : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
+          }`}
+        >
+          <PauseCircle className="size-3.5" />
+          <span className="sm:hidden">Holds</span>
+          <span className="hidden sm:inline">Held Claims</span>
+          <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[0.62rem] font-bold ${
+            activeTab === "holds" ? "bg-[#d9e8ef] text-[#175d75]" : "bg-[#e2e8f0] text-[#475569]"
+          }`}>
+            {heldClaims.length}
+          </span>
+        </button>
       </nav>
 
       {/* Main Content Area */}
@@ -136,7 +179,11 @@ export function AdminSetup({
                 ? "People Management"
                 : activeTab === "flows"
                   ? "Approval Flow Pipelines"
-                  : "Audit Log"}
+                  : activeTab === "audit"
+                    ? "Audit Log"
+                    : activeTab === "settings"
+                      ? "Company Settings"
+                      : "Held Claims Oversight"}
           </h1>
           <p className="mt-0.5 text-xs text-[#7d8a9b]">
             {activeTab === "org"
@@ -145,7 +192,11 @@ export function AdminSetup({
                 ? "Search people, assign roles, departments and managers, and manage active access."
                 : activeTab === "flows"
                   ? "Design, build, and publish multi-stage expense approval workflows."
-                  : "Review the chronological trail of administrative changes."}
+                  : activeTab === "audit"
+                    ? "Review the chronological trail of administrative changes."
+                    : activeTab === "settings"
+                      ? "Configure company-wide approval behavior."
+                      : "Review claims paused by their current stage actor."}
           </p>
         </div>
 
@@ -154,6 +205,7 @@ export function AdminSetup({
           <OrgSection
             departments={departmentsState}
             roles={rolesState}
+            people={peopleState}
             onMessage={setMessage}
             onError={setError}
             onDepartmentsChange={setDepartmentsState}
@@ -161,12 +213,13 @@ export function AdminSetup({
           />
         ) : activeTab === "people" ? (
           <PeopleSection
-            people={people}
+            people={peopleState}
             roles={rolesState}
             departments={departmentsState}
             currentEmployeeId={currentEmployeeId}
             onMessage={setMessage}
             onError={setError}
+            onPeopleChange={setPeopleState}
           />
         ) : activeTab === "flows" ? (
           <FlowSection
@@ -176,8 +229,16 @@ export function AdminSetup({
             onMessage={setMessage}
             onError={setError}
           />
+        ) : activeTab === "audit" ? (
+          <AuditSection people={peopleState} onError={setError} />
+        ) : activeTab === "settings" ? (
+          <SettingsSection
+            absenceTimeoutDays={absenceTimeoutDays}
+            onMessage={setMessage}
+            onError={setError}
+          />
         ) : (
-          <AuditSection people={people} onError={setError} />
+          <HeldSection heldClaims={heldClaims} />
         )}
       </div>
 

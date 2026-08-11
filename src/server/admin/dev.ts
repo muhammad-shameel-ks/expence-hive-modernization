@@ -1,6 +1,7 @@
 import { Pool } from "pg";
 import { createAdminCommands, type AdminCommands } from "./commands";
 import { PostgresAdminStore } from "./postgres";
+import { expenseDevStore } from "@/server/expenses/dev";
 import { databaseUrl } from "@/server/db/connection.mjs";
 import { runMigrations } from "@/server/db/migrate";
 
@@ -35,5 +36,5 @@ export function adminDevStore(): PostgresAdminStore {
 }
 
 export function adminCommands(): AdminCommands {
-  return createAdminCommands({ store: adminDevStore() });
+  return createAdminCommands({ store: adminDevStore(), expensesStore: expenseDevStore() });
 }
