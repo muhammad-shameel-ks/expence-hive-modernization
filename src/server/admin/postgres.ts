@@ -269,6 +269,10 @@ export class PostgresAdminStore implements AdminStore {
       "UPDATE employees SET department_id = $1 WHERE id = $2",
       [departmentId, employeeId],
     );
+    await this.pool.query(
+      "UPDATE departments SET head_id = NULL WHERE head_id = $1 AND id != $2",
+      [employeeId, departmentId],
+    );
   }
 
   async setEmployeeActive(employeeId: string, active: boolean): Promise<void> {

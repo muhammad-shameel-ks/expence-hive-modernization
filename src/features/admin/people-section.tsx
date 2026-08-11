@@ -23,6 +23,7 @@ export function PeopleSection({
   onMessage,
   onError,
   onPeopleChange,
+  onDepartmentsChange,
 }: {
   people: AdminEmployee[];
   roles: AdminRole[];
@@ -31,6 +32,7 @@ export function PeopleSection({
   onMessage: (message: string) => void;
   onError: (error: string) => void;
   onPeopleChange: (people: AdminEmployee[]) => void;
+  onDepartmentsChange?: (departments: AdminDepartment[]) => void;
 }) {
   const [query, setQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("All departments");
@@ -136,6 +138,21 @@ export function PeopleSection({
             : item,
         ),
       );
+      if (onDepartmentsChange && person.departmentId) {
+        const isManager =
+          role.code === "manager" ||
+          role.code.includes("manager") ||
+          role.displayName.toLowerCase().includes("manager");
+        if (isManager) {
+          onDepartmentsChange(
+            departments.map((candidate) =>
+              candidate.id === person.departmentId && (!candidate.headId || candidate.headId === "")
+                ? { ...candidate, headId: person.id, head: { id: person.id, name: person.name } }
+                : candidate,
+            ),
+          );
+        }
+      }
       onMessage(`${person.name} is now assigned to the ${role.displayName} role.`);
     } catch (caught) {
       onError(
@@ -168,6 +185,23 @@ export function PeopleSection({
             : item,
         ),
       );
+      if (onDepartmentsChange) {
+        const isManager =
+          person.role?.code === "manager" ||
+          person.role?.code?.includes("manager") ||
+          person.role?.displayName?.toLowerCase().includes("manager");
+        onDepartmentsChange(
+          departments.map((candidate) => {
+            if (candidate.id === dept.id && (!candidate.headId || candidate.headId === "") && isManager) {
+              return { ...candidate, headId: person.id, head: { id: person.id, name: person.name } };
+            }
+            if (candidate.headId === person.id && candidate.id !== dept.id) {
+              return { ...candidate, headId: null, head: null };
+            }
+            return candidate;
+          }),
+        );
+      }
       onMessage(`${person.name} is now allocated to the ${dept.name} department.`);
     } catch (caught) {
       onError(

@@ -1,6 +1,7 @@
 import {
   Banknote,
   Check,
+  Clock,
   MessageSquare,
   PauseCircle,
   PenLine,
@@ -32,6 +33,27 @@ export const KIND_META: Record<HistoryKind, { label: string; tone: TimelineTone;
   held: { label: "Held", tone: "warning", icon: PauseCircle },
   resumed: { label: "Resumed", tone: "primary", icon: PlayCircle },
 };
+
+export const DEFAULT_KIND_META: { label: string; tone: TimelineTone; icon: LucideIcon } = {
+  label: "Activity",
+  tone: "muted",
+  icon: Clock,
+};
+
+export function getKindMeta(kind?: string): { label: string; tone: TimelineTone; icon: LucideIcon } {
+  if (!kind) return DEFAULT_KIND_META;
+  const meta = KIND_META[kind as HistoryKind];
+  if (meta) return meta;
+  const formattedLabel = kind
+    .split("-")
+    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
+    .join(" ");
+  return {
+    label: formattedLabel,
+    tone: "muted",
+    icon: Clock,
+  };
+}
 
 // The Held badge meta (ADR-0016): a held claim keeps its flow status but is
 // visibly marked Held everywhere - the badge swaps the status label for this

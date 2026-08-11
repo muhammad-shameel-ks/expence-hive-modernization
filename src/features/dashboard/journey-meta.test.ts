@@ -1,8 +1,20 @@
 import { describe, expect, it } from "vitest";
 import { Clock, PauseCircle, PlayCircle } from "lucide-react";
-import { formatMoney, HELD_META, simplifyAutoSkipDetail, submittedLabel, KIND_META } from "./journey-meta";
+import { formatMoney, HELD_META, simplifyAutoSkipDetail, submittedLabel, KIND_META, getKindMeta } from "./journey-meta";
 import { getJourneyFlowItems } from "./journey-flow";
 import { claimToExpense } from "./expense-read-model";
+
+describe("getKindMeta", () => {
+  it("returns KIND_META for known history kinds", () => {
+    expect(getKindMeta("submitted")).toMatchObject({ label: "Submitted", tone: "info" });
+    expect(getKindMeta("approved")).toMatchObject({ label: "Approved", tone: "success" });
+  });
+
+  it("returns a safe default for unknown or missing history kinds without throwing", () => {
+    expect(getKindMeta("custom-action")).toMatchObject({ label: "Custom Action", tone: "muted", icon: Clock });
+    expect(getKindMeta(undefined)).toMatchObject({ label: "Activity", tone: "muted", icon: Clock });
+  });
+});
 
 describe("formatMoney", () => {
   it("always shows two decimals for a consistent financial surface", () => {

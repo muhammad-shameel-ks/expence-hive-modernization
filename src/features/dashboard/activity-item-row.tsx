@@ -1,7 +1,7 @@
 "use client";
 
 import { ChevronRight, Clock, User } from "lucide-react";
-import { ACTION_INDICATOR_STYLES, KIND_META, formatMoney } from "./journey-meta";
+import { ACTION_INDICATOR_STYLES, getKindMeta, formatMoney } from "./journey-meta";
 import type { ActivityItem } from "./mock-data";
 import { cn } from "@/lib/utils";
 
@@ -18,7 +18,7 @@ export function ActivityItemRow({
   isLoading = false,
   showActor = true,
 }: ActivityItemRowProps) {
-  const meta = KIND_META[item.kind];
+  const meta = getKindMeta(item.kind);
   const style = ACTION_INDICATOR_STYLES[item.kind] ?? {
     label: meta.label,
     badgeClass: "bg-muted text-muted-foreground border-border",

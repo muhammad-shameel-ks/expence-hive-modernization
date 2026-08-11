@@ -133,6 +133,12 @@ export class InMemoryAdminStore implements AdminStore {
       employee.department = department.name;
       employee.departmentId = department.id;
     }
+    for (const dept of this.departments) {
+      if (dept.headId === employeeId && dept.id !== departmentId) {
+        dept.headId = null;
+        dept.head = null;
+      }
+    }
   }
 
   async setEmployeeActive(employeeId: string, active: boolean): Promise<void> {

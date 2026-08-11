@@ -220,6 +220,7 @@ export function AdminSetup({
             onMessage={setMessage}
             onError={setError}
             onPeopleChange={setPeopleState}
+            onDepartmentsChange={setDepartmentsState}
           />
         ) : activeTab === "flows" ? (
           <FlowSection

@@ -54,6 +54,13 @@ export class AdminError extends Error {
   }
 }
 
+function isManagerRole(role?: { code?: string; displayName?: string } | null): boolean {
+  if (!role) return false;
+  const code = (role.code ?? "").toLowerCase();
+  const name = (role.displayName ?? "").toLowerCase();
+  return code === "manager" || code.includes("manager") || name.includes("manager");
+}
+
 // The pending-claim impact of a privilege change (ADR-0015): which action
 // privileges would be removed, and the in-flight claims with a pending step
 // at the role - ref and title plus the requester and stage for the console
@@ -408,6 +415,13 @@ export function createAdminCommands({
         return;
       }
       await store.setEmployeeRole(employeeId, role.id);
+      if (target.departmentId && isManagerRole(role)) {
+        const departments = await store.listDepartments(actor.organizationId);
+        const dept = departments.find((candidate) => candidate.id === target.departmentId);
+        if (dept && !dept.headId) {
+          await store.setDepartmentHead(dept.id, employeeId);
+        }
+      }
       await audit(actor, "assign-role", `${target.name} assigned to the ${role.displayName} role.`);
     },
 
@@ -426,10 +440,13 @@ export function createAdminCommands({
       if (!department) {
         throw new AdminError("not-found", "Department does not exist or is inactive.");
       }
-      if (target.departmentId === department.id || target.department === department.name) {
+      if (target.departmentId === department.id && target.department === department.name) {
         return;
       }
       await store.setEmployeeDepartment(employeeId, department.id);
+      if (!department.headId && isManagerRole(target.role)) {
+        await store.setDepartmentHead(department.id, employeeId);
+      }
       await audit(actor, "assign-department", `${target.name} moved to the ${department.name} department.`);
     },
 

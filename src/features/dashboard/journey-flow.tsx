@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ME, type Expense, type ExpenseStepView } from "./mock-data";
 import { isTerminal } from "./next-action";
-import { KIND_META, simplifyAutoSkipDetail } from "./journey-meta";
+import { KIND_META, getKindMeta, simplifyAutoSkipDetail } from "./journey-meta";
 
 export interface JourneyFlowStep {
   id: string;
@@ -43,7 +43,7 @@ export function getJourneyFlowItems(
   // would otherwise appear before earlier pending stages.
   const nonAutoSkippedHistory = expense.history.filter((event) => event.kind !== "auto-skipped");
   const historySteps: JourneyFlowStep[] = nonAutoSkippedHistory.map((event, i) => {
-    const meta = KIND_META[event.kind];
+    const meta = getKindMeta(event.kind);
     const isCurrent = !terminal && i === nonAutoSkippedHistory.length - 1;
     return {
       id: event.id,

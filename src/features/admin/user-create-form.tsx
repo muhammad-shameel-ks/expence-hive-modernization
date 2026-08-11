@@ -34,38 +34,30 @@ export function UserCreateForm({
   const [roleId, setRoleId] = useState("");
   const [departmentId, setDepartmentId] = useState("");
   const [managerId, setManagerId] = useState("");
-  const [managerTouched, setManagerTouched] = useState(false);
   const [saving, setSaving] = useState(false);
 
   const activeDepartments = useMemo(() => departments.filter((d) => d.active), [departments]);
   const activeRoles = useMemo(() => roles.filter((role) => role.active), [roles]);
-  const managerOptions = useMemo(
-    () => people.filter((person) => person.active),
-    [people],
-  );
 
   const selectedDepartment = useMemo(
     () => activeDepartments.find((dept) => dept.id === departmentId) ?? null,
     [activeDepartments, departmentId],
   );
 
+  const effectiveManagerId = selectedDepartment?.head?.id ?? managerId;
+
   const canSubmit =
     name.trim().length > 0 &&
     email.trim().length > 0 &&
     roleId !== "" &&
     departmentId !== "" &&
-    managerId !== "" &&
+    effectiveManagerId !== "" &&
     !saving;
 
   const selectDepartment = (id: string) => {
     setDepartmentId(id);
-    // The manager auto-fills from the department head whenever the
-    // department changes; a manual pick survives until then.
     const dept = activeDepartments.find((candidate) => candidate.id === id);
-    if (!managerTouched) {
-      setManagerId(dept?.head?.id ?? "");
-    }
-    setManagerTouched(false);
+    setManagerId(dept?.head?.id ?? "");
   };
 
   const submit = async () => {
@@ -75,7 +67,7 @@ export function UserCreateForm({
       const response = await fetch("/api/admin/employees", {
         method: "POST",
         headers: { "content-type": "application/json" },
-        body: JSON.stringify({ name, email, roleId, departmentId, managerId }),
+        body: JSON.stringify({ name, email, roleId, departmentId, managerId: effectiveManagerId }),
       });
       if (!response.ok) {
         const body = (await response.json()) as { error?: string };
@@ -89,7 +81,6 @@ export function UserCreateForm({
       setRoleId("");
       setDepartmentId("");
       setManagerId("");
-      setManagerTouched(false);
     } catch (caught) {
       onError(
         caught instanceof Error && caught.message === "unauthorized"
@@ -166,26 +157,23 @@ export function UserCreateForm({
         </div>
         <div className="sm:col-span-2">
           <FormLabel htmlFor="create-user-manager">Manager</FormLabel>
-          <Select
+          <input
             id="create-user-manager"
-            value={managerId}
-            onChange={(event) => {
-              setManagerId(event.target.value);
-              setManagerTouched(true);
-            }}
-            placeholder="Choose a manager"
-          >
-            {managerOptions.map((person) => (
-              <option key={person.id} value={person.id}>
-                {person.name}
-              </option>
-            ))}
-          </Select>
+            readOnly
+            className="mt-1.5 h-10 w-full rounded-lg border border-[#d6dfe8] bg-[#f8fafc] px-3 text-sm font-medium text-[#475569] outline-none cursor-not-allowed"
+            value={
+              selectedDepartment?.head
+                ? headName(people, selectedDepartment.head.id)
+                : selectedDepartment
+                  ? "No manager assigned (department has no head)"
+                  : "Choose a department to see manager"
+            }
+          />
           <p className="mt-1.5 text-xs text-[#9aa6b5]" role="note">
             {selectedDepartment?.head
-              ? `Defaults to the ${selectedDepartment.name} department head (${headName(people, selectedDepartment.head.id)}); you can override it.`
+              ? `Automatically assigned to the ${selectedDepartment.name} department head (${headName(people, selectedDepartment.head.id)}).`
               : selectedDepartment
-                ? `The ${selectedDepartment.name} department has no head yet - choose a manager manually.`
+                ? `The ${selectedDepartment.name} department has no head yet. Assign a head in Departments & Roles.`
                 : "Picks up the department head once a department is chosen."}
           </p>
         </div>

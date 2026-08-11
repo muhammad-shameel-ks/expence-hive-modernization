@@ -102,29 +102,13 @@ describe("UserCreateForm", () => {
       target: { value: "dept-engineering" },
     });
 
-    expect(screen.getByLabelText("Manager")).toHaveValue("emp-ada");
+    expect(screen.getByLabelText("Manager")).toHaveValue("Ada Lovelace");
     expect(
-      screen.getByText(/Defaults to the Engineering department head \(Ada Lovelace\)/),
+      screen.getByText(/Automatically assigned to the Engineering department head \(Ada Lovelace\)/),
     ).toBeInTheDocument();
   });
 
-  it("keeps a manual manager override when the department changes afterwards", () => {
-    renderForm();
-
-    fireEvent.change(screen.getByLabelText("Department"), {
-      target: { value: "dept-engineering" },
-    });
-    fireEvent.change(screen.getByLabelText("Manager"), {
-      target: { value: "emp-grace" },
-    });
-    fireEvent.change(screen.getByLabelText("Department"), {
-      target: { value: "dept-headless" },
-    });
-
-    expect(screen.getByLabelText("Manager")).toHaveValue("emp-grace");
-  });
-
-  it("clears the manager when a headless department is picked", () => {
+  it("displays no manager assigned when a headless department is picked", () => {
     renderForm();
 
     fireEvent.change(screen.getByLabelText("Department"), {
@@ -134,9 +118,9 @@ describe("UserCreateForm", () => {
       target: { value: "dept-headless" },
     });
 
-    expect(screen.getByLabelText("Manager")).toHaveValue("");
+    expect(screen.getByLabelText("Manager")).toHaveValue("No manager assigned (department has no head)");
     expect(
-      screen.getByText(/has no head yet - choose a manager manually/),
+      screen.getByText(/The Legacy department has no head yet. Assign a head in Departments & Roles./),
     ).toBeInTheDocument();
   });
 

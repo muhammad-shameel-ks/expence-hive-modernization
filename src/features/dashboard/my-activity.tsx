@@ -7,7 +7,7 @@
 import { useMemo, useState } from "react";
 import { Search, X, Activity, Filter } from "lucide-react";
 import { inPeriod, type DashboardPeriod } from "@/server/expenses/dashboard-read-models";
-import { KIND_META, FILTER_DOT_COLOR, formatMoney } from "./journey-meta";
+import { getKindMeta, FILTER_DOT_COLOR, formatMoney } from "./journey-meta";
 import { ActivityItemRow } from "./activity-item-row";
 import type { ActivityItem, HistoryKind } from "./mock-data";
 
@@ -28,7 +28,7 @@ export const KIND_FILTERS: { value: ActivityKindFilter; label: string }[] = [
 export function matchesActivityQuery(item: ActivityItem, query: string): boolean {
   const q = query.trim().toLowerCase();
   if (!q) return true;
-  const meta = KIND_META[item.kind];
+  const meta = getKindMeta(item.kind);
   const haystack = [
     item.claimTitle,
     item.claimRef,

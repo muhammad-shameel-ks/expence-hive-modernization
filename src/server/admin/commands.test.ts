@@ -252,6 +252,36 @@ describe("assignDepartment", () => {
       department: "Operations",
     });
   });
+
+  it("updates departmentId even when employee.department string matches department.name", async () => {
+    const { admin, store } = buildAdmin();
+    const deptIt = await admin.createDepartment("emp-superadmin", { name: "IT", headId: "emp-superadmin" });
+    const deptEng = await admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" });
+
+    await store.setEmployeeDepartment("emp-katherine", deptIt.id);
+    const employee = await store.getEmployee("emp-katherine");
+    if (employee) {
+      employee.department = "Engineering";
+    }
+
+    await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: deptEng.id });
+
+    const updated = await store.getEmployee("emp-katherine");
+    expect(updated?.departmentId).toBe(deptEng.id);
+  });
+
+  it("automatically assigns a manager as department head when assigned to a headless department", async () => {
+    const { admin, store } = buildAdmin([LOCKED_MANAGER_ROLE]);
+    const dept = await admin.createDepartment("emp-superadmin", { name: "Executive", headId: "emp-superadmin" });
+    await store.setDepartmentHead(dept.id, "");
+
+    await admin.assignRole("emp-superadmin", { employeeId: "emp-katherine", roleId: "role-manager" });
+    await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: dept.id });
+
+    const departments = await admin.listDepartments("emp-superadmin");
+    const executive = departments.find((d) => d.id === dept.id);
+    expect(executive?.headId).toBe("emp-katherine");
+  });
 });
 
 describe("departments", () => {
