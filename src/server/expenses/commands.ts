@@ -28,7 +28,24 @@ import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel, resolveReceiptContentTyp
 const MAX_REASON_CODE_LENGTH = 200;
 
 function canAccessFinance(employee: ExpenseEmployee): boolean {
-  return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessFinance;
+  return employee.role ? resolveRoleCapabilities(employee.role).canAccessFinance : false;
+}
+
+// Display-name map for the organization's roles, built from the employees
+// that hold them; used wherever a flow or claim stage must read as a label.
+function roleNamesFrom(employees: ExpenseEmployee[]): Map<string, string> {
+  return new Map(
+    employees.flatMap((candidate) =>
+      candidate.role ? [[candidate.role.id, candidate.role.displayName] as const] : [],
+    ),
+  );
+}
+
+// The label for one flow or claim stage: a team-lead stage (no role id)
+// names itself; a role stage shows its display name, falling back to the
+// raw id when the role record is not present in the employee list.
+function stageLabel(roleId: string | null | undefined, roleNames: Map<string, string>): string {
+  return roleId ? (roleNames.get(roleId) ?? roleId) : "Team lead";
 }
 
 // A held claim is frozen against terminal actions (ADR-0016): the flow
@@ -153,6 +170,11 @@ export type ExpenseCommands = {
   listClaims(actorId: string): Promise<ExpenseClaim[]>;
   getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
   listEmployees(actorId: string): Promise<ExpenseEmployee[]>;
+  // The display names of the steps in the published flow for the caller's
+  // role ("Team lead" for a team-lead step, the role display name otherwise),
+  // or an empty array when no flow is published. The wizard shows this
+  // preview so its "what happens next" copy never contradicts the real flow.
+  previewFlowSteps(actorId: string): Promise<string[]>;
   submitClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
   rejectClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
@@ -583,6 +605,17 @@ export function createExpenseCommands({
       return store.listEmployees(employee.organizationId);
     },
 
+    async previewFlowSteps(actorId) {
+      const employee = await requireEmployee(actorId);
+      if (!employee.role) return [];
+      const flow = await store.getPublishedFlowForRole(employee.organizationId, employee.role.id);
+      if (!flow || flow.steps.length === 0) return [];
+      const roleNames = roleNamesFrom(await store.listEmployees(employee.organizationId));
+      return flow.steps.map((target) =>
+        target.kind === "team-lead" ? stageLabel(null, roleNames) : stageLabel(target.roleId, roleNames),
+      );
+    },
+
     async submitClaim(actorId, claimId) {
       const claim = await requireClaim(actorId, claimId);
       if (claim.status !== "draft") {
@@ -967,11 +1000,7 @@ export function createExpenseCommands({
         store.listEmployees(employee.organizationId),
       ]);
       const names = new Map(employees.map((candidate) => [candidate.id, candidate.name]));
-      const roleNames = new Map(
-        employees
-          .filter((candidate) => candidate.role)
-          .map((candidate) => [candidate.role!.id, candidate.role!.displayName]),
-      );
+      const roleNames = roleNamesFrom(employees);
       return claims
         .filter((claim) => claim.heldAt)
         .map((claim) => ({
@@ -981,10 +1010,7 @@ export function createExpenseCommands({
           heldBy: claim.heldBy ? (names.get(claim.heldBy) ?? claim.heldBy) : "Unknown",
           heldReason: claim.heldReason ?? "",
           heldAt: claim.heldAt!,
-          // A team-lead stage carries no role id; the stage labels itself.
-          stage: claim.currentStage
-            ? (roleNames.get(claim.currentStage) ?? claim.currentStage)
-            : "Team lead",
+          stage: stageLabel(claim.currentStage, roleNames),
         }));
     },
 

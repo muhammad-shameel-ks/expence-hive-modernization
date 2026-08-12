@@ -30,13 +30,6 @@ import { JourneyFlow } from "./journey-flow";
 import { StatusBadge } from "./status-badge";
 
 
-const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
-  submitted: "Withdraw",
-  "in-approval": "Remind approver",
-  approved: "Add note",
-  "in-finance": "Add note",
-};
-
 // Verify/pay mutations return the domain claim plus the organization
 // employees ({ claim, employees }), so the drawer renders exactly what the
 // server stamped with real actor names - never "System" placeholders.
@@ -178,9 +171,7 @@ export function ExpenseDrawer({
       ? "Verify for payment"
       : activeExpense?.primaryAction === "pay"
         ? "Mark as paid"
-        : activeExpense
-          ? PRIMARY_ACTION[activeExpense.status]
-          : "Action";
+        : "No action";
   // Rejection is only possible while the assigned stage is still pending a
   // decision: once Finance has verified, the step has moved past "pending"
   // and only payment marking remains. The server's reject command requires
@@ -881,10 +872,6 @@ export function ExpenseDrawer({
                   </Button>
                 </>
               )}
-              <Button variant="outline" className="gap-1.5">
-                Full record
-                <ArrowUpRight className="h-3.5 w-3.5" />
-              </Button>
             </div>
           </footer>
         </>

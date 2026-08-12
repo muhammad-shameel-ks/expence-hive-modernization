@@ -3315,3 +3315,47 @@ describe("hold and resume", () => {
     ]);
   });
 });
+
+describe("previewFlowSteps", () => {
+  it("returns the display names of the published flow for the caller's role", async () => {
+    const { commands } = buildCommands();
+    expect(await commands.previewFlowSteps(employee.id)).toEqual([
+      "Manager",
+      "Finance Head",
+      "Finance Executive",
+    ]);
+  });
+
+  it("labels a team-lead step as Team lead", async () => {
+    const intern = emp("emp-intern", "Intern Kid", ROLE_INTERN);
+    const { commands } = buildCommands({
+      employees: [
+        employee,
+        intern,
+        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER),
+        emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD),
+      ],
+      flows: [
+        {
+          id: "flow-intern",
+          roleId: ROLE_INTERN.id,
+          steps: [TEAM_LEAD_STEP, roleStep(ROLE_MANAGER.id), roleStep(ROLE_FINANCE_HEAD.id)],
+        },
+      ],
+    });
+    expect(await commands.previewFlowSteps(intern.id)).toEqual(["Team lead", "Manager", "Finance Head"]);
+  });
+
+  it("returns an empty array when no flow is published for the role", async () => {
+    const { commands } = buildCommands({ flows: [] });
+    expect(await commands.previewFlowSteps(employee.id)).toEqual([]);
+  });
+
+  it("returns an empty array for an employee without a role", async () => {
+    const roleless = emp("emp-roleless", "No Role", null);
+    const { commands } = buildCommands({
+      employees: [roleless, emp("emp-ada", "Ada Lovelace", ROLE_MANAGER)],
+    });
+    expect(await commands.previewFlowSteps(roleless.id)).toEqual([]);
+  });
+});

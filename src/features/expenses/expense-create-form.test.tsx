@@ -55,13 +55,12 @@ vi.mock("@/features/receipts/receipt-preview", () => ({
 }));
 
 function stubFetch() {
-  vi.stubGlobal(
-    "fetch",
-    vi.fn(async () => ({
-      ok: true,
-      json: async () => ({ claim: { id: "exp-1" } }),
-    })),
-  );
+  const fetchMock = vi.fn(async () => ({
+    ok: true,
+    json: async () => ({ claim: { id: "exp-1" } }),
+  }));
+  vi.stubGlobal("fetch", fetchMock);
+  return fetchMock;
 }
 
 // jsdom has no layout engine, so getBoundingClientRect always reports 0,0.
@@ -441,5 +440,149 @@ describe("ExpenseCreateForm mobile receipt sheet", () => {
 
     expect(lastPreviewProps()?.claimId).toBe("exp-1");
     expect(lastPreviewProps()?.fileName).toBe("stored.pdf");
+  });
+});
+
+describe("ExpenseCreateForm autosave", () => {
+  beforeEach(() => {
+    vi.useFakeTimers();
+  });
+
+  afterEach(() => {
+    vi.useRealTimers();
+  });
+
+  function advanceAutosaveDebounce() {
+    return act(async () => {
+      await vi.advanceTimersByTimeAsync(1500);
+    });
+  }
+
+  it("persists a new draft via POST after the debounce once details are complete", async () => {
+    const fetchMock = stubFetch();
+    render(<ExpenseCreateForm />);
+    pickReceipt();
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    fillDetails();
+    await advanceAutosaveDebounce();
+
+    expect(fetchMock).toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/expenses");
+    expect(init.method).toBe("POST");
+  });
+
+  it("does not autosave while the draft is incomplete", async () => {
+    const fetchMock = stubFetch();
+    render(<ExpenseCreateForm />);
+    pickReceipt();
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    // Only the title, no amount yet: still not persistable.
+    fireEvent.change(screen.getByLabelText("What was this expense for?"), {
+      target: { value: "Client dinner" },
+    });
+    await advanceAutosaveDebounce();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("does not autosave on mount with an untouched resumed draft", async () => {
+    const fetchMock = stubFetch();
+    render(<ExpenseCreateForm initial={draftInitial({ receiptFileName: "stored.pdf" })} />);
+    await advanceAutosaveDebounce();
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("patches the existing draft via PATCH once a claim id exists", async () => {
+    const fetchMock = stubFetch();
+    render(<ExpenseCreateForm initial={draftInitial({ receiptFileName: "stored.pdf" })} />);
+    // A resumed draft starts at the receipt step with its stored receipt, so
+    // move to the details step first, then touch a field to mark it dirty.
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    fireEvent.change(screen.getByLabelText("What was this expense for?"), {
+      target: { value: "Updated flight" },
+    });
+    await advanceAutosaveDebounce();
+
+    expect(fetchMock).toHaveBeenCalled();
+    const [url, init] = fetchMock.mock.calls[0];
+    expect(url).toBe("/api/expenses/exp-1");
+    expect(init.method).toBe("PATCH");
+  });
+
+  it("clears the dirty flag after a successful autosave so it does not fire again", async () => {
+    const fetchMock = stubFetch();
+    render(<ExpenseCreateForm />);
+    pickReceipt();
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    fillDetails();
+    await advanceAutosaveDebounce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // Nothing changed since the save, so no second autosave.
+    await advanceAutosaveDebounce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+  });
+
+  it("lets the explicit review save win while an autosave is in flight", async () => {
+    const fetchMock = stubFetch();
+    render(<ExpenseCreateForm />);
+    pickReceipt();
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    fillDetails();
+    await advanceAutosaveDebounce();
+
+    // The autosave is still in flight; clicking Review must wait for it and
+    // still persist + advance to the review step.
+    fireEvent.click(screen.getByRole("button", { name: /review claim/i }));
+    await advanceAutosaveDebounce();
+
+    expect(screen.getByRole("button", { name: /submit for approval/i })).toBeInTheDocument();
+    expect(fetchMock).toHaveBeenCalled();
+    // The autosave POSTed the new draft; the review save then PATCHes the
+    // known claim and still advances to the review step.
+    expect(fetchMock.mock.calls.at(-1)![1].method).toBe("PATCH");
+  });
+
+  it("does not drop the newest edits when an autosave fires during another save", async () => {
+    // The first request stays unresolved (simulating a slow save) while a
+    // second debounce fires; the second save must wait for the first and
+    // then persist the newest state instead of being skipped.
+    let resolveFirst: (value: unknown) => void = () => {};
+    const fetchMock = vi.fn();
+    fetchMock.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          resolveFirst = resolve;
+        }),
+    );
+    fetchMock.mockImplementation(async () => ({
+      ok: true,
+      json: async () => ({ claim: { id: "exp-1" } }),
+    }));
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(<ExpenseCreateForm />);
+    pickReceipt();
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    fillDetails();
+    await advanceAutosaveDebounce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    // The first save is still in flight; type more and let the debounce fire
+    // again. The second save must queue behind the first, not vanish.
+    fireEvent.change(screen.getByLabelText("What was this expense for?"), {
+      target: { value: "Updated after first save" },
+    });
+    await advanceAutosaveDebounce();
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+
+    await act(async () => {
+      resolveFirst({ ok: true, json: async () => ({ claim: { id: "exp-1" } }) });
+    });
+    await advanceAutosaveDebounce();
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    const [, secondInit] = fetchMock.mock.calls[1];
+    expect(secondInit.method).toBe("PATCH");
   });
 });

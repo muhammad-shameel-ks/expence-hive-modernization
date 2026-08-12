@@ -31,6 +31,7 @@ export default async function NewExpensePage({
   }
 
   const params = await searchParams;
+  const journey = await commands.previewFlowSteps(employee.id);
   let initial: ExpenseDraftInitial | null = null;
   if (params.id) {
     try {
@@ -74,6 +75,7 @@ export default async function NewExpensePage({
         <div className="mt-8">
           <ExpenseCreateForm
             initial={initial}
+            journey={journey}
             canSubmit={resolveRoleCapabilities(workspace.employee.role).canSubmit}
           />
         </div>
