@@ -14,7 +14,7 @@ The company wants the whole dashboard to respond to a month / year / overall per
    - **Employee:** spent (period), pending reimbursements (amount + count, not just a count), drafts needing completion (task CTA), reimbursed (period).
    - **Approver:** awaiting my action (count + total), my holds (with quick resume, ADR-0016), aging - claims stuck at a stage beyond the configured absence timeout (ADR-0018).
    - **Finance:** the same clean four-card pattern, adapted - queue awaiting verification/payment, paid out (period), aged claims, rejected (period).
-   - **Superadmin:** admin console remains the home; no new dashboard cards.
+   - **Superadmin:** admin console remains the home; no new dashboard cards. In practice the capability-driven mapping resolves Superadmin to the finance card set on the `/expenses` route (Superadmin holds every capability by construction, ADR-0015), which is the same "no new cards" guarantee - the finance set already exists and no card is added for Superadmin's sake. Superadmin's home stays the admin console.
 2. **The period switch is a first-class control on the whole dashboard:** month / year / overall, defaulting to the current month (research favors narrow defaults; "overall" is available but not the default).
    Selecting a period re-computes cards, the claims list, and the activity feed together; the choice is preserved across visits.
 3. **Every card passes a decision test:** it must inform an action (act on my queue, resume a hold, chase an aged claim). Vanity metrics are excluded.

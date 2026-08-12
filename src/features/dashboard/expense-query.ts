@@ -111,7 +111,27 @@ export function filterAndSortExpenses(expenses: Expense[], options: ExpenseQuery
 
 const EXPENSE_FILTER_PARAM_KEYS = ["q", "status", "statuses", "cats", "min", "max", "from", "to", "sort", "dir"] as const;
 
-export const EXPENSE_SORT_KEYS: ExpenseSortKey[] = ["date", "amount", "title", "category", "status"];
+// The sort catalog is the single source for both the URL/query validation
+// (EXPENSE_SORT_KEYS) and the filter section's dropdown labels, so adding a
+// sortable column is a one-edit change.
+export const EXPENSE_SORT_OPTIONS: {
+  value: string;
+  key: ExpenseSortKey;
+  dir: 1 | -1;
+  label: string;
+}[] = [
+  { value: "date-desc", key: "date", dir: -1, label: "Newest first" },
+  { value: "date-asc", key: "date", dir: 1, label: "Oldest first" },
+  { value: "amount-desc", key: "amount", dir: -1, label: "Amount: highest first" },
+  { value: "amount-asc", key: "amount", dir: 1, label: "Amount: lowest first" },
+  { value: "title-asc", key: "title", dir: 1, label: "Title: A to Z" },
+  { value: "category-asc", key: "category", dir: 1, label: "Category: A to Z" },
+  { value: "status-asc", key: "status", dir: 1, label: "Status: journey order" },
+];
+
+export const EXPENSE_SORT_KEYS: ExpenseSortKey[] = Array.from(
+  new Set(EXPENSE_SORT_OPTIONS.map((option) => option.key)),
+);
 
 function validStatus(value: string | null): ExpenseStatus | null {
   if (!value) return null;

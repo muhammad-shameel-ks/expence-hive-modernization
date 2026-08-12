@@ -166,7 +166,7 @@ export function OrgSection({
     } catch (caught) {
       onError(
         caught instanceof Error && caught.message === "unauthorized"
-          ? "Only Superadmin can change department heads."
+          ? "Only admin-console roles can change department heads."
           : "The head could not be saved. Please try again.",
       );
     } finally {

@@ -7,7 +7,6 @@
 // component only renders them and reports column-sort clicks back.
 
 import { ArrowUpDown, ChevronRight } from "lucide-react";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import {
   Table,
   TableBody,
@@ -17,10 +16,11 @@ import {
   TableRow,
 } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import { STATUS_META, type Expense } from "./mock-data";
+import type { Expense } from "./mock-data";
 import { nextActionFor } from "./next-action";
-import { formatMoney, HELD_META, statusBadgeClass } from "./journey-meta";
+import { formatMoney } from "./journey-meta";
 import type { ExpenseSortKey } from "./expense-query";
+import { StatusBadge } from "./status-badge";
 
 const SORT_COLUMNS: { key: ExpenseSortKey; label: string; className: string }[] = [
   { key: "title", label: "Expense", className: "pl-5" },
@@ -79,7 +79,6 @@ export function ExpenseTable({
         </TableHeader>
         <TableBody>
           {rows.map((expense) => {
-            const status = STATUS_META[expense.status];
             const next = nextActionFor(expense, currentUser, currentUserId);
             return (
               <TableRow
@@ -108,15 +107,7 @@ export function ExpenseTable({
                   {formatMoney(expense.amount, expense.currency)}
                 </TableCell>
                 <TableCell className="hidden max-w-[150px] whitespace-normal lg:table-cell">
-                  {expense.held ? (
-                    <AnimatedBadge status={HELD_META.tone} size="sm" contentKey="Held">
-                      {HELD_META.label}
-                    </AnimatedBadge>
-                  ) : (
-                    <AnimatedBadge status={status.tone} size="sm" className={statusBadgeClass(expense.status)}>
-                      {status.label}
-                    </AnimatedBadge>
-                  )}
+                  <StatusBadge held={expense.held} status={expense.status} />
                 </TableCell>
                 <TableCell className="hidden lg:table-cell">
                   <p

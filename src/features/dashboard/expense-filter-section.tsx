@@ -35,6 +35,7 @@ import { usePathname, useRouter, useSearchParams } from "next/navigation";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import {
+  EXPENSE_SORT_OPTIONS,
   expenseFilterKey,
   expenseFilterParams,
   filterAndSortExpenses,
@@ -73,16 +74,6 @@ function useIsMobile() {
   // before the client has resolved the actual breakpoint.
   return useSyncExternalStore(subscribeToMobileQuery, getMobileSnapshot, () => null);
 }
-
-const SORT_OPTIONS: { value: string; label: string; key: ExpenseSortKey; dir: 1 | -1 }[] = [
-  { value: "date-desc", label: "Newest first", key: "date", dir: -1 },
-  { value: "date-asc", label: "Oldest first", key: "date", dir: 1 },
-  { value: "amount-desc", label: "Amount: highest first", key: "amount", dir: -1 },
-  { value: "amount-asc", label: "Amount: lowest first", key: "amount", dir: 1 },
-  { value: "title-asc", label: "Title: A to Z", key: "title", dir: 1 },
-  { value: "category-asc", label: "Category: A to Z", key: "category", dir: 1 },
-  { value: "status-asc", label: "Status: journey order", key: "status", dir: 1 },
-];
 
 export interface ExpenseFilterResult {
   /** The source list after every filter and sort is applied. */
@@ -198,7 +189,7 @@ export function ExpenseFilterSection({
   };
 
   const selectSort = (value: string) => {
-    const option = SORT_OPTIONS.find((o) => o.value === value);
+    const option = EXPENSE_SORT_OPTIONS.find((o) => o.value === value);
     if (!option) return;
     update({ sortKey: option.key, sortDir: option.dir });
   };
@@ -238,17 +229,12 @@ export function ExpenseFilterSection({
     <div>
       {isMobile !== true ? (
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4">
-          <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-1.5">
-            {QUICK_STATUS_CHIPS.map((chip) => (
-              <StatusChip
-                key={chip.filter}
-                label={chip.label}
-                count={chipCounts.get(chip.filter)}
-                active={chip.filter === "All" ? isAllActive : query.filter === chip.filter}
-                onClick={() => selectFilter(chip.filter)}
-              />
-            ))}
-          </div>
+          <StatusChipGroup
+            query={query}
+            isAllActive={isAllActive}
+            chipCounts={chipCounts}
+            onSelect={selectFilter}
+          />
           <Button
             variant="outline"
             size="sm"
@@ -288,55 +274,75 @@ export function ExpenseFilterSection({
       )}
 
       {isMobile === true && mobileFiltersOpen ? (
-        <div id="expense-mobile-filters" className="mx-5 mb-4 flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4">
-          <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-1.5">
-            {QUICK_STATUS_CHIPS.map((chip) => (
-              <StatusChip
-                key={chip.filter}
-                label={chip.label}
-                count={chipCounts.get(chip.filter)}
-                active={chip.filter === "All" ? isAllActive : query.filter === chip.filter}
-                onClick={() => selectFilter(chip.filter)}
-              />
-            ))}
-          </div>
-          <AdvancedFilters
+        <AdvancedFiltersPanel
+          id="expense-mobile-filters"
+          query={query}
+          allCategories={allCategories}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSearch={(value) => update({ query: value })}
+          onToggleStatus={toggleStatus}
+          onToggleCategory={toggleCategory}
+          onAmountChange={onAmountChange}
+          onDateChange={(field, value) => update({ [field]: value || undefined })}
+          onSortSelect={selectSort}
+          onClear={clearAdvancedFilters}
+          advancedCount={advancedCount}
+        >
+          <StatusChipGroup
             query={query}
-            allCategories={allCategories}
-            sortKey={sortKey}
-            sortDir={sortDir}
-            onSearch={(value) => update({ query: value })}
-            onToggleStatus={toggleStatus}
-            onToggleCategory={toggleCategory}
-            onAmountChange={onAmountChange}
-            onDateChange={(field, value) => update({ [field]: value || undefined })}
-            onSortSelect={selectSort}
-            onClear={clearAdvancedFilters}
-            advancedCount={advancedCount}
+            isAllActive={isAllActive}
+            chipCounts={chipCounts}
+            onSelect={selectFilter}
           />
-        </div>
+        </AdvancedFiltersPanel>
       ) : null}
 
       {isMobile !== true && moreFiltersOpen ? (
-        <div id="expense-more-filters" className="mx-5 mb-4 flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4">
-          <AdvancedFilters
-            query={query}
-            allCategories={allCategories}
-            sortKey={sortKey}
-            sortDir={sortDir}
-            onSearch={(value) => update({ query: value })}
-            onToggleStatus={toggleStatus}
-            onToggleCategory={toggleCategory}
-            onAmountChange={onAmountChange}
-            onDateChange={(field, value) => update({ [field]: value || undefined })}
-            onSortSelect={selectSort}
-            onClear={clearAdvancedFilters}
-            advancedCount={advancedCount}
-          />
-        </div>
+        <AdvancedFiltersPanel
+          id="expense-more-filters"
+          query={query}
+          allCategories={allCategories}
+          sortKey={sortKey}
+          sortDir={sortDir}
+          onSearch={(value) => update({ query: value })}
+          onToggleStatus={toggleStatus}
+          onToggleCategory={toggleCategory}
+          onAmountChange={onAmountChange}
+          onDateChange={(field, value) => update({ [field]: value || undefined })}
+          onSortSelect={selectSort}
+          onClear={clearAdvancedFilters}
+          advancedCount={advancedCount}
+        />
       ) : null}
 
       {children(result)}
+    </div>
+  );
+}
+
+function StatusChipGroup({
+  query,
+  isAllActive,
+  chipCounts,
+  onSelect,
+}: {
+  query: ExpenseQuery;
+  isAllActive: boolean;
+  chipCounts: Map<ExpenseFilter, number>;
+  onSelect: (filter: ExpenseFilter) => void;
+}) {
+  return (
+    <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-1.5">
+      {QUICK_STATUS_CHIPS.map((chip) => (
+        <StatusChip
+          key={chip.filter}
+          label={chip.label}
+          count={chipCounts.get(chip.filter)}
+          active={chip.filter === "All" ? isAllActive : query.filter === chip.filter}
+          onClick={() => onSelect(chip.filter)}
+        />
+      ))}
     </div>
   );
 }
@@ -369,20 +375,23 @@ function StatusChip({
   );
 }
 
-function AdvancedFilters({
-  query,
-  allCategories,
-  sortKey,
-  sortDir,
-  onSearch,
-  onToggleStatus,
-  onToggleCategory,
-  onAmountChange,
-  onDateChange,
-  onSortSelect,
-  onClear,
-  advancedCount,
+function AdvancedFiltersPanel({
+  id,
+  children,
+  ...filters
 }: {
+  id: string;
+  children?: ReactNode;
+} & AdvancedFiltersProps) {
+  return (
+    <div id={id} className="mx-5 mb-4 flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4">
+      {children}
+      <AdvancedFilters {...filters} />
+    </div>
+  );
+}
+
+type AdvancedFiltersProps = {
   query: ExpenseQuery;
   allCategories: string[];
   sortKey: ExpenseSortKey;
@@ -395,7 +404,23 @@ function AdvancedFilters({
   onSortSelect: (value: string) => void;
   onClear: () => void;
   advancedCount: number;
-}) {
+};
+
+function AdvancedFilters(props: AdvancedFiltersProps) {
+  const {
+    query,
+    allCategories,
+    sortKey,
+    sortDir,
+    onSearch,
+    onToggleStatus,
+    onToggleCategory,
+    onAmountChange,
+    onDateChange,
+    onSortSelect,
+    onClear,
+    advancedCount,
+  } = props;
   return (
     <>
       <div>
@@ -517,7 +542,7 @@ function AdvancedFilters({
           onChange={(e) => onSortSelect(e.target.value)}
           className="h-9 rounded-lg border border-input bg-card px-2.5 text-sm outline-none focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
         >
-          {SORT_OPTIONS.map((option) => (
+          {EXPENSE_SORT_OPTIONS.map((option) => (
             <option key={option.value} value={option.value}>
               {option.label}
             </option>

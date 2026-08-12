@@ -2051,20 +2051,42 @@ describe("expense commands", () => {
       });
     });
 
-    it("acts at the current stage when the delegatee's role appears nowhere in the flow", async () => {
+    it("honors a cross-department Manager delegated onto the current Manager stage", async () => {
+      const { commands } = buildCommands({
+        employees: [...BASE_EMPLOYEES, superadmin, emp("emp-other-dept", "Other Dept Manager", ROLE_MANAGER, { departmentId: "dept-finance" })],
+      });
+      const submitted = await submitStandardDraft(commands);
+
+      const delegated = await commands.delegateClaim(superadmin.id, submitted.id, "emp-other-dept", "Temporary cover");
+
+      expect(delegated).toMatchObject({
+        status: "in-approval",
+        currentStage: ROLE_MANAGER.id,
+        currentActorId: "emp-other-dept",
+      });
+      expect(delegated.steps[0].assignedActorId).toBe("emp-other-dept");
+      // The delegated assignee acts even though isEligible limits Manager
+      // steps to the requester's department (ADR-0017: only the person
+      // changes; the re-pointed actor is honored at their landed stage).
+      await expect(commands.approveStage("emp-other-dept", submitted.id)).resolves.toMatchObject({
+        currentStage: ROLE_FINANCE_HEAD.id,
+        currentActorId: "emp-pramod",
+      });
+    });
+
+    it("rejects a privilege-less delegatee at a role stage before anything is written", async () => {
       const { commands } = buildCommands({
         employees: [...BASE_EMPLOYEES, superadmin, emp("emp-katherine", "Katherine Johnson", ROLE_EXECUTIVE, { departmentId: "dept-eng" })],
       });
       const submitted = await submitStandardDraft(commands);
 
-      const delegated = await commands.delegateClaim(superadmin.id, submitted.id, "emp-katherine", "Temporary cover");
-
-      expect(delegated).toMatchObject({
-        status: "in-approval",
-        currentStage: ROLE_MANAGER.id,
-        currentActorId: "emp-katherine",
+      await expect(commands.delegateClaim(superadmin.id, submitted.id, "emp-katherine", "Temporary cover")).rejects.toMatchObject({
+        code: "validation",
+        message: "The target's role has no action privileges, so they cannot act on this claim's stage.",
       });
-      expect(delegated.steps[0].assignedActorId).toBe("emp-katherine");
+      const claim = await commands.getClaim(employee.id, submitted.id);
+      expect(claim.steps[0].assignedActorId).toBe("emp-ada");
+      expect(claim.history.some((event) => event.kind === "delegated")).toBe(false);
     });
 
     it("positionally lands a team-lead-flow delegation on the delegatee's later role step", async () => {

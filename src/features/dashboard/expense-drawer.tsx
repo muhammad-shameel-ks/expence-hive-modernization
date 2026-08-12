@@ -6,7 +6,6 @@ import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
 import { AlertTriangle, ArrowUpRight, Download, Paperclip, PauseCircle, PlayCircle, Search, UserRoundCheck, X } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { EASE_OUT } from "@/lib/ease";
 import { Button } from "@/components/ui/button";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
@@ -23,11 +22,12 @@ import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import { STATUS_META, type Expense } from "./mock-data";
 import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
-import { formatMoney, HELD_META, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
+import { formatMoney, initials, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
 import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import { JourneyFlow } from "./journey-flow";
+import { StatusBadge } from "./status-badge";
 
 
 const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
@@ -744,15 +744,7 @@ export function ExpenseDrawer({
                 {activeExpense.title}
               </h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                {activeExpense.held ? (
-                  <AnimatedBadge status={HELD_META.tone} size="sm" contentKey="Held">
-                    {HELD_META.label}
-                  </AnimatedBadge>
-                ) : (
-                  <AnimatedBadge status={statusMeta.tone} size="sm" className={statusBadgeClass(activeExpense.status)}>
-                    {statusMeta.label}
-                  </AnimatedBadge>
-                )}
+                <StatusBadge held={activeExpense.held} status={activeExpense.status} />
                 <span className="text-xs text-muted-foreground">{activeExpense.category}</span>
               </div>
             </div>

@@ -5,9 +5,8 @@
 // imports), so the period helpers and view selection below are shared with
 // the client components that render the same period semantics.
 
-import { absenceTimeoutMillis } from "../shared/absence-timeout";
 import { resolveRoleCapabilities, type RoleCapabilitiesRecord } from "../shared/authorization";
-import { isTerminalIndex } from "./absence-skip";
+import { isStageTimedOut, isTerminalIndex } from "./absence-skip";
 import type { AbsenceTimeoutReader } from "./commands";
 import type { ExpenseClaim, ExpenseEmployee, ExpenseStore } from "./ports";
 
@@ -118,16 +117,16 @@ function pendingIndex(claim: ExpenseClaim): number {
   return claim.steps.findIndex((step) => step.status === "pending");
 }
 
-// Mirrors the absence sweep's timeout check (absence-skip.ts): the stage
-// has been current for at least the configured timeout. Held claims are
-// exempt (ADR-0016/0018), and the terminal stage is never auto-skipped, so
-// neither is ever "aged".
+// A claim is "aged" when its current pending stage has waited past the
+// configured absence timeout - the same predicate the sweep uses to
+// auto-skip, so the aging card and the sweep cannot drift apart
+// (ADR-0018/0020). Held claims are exempt (ADR-0016/0018), and the
+// terminal stage is never auto-skipped, so neither is ever "aged".
 function isAged(claim: ExpenseClaim, absenceTimeoutDays: number, now: Date): boolean {
   if (!inFlight(claim) || claim.heldAt) return false;
   const index = pendingIndex(claim);
   if (index === -1 || isTerminalIndex(claim, index)) return false;
-  const since = claim.currentStageSince ?? claim.submittedAt ?? claim.createdAt;
-  return now.getTime() - new Date(since).getTime() >= absenceTimeoutMillis(absenceTimeoutDays);
+  return isStageTimedOut(claim, absenceTimeoutDays, now);
 }
 
 export function employeeAggregates(

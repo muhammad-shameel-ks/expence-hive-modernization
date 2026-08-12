@@ -21,9 +21,24 @@ export function isTerminalIndex(claim: ExpenseClaim, index: number): boolean {
 // so adding a third action privilege is a single-edit change. The
 // finance-head role of the default catalog approves its stage with
 // can_access_finance alone, so the check accepts either privilege rather
-// than requiring can_approve.
-function hasActionPrivilege(capabilities: RoleCapabilities): boolean {
+// than requiring can_approve. Shared with the delegation validation so a
+// delegated target without any action privilege is refused up front
+// instead of stranding the claim.
+export function hasActionPrivilege(capabilities: RoleCapabilities): boolean {
   return ACTION_PRIVILEGES.some((privilege) => capabilities[privilege]);
+}
+
+// The shared "has the current stage waited past the configured absence
+// timeout" predicate: the sweep uses it to auto-skip, and the dashboard's
+// aging card uses it to surface stuck claims, so the two cannot drift
+// apart (ADR-0018/0020).
+export function isStageTimedOut(
+  claim: ExpenseClaim,
+  absenceTimeoutDays: number,
+  now: Date,
+): boolean {
+  const since = claim.currentStageSince ?? claim.submittedAt ?? claim.createdAt;
+  return now.getTime() - new Date(since).getTime() >= absenceTimeoutMillis(absenceTimeoutDays);
 }
 
 // A pending stage is absent when its role is vacant (no assigned actor,
@@ -74,9 +89,7 @@ export function catchUpAbsentStages(
     const assigned = step.assignedActorId ? employeesById.get(step.assignedActorId) : undefined;
     const lacksPrivilege =
       step.roleId !== null && !hasActionPrivilege(resolveRoleCapabilities(assigned?.role));
-    const since = claim.currentStageSince ?? claim.submittedAt ?? claim.createdAt;
-    const timedOut =
-      now().getTime() - new Date(since).getTime() >= absenceTimeoutMillis(absenceTimeoutDays);
+    const timedOut = isStageTimedOut(claim, absenceTimeoutDays, now());
     if (!vacant && !lacksPrivilege && !timedOut) break;
     const decidedAt = now().toISOString();
     step.status = "skipped";

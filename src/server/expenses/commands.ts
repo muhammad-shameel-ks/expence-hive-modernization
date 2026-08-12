@@ -8,7 +8,7 @@ import {
 } from "../shared/authorization";
 import { autoSkipDetail, guardSatisfied } from "../shared/amount-guard";
 import { DEFAULT_ABSENCE_TIMEOUT_DAYS } from "../shared/absence-timeout";
-import { catchUpAbsentStages, isTerminalIndex, terminalIndex } from "./absence-skip";
+import { catchUpAbsentStages, hasActionPrivilege, isTerminalIndex, terminalIndex } from "./absence-skip";
 import {
   ACTIVITY_EVENT_KINDS,
   type ActivityEntry,
@@ -85,6 +85,19 @@ function isEligible(
 
 function stepTarget(step: ExpenseClaim["steps"][number]): FlowStepTarget {
   return step.roleId === null ? { kind: "team-lead" } : { kind: "role", roleId: step.roleId };
+}
+
+// Delegation honors the re-pointed person at their landed stage (ADR-0017):
+// the delegated assignee may act on the step even when their role would not
+// normally be eligible - a cross-department Manager, or a role absent from
+// the claim's frozen steps. Pool members keep acting via isEligible; the
+// step's assigned actor is always eligible.
+function canActOnStep(
+  requester: ExpenseEmployee,
+  actor: ExpenseEmployee,
+  step: ExpenseClaim["steps"][number],
+): boolean {
+  return isEligible(requester, actor, stepTarget(step)) || actor.id === step.assignedActorId;
 }
 
 
@@ -345,7 +358,7 @@ export function createExpenseCommands({
     const step = claim.steps[index];
     const employees = await store.listEmployees(claim.organizationId);
     const requester = employees.find((candidate) => candidate.id === claim.requesterId);
-    if (!requester || !step || !isEligible(requester, actor, stepTarget(step))) {
+    if (!requester || !step || !canActOnStep(requester, actor, step)) {
       throw new ExpenseError("unauthorized", "You are not eligible to process this claim's terminal stage.");
     }
     return { actor, claim, step };
@@ -654,7 +667,7 @@ export function createExpenseCommands({
       const requester = (await store.listEmployees(claim.organizationId)).find(
         (candidate) => candidate.id === claim.requesterId,
       );
-      if (!requester || !isEligible(requester, actor, stepTarget(claim.steps[index]))) {
+      if (!requester || !canActOnStep(requester, actor, claim.steps[index])) {
         throw new ExpenseError("unauthorized", "You are not eligible to approve this claim's current stage.");
       }
       const step = claim.steps[index];
@@ -777,6 +790,21 @@ export function createExpenseCommands({
               (step, index) =>
                 index > currentIndex && step.status === "pending" && step.roleId === delegateeRoleId,
             );
+      // The delegated person must be able to decide the landed stage
+      // (ADR-0017). A role step (a team-lead step has no role and accepts
+      // any person, mirroring the sweep) whose delegatee's role holds no
+      // action privilege can neither approve nor verify/pay, and the
+      // absence sweep would skip their stage as privilege-less - re-pointing
+      // to them strands the claim either way. Role-mismatched but
+      // privileged people are honored: the delegated assignee acts on their
+      // landed step regardless of role (canActOnStep).
+      const landedIndex = targetIndex === -1 ? currentIndex : targetIndex;
+      if (claim.steps[landedIndex].roleId !== null && !hasActionPrivilege(resolveRoleCapabilities(delegatee.role))) {
+        throw new ExpenseError(
+          "validation",
+          "The target's role has no action privileges, so they cannot act on this claim's stage.",
+        );
+      }
       if (targetIndex === -1) {
         // Same-stage delegation: only the person changes, the flow keeps
         // its position.
@@ -802,9 +830,7 @@ export function createExpenseCommands({
         }
         claim.steps[targetIndex].assignedActorId = delegatee.id;
       }
-      const landedIndex = targetIndex === -1 ? currentIndex : targetIndex;
-      claim.currentStage = claim.steps[landedIndex].roleId ?? undefined;
-      claim.currentActorId = delegatee.id;
+      claim.currentStage = claim.steps[landedIndex].roleId ?? undefined;      claim.currentActorId = delegatee.id;
       // The new actor gets a fresh absence window (mirrors resume, ADR-0016):
       // a long-stuck claim must not be swept the moment it is re-pointed.
       claim.currentStageSince = decidedAt;

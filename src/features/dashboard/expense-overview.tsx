@@ -6,7 +6,6 @@
 import { useMemo, useState, type ReactNode } from "react";
 import { ArrowUpRight, ChevronDown, Clock3 } from "lucide-react";
 import { inPeriod, type DashboardPeriod } from "@/server/expenses/dashboard-read-models";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -18,8 +17,9 @@ import {
 import { cn } from "@/lib/utils";
 import { groupAttentionItems } from "./dashboard-attention";
 import { ExpenseFilterSection } from "./expense-filter-section";
-import { STATUS_META, type Expense } from "./mock-data";
-import { formatMoney, HELD_META, statusBadgeClass } from "./journey-meta";
+import type { Expense } from "./mock-data";
+import { formatMoney } from "./journey-meta";
+import { StatusBadge } from "./status-badge";
 
 const RECENT_COUNT = 5;
 
@@ -103,19 +103,7 @@ export function ExpenseOverview({
                     >
                       <p className="truncate text-sm font-medium text-foreground">{expense.title}</p>
                       <div className="flex shrink-0 items-center gap-2.5">
-                        {expense.held ? (
-                          <AnimatedBadge status={HELD_META.tone} size="sm" contentKey="Held">
-                            {HELD_META.label}
-                          </AnimatedBadge>
-                        ) : (
-                          <AnimatedBadge
-                            status={STATUS_META[expense.status].tone}
-                            size="sm"
-                            className={statusBadgeClass(expense.status)}
-                          >
-                            {STATUS_META[expense.status].label}
-                          </AnimatedBadge>
-                        )}
+                        <StatusBadge held={expense.held} status={expense.status} />
                         <span className="w-20 shrink-0 text-right text-sm tabular-nums font-medium text-foreground">
                           {formatMoney(expense.amount, expense.currency)}
                         </span>
@@ -174,22 +162,8 @@ export function ExpenseOverview({
                     <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{expense.ref}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2.5">
-                    {expense.held ? (
-                      <AnimatedBadge status={HELD_META.tone} size="sm" contentKey="Held">
-                        {HELD_META.label}
-                      </AnimatedBadge>
-                    ) : (
-                      <AnimatedBadge
-                        status={STATUS_META[expense.status].tone}
-                        size="sm"
-                        className={statusBadgeClass(expense.status)}
-                      >
-                        {STATUS_META[expense.status].label}
-                      </AnimatedBadge>
-                    )}
-                    <span className="w-20 shrink-0 text-right text-sm tabular-nums font-medium text-foreground">
-                      {formatMoney(expense.amount, expense.currency)}
-                    </span>
+                    <StatusBadge held={expense.held} status={expense.status} />
+                    <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
                   </div>
                 </button>
               </li>

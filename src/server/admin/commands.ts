@@ -440,7 +440,10 @@ export function createAdminCommands({
       if (!department) {
         throw new AdminError("not-found", "Department does not exist or is inactive.");
       }
-      if (target.departmentId === department.id && target.department === department.name) {
+      // The no-op guard compares the department id only: the stored
+      // department name is snapshotted at assignment time, so comparing it
+      // here would spuriously re-assign (and audit) after a rename.
+      if (target.departmentId === department.id) {
         return;
       }
       await store.setEmployeeDepartment(employeeId, department.id);
