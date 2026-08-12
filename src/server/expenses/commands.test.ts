@@ -136,6 +136,11 @@ async function submitStandardDraft(commands: ReturnType<typeof buildCommands>["c
     amountMinor: 240000,
     currency: "INR",
     expenseDate: "2026-08-04",
+    attachment: {
+      fileName: "receipt.pdf",
+      contentType: "application/pdf",
+      data: PDF_RECEIPT,
+    },
   });
   return commands.submitClaim(actorId, draft.id);
 }
@@ -151,6 +156,11 @@ async function submitDraftWithAmount(
     amountMinor,
     currency: "INR",
     expenseDate: "2026-08-04",
+    attachment: {
+      fileName: "receipt.pdf",
+      contentType: "application/pdf",
+      data: PDF_RECEIPT,
+    },
   });
   return commands.submitClaim(actorId, draft.id);
 }
@@ -402,6 +412,7 @@ describe("expense commands", () => {
         amountMinor: 240000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       await commands.submitClaim(employee.id, draft.id);
 
@@ -438,6 +449,7 @@ describe("expense commands", () => {
         amountMinor: 240000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       await commands.submitClaim(employee.id, draft.id);
 
@@ -523,6 +535,7 @@ describe("expense commands", () => {
         amountMinor: 45000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
 
       const submitted = await commands.submitClaim(intern.id, draft.id);
@@ -565,6 +578,7 @@ describe("expense commands", () => {
         amountMinor: 45000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       await commands.submitClaim(intern.id, draft.id);
 
@@ -598,6 +612,7 @@ describe("expense commands", () => {
         amountMinor: 45000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
 
       const submitted = await commands.submitClaim(intern.id, draft.id);
@@ -756,6 +771,35 @@ describe("expense commands", () => {
     await expect(commands.submitClaim(employee.id, draft.id)).rejects.toMatchObject({ code: "validation" });
   });
 
+  it("rejects submitting a draft without a receipt, keeping the draft submittable once a receipt is attached", async () => {
+    const { commands } = buildCommands();
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+
+    await expect(commands.submitClaim(employee.id, draft.id)).rejects.toMatchObject({
+      code: "validation",
+      message: "A receipt is required before this claim can be submitted.",
+    });
+
+    const withReceipt = await commands.updateDraft(employee.id, draft.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+    await expect(commands.submitClaim(employee.id, withReceipt.id)).resolves.toMatchObject({
+      status: "in-approval",
+      currentStage: ROLE_MANAGER.id,
+    });
+  });
+
   it("moves one claim through approval, Finance verification, and payment", async () => {
     const { commands } = buildCommands();
     const submitted = await submitStandardDraft(commands);
@@ -792,6 +836,7 @@ describe("expense commands", () => {
         amountMinor: 500000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
 
       const submitted = await commands.submitClaim(financeHead.id, draft.id);
@@ -824,6 +869,7 @@ describe("expense commands", () => {
         amountMinor: 150000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
 
       const submitted = await commands.submitClaim(execUser.id, draft.id);
@@ -873,6 +919,7 @@ describe("expense commands", () => {
         amountMinor: 20000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const headClaim = await commands.submitClaim(financeHead.id, draftHead.id);
 
@@ -901,6 +948,7 @@ describe("expense commands", () => {
         amountMinor: 10000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const execClaim = await commands.submitClaim(financeExec.id, draftExec.id);
       await commands.approveStage(financeHead.id, execClaim.id);
@@ -942,6 +990,7 @@ describe("expense commands", () => {
         amountMinor: 150000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const submitted = await commands.submitClaim(execUser.id, draft.id);
       await commands.approveStage(managerUser.id, submitted.id);
@@ -973,6 +1022,7 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     });
     await commands.submitClaim(employee.id, draft.id);
     await commands.approveStage("emp-ada", draft.id);
@@ -994,6 +1044,7 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     });
     await commands.submitClaim(employee.id, draft.id);
     await commands.approveStage("emp-ada", draft.id);
@@ -1021,6 +1072,7 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     });
 
     expect(draft).toMatchObject({ subCategory: "Airfare", remark: "Round trip for the Bengaluru client kickoff" });
@@ -1086,6 +1138,7 @@ describe("expense commands", () => {
       amountMinor: 1250000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     });
     await commands.updateComments("emp-finance", draft.id, "Awaiting invoice copy before payout");
     await commands.submitClaim(employee.id, draft.id);
@@ -1126,6 +1179,7 @@ describe("expense commands", () => {
       amountMinor: 10000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     });
 
     const submitted = await commands.submitClaim(requester.id, draft.id);
@@ -1303,6 +1357,7 @@ describe("expense commands", () => {
         amountMinor: 5000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const submitted = await commands.submitClaim(intern.id, draft.id);
       expect(submitted.currentStage).toBeUndefined();
@@ -1387,6 +1442,7 @@ describe("expense commands", () => {
         amountMinor: 10000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const orgTwoSubmitted = await commands.submitClaim(orgTwoRequester.id, orgTwoDraft.id);
 
@@ -1500,6 +1556,7 @@ describe("expense commands", () => {
         amountMinor: 10000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const orgTwoSubmitted = await commands.submitClaim(orgTwoRequester.id, orgTwoDraft.id);
 
@@ -1857,6 +1914,7 @@ describe("expense commands", () => {
         amountMinor: 240000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       await expect(commands.delegateClaim(superadmin.id, draft.id, "emp-ada", "Handover")).rejects.toMatchObject({
         code: "conflict",
@@ -2117,6 +2175,7 @@ describe("expense commands", () => {
         amountMinor: 45000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const submitted = await commands.submitClaim(intern.id, draft.id);
 
@@ -2166,6 +2225,7 @@ describe("expense commands", () => {
         amountMinor: 45000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const submitted = await commands.submitClaim(intern.id, draft.id);
 
@@ -2253,6 +2313,7 @@ describe("expense commands", () => {
         amountMinor: 24000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       await commands.submitClaim(employee.id, draft.id);
       await commands.rejectClaim("emp-ada", draft.id, "Not eligible for reimbursement");
@@ -2263,6 +2324,7 @@ describe("expense commands", () => {
         amountMinor: 24000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
       const submitted = await commands.submitClaim(employee.id, newDraft.id);
 
@@ -2336,9 +2398,9 @@ describe("expense commands", () => {
       expect(requester.claim.id).toBe(submitted.id);
       expect(requester.claim.comments).toBe("Awaiting invoice copy before payout");
       expect(requester.employees.length).toBeGreaterThan(0);
-      // submitStandardDraft attaches no receipt; the summary command must
-      // tolerate that instead of failing the whole request.
-      expect(requester.receipt).toBeUndefined();
+      // Submission now requires a receipt (ADR-0022), so a submitted claim
+      // always carries one into the summary.
+      expect(requester.receipt).toMatchObject({ fileName: "receipt.pdf" });
 
       const approver = await commands.getExpenseSummary("emp-ada", submitted.id);
       expect(approver.claim.comments).toBeUndefined();
@@ -2432,6 +2494,7 @@ describe("expense commands", () => {
         amountMinor: 1250000,
         currency: "INR",
         expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
       });
 
       const commented = await commands.updateComments("emp-pramod", draft.id, "Approved for payout");
@@ -3234,6 +3297,7 @@ describe("hold and resume", () => {
       amountMinor: 10000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     });
     const submitted = await commands.submitClaim(teamLeadRequester.id, draft.id);
     await commands.holdClaim("emp-abilash", submitted.id, "Need more detail");

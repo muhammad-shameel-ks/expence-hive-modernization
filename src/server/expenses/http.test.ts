@@ -119,7 +119,11 @@ function build() {
 }
 
 async function createAndSubmit(commands: ReturnType<typeof build>["commands"], actorId = "emp-shameel") {
-  const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, actorId);
+  const createResponse = await handleCreateExpenseRequest(
+    createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+    commands,
+    actorId,
+  );
   const { claim } = await createResponse.json();
   await handleSubmitExpenseRequest(
     new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
@@ -183,7 +187,7 @@ describe("expense HTTP boundary", () => {
         remark: "Airport pickup",
         amount: "850.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -199,6 +203,25 @@ describe("expense HTTP boundary", () => {
     expect(response.status).toBe(200);
     await expect(response.json()).resolves.toMatchObject({
       claim: { status: "in-approval", currentStage: ROLE_MANAGER.id },
+    });
+  });
+
+  it("rejects submitting a receipt-less draft with 422", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const { claim } = (await createResponse.json()) as { claim: { id: string } };
+
+    const response = await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toEqual({
+      error: "validation",
+      message: "A receipt is required before this claim can be submitted.",
     });
   });
 
@@ -540,7 +563,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -639,7 +662,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -681,7 +704,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -726,7 +749,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -762,7 +785,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -798,7 +821,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -833,7 +856,7 @@ describe("expense HTTP boundary", () => {
         remark: "Airport pickup",
         amount: "850.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -872,7 +895,7 @@ describe("expense HTTP boundary", () => {
         remark: "Dinner with Acme Corp",
         amount: "2400.00",
         expenseDate: "2026-08-04",
-      }),
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -1081,7 +1104,11 @@ describe("draft update and delete handlers", () => {
 
   it("rejects editing a submitted claim with 409", async () => {
     const { commands } = build();
-    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
     const payload = (await createResponse.json()) as { claim: { id: string } };
     await handleSubmitExpenseRequest(new Request("http://localhost"), commands, "emp-shameel", payload.claim.id);
 
@@ -1128,7 +1155,11 @@ describe("draft update and delete handlers", () => {
 
   it("rejects deleting a submitted claim with 409", async () => {
     const { commands } = build();
-    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
     const payload = (await createResponse.json()) as { claim: { id: string } };
     await handleSubmitExpenseRequest(new Request("http://localhost"), commands, "emp-shameel", payload.claim.id);
 
@@ -1148,15 +1179,9 @@ describe("expense summary endpoint", () => {
     return new Request(`http://localhost/api/expenses/${claimId}/summary`);
   }
 
-  async function createSubmittedClaim(
-    commands: ReturnType<typeof build>["commands"],
-    withReceipt = true,
-  ) {
+  async function createSubmittedClaim(commands: ReturnType<typeof build>["commands"]) {
     const createResponse = await handleCreateExpenseRequest(
-      createRequest(
-        BASE_FIELDS,
-        withReceipt ? { name: "boarding-pass.pdf", type: "application/pdf", data: PDF_RECEIPT } : undefined,
-      ),
+      createRequest(BASE_FIELDS, { name: "boarding-pass.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
@@ -1248,9 +1273,10 @@ describe("expense summary endpoint", () => {
     expect(response.status).toBe(403);
   });
 
-  it("serves a valid PDF summary for a claim without a receipt", async () => {
+  it("serves a valid PDF summary for a draft claim without a receipt", async () => {
     const { commands } = build();
-    const claim = await createSubmittedClaim(commands, false);
+    const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
+    const { claim } = (await createResponse.json()) as { claim: { id: string } };
 
     const response = await handleGetExpenseSummaryRequest(
       summaryRequest(claim.id),
@@ -1343,14 +1369,17 @@ describe("hold and resume HTTP boundary", () => {
 
   async function createAndSubmit(commands: ReturnType<typeof buildWithHoldManager>["commands"]) {
     const createResponse = await handleCreateExpenseRequest(
-      createRequest({
-        title: "Client dinner",
-        category: "Meals",
-        subCategory: "Client Meeting",
-        remark: "Dinner with Acme Corp",
-        amount: "2400.00",
-        expenseDate: "2026-08-04",
-      }),
+      createRequest(
+        {
+          title: "Client dinner",
+          category: "Meals",
+          subCategory: "Client Meeting",
+          remark: "Dinner with Acme Corp",
+          amount: "2400.00",
+          expenseDate: "2026-08-04",
+        },
+        { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT },
+      ),
       commands,
       "emp-shameel",
     );

@@ -137,13 +137,9 @@ afterEach(() => {
 
 async function advanceToReviewStep() {
   render(<ExpenseCreateForm />);
-  fireEvent.click(screen.getByRole("button", { name: "Skip for now" }));
-  fireEvent.change(screen.getByLabelText("What was this expense for?"), {
-    target: { value: "Client dinner with Acme Corp" },
-  });
-  fireEvent.change(screen.getByLabelText(/amount/i), { target: { value: "1200" } });
-  fireEvent.change(screen.getByLabelText("Expense date"), { target: { value: "2026-08-01" } });
-  fireEvent.change(screen.getByLabelText(/remark/i), { target: { value: "Team dinner" } });
+  pickReceipt();
+  fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+  fillDetails();
   fireEvent.click(screen.getByRole("button", { name: /review claim/i }));
   await screen.findByRole("button", { name: /submit for approval/i });
   // Flush the Review step's mount effect so the scroll decision has always
