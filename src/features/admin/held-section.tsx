@@ -6,9 +6,10 @@ import { SectionHeading } from "./section-heading";
 
 // The held-claims oversight view (ADR-0016): Superadmin sees every held
 // claim in the organization - claim, holder, reason, held-at, and stage -
-// with quick navigation into the expense drawer. Holds are indefinite, so
-// this list is where stalled claims surface; delegation (slice 05) will let
-// the console re-point a held claim to a new actor, who then resumes it.
+// with quick navigation into the expense drawer. Holds are indefinite and
+// exempt from the absence sweep, so this list is where stalled claims
+// surface; delegation (ADR-0017) re-points a held claim to a new actor,
+// who then resumes it.
 
 function formatHeldAt(value: string): string {
   const date = new Date(value);

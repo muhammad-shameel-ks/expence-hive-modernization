@@ -143,24 +143,26 @@ export function AdminSetup({
           </button>
         ) : null}
 
-        <button
-          onClick={() => setActiveTab("holds")}
-          aria-current={activeTab === "holds" ? "page" : undefined}
-          className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
-            activeTab === "holds"
-              ? "bg-[#e8f2f6] text-[#175d75]"
-              : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
-          }`}
-        >
-          <PauseCircle className="size-3.5" />
-          <span className="sm:hidden">Holds</span>
-          <span className="hidden sm:inline">Held Claims</span>
-          <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[0.62rem] font-bold ${
-            activeTab === "holds" ? "bg-[#d9e8ef] text-[#175d75]" : "bg-[#e2e8f0] text-[#475569]"
-          }`}>
-            {heldClaims.length}
-          </span>
-        </button>
+        {isSuperadmin ? (
+          <button
+            onClick={() => setActiveTab("holds")}
+            aria-current={activeTab === "holds" ? "page" : undefined}
+            className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
+              activeTab === "holds"
+                ? "bg-[#e8f2f6] text-[#175d75]"
+                : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
+            }`}
+          >
+            <PauseCircle className="size-3.5" />
+            <span className="sm:hidden">Holds</span>
+            <span className="hidden sm:inline">Held Claims</span>
+            <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[0.62rem] font-bold ${
+              activeTab === "holds" ? "bg-[#d9e8ef] text-[#175d75]" : "bg-[#e2e8f0] text-[#475569]"
+            }`}>
+              {heldClaims.length}
+            </span>
+          </button>
+        ) : null}
       </nav>
 
       {/* Main Content Area */}

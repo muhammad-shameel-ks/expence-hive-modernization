@@ -722,6 +722,27 @@ describe("expense commands", () => {
     await expect(commands.submitClaim(roleless.id, draft.id)).rejects.toMatchObject({ code: "validation" });
   });
 
+  it("rejects submission when the requester's role lacks the submit privilege", async () => {
+    const noSubmitRole = { id: "role-no-submit", code: "guest", displayName: "Guest", capabilities: { ...SUBMIT_ONLY, canSubmit: false } };
+    const guest: ExpenseEmployee = emp("emp-guest", "Guest User", noSubmitRole);
+    const { commands } = buildCommands({
+      employees: [guest, emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" })],
+      flows: [STANDARD_FLOW],
+    });
+    const draft = await commands.createDraft(guest.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
+
+    await expect(commands.submitClaim(guest.id, draft.id)).rejects.toMatchObject({
+      code: "unauthorized",
+      message: "Your role does not have the submit privilege.",
+    });
+  });
+
   it("rejects submission when no flow is published for the requester's role", async () => {
     const { commands } = buildCommands({ flows: [] });
     const draft = await commands.createDraft(employee.id, {
@@ -3145,11 +3166,21 @@ describe("hold and resume", () => {
     ]);
   });
 
-  it("rejects the held-claims list for non-admin roles", async () => {
-    const { commands } = buildCommands();
-    await expect(commands.listHeldClaims("emp-ada")).rejects.toMatchObject({
+  it("rejects the held-claims list even for a console-capable non-Superadmin role", async () => {
+    const consoleRole = {
+      id: "role-console",
+      code: "admin-console",
+      displayName: "Console Admin",
+      capabilities: { ...SUBMIT_ONLY, canAccessAdminConsole: true },
+    };
+    const consoleAdmin = emp("emp-console", "Console Admin", consoleRole, { departmentId: "dept-eng" });
+    const { commands } = buildCommands({
+      employees: [...BASE_EMPLOYEES, consoleAdmin],
+    });
+
+    await expect(commands.listHeldClaims("emp-console")).rejects.toMatchObject({
       code: "unauthorized",
-      message: "Only the admin console can view held claims.",
+      message: "Only Superadmin can view held claims.",
     });
   });
 

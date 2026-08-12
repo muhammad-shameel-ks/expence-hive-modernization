@@ -239,26 +239,15 @@ export function ExpenseFilterSection({
       {isMobile !== true ? (
         <div className="flex flex-wrap items-center justify-between gap-3 px-5 pb-4">
           <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-1.5">
-            {QUICK_STATUS_CHIPS.map((chip) => {
-              const active = chip.filter === "All" ? isAllActive : query.filter === chip.filter;
-              return (
-                <button
-                  key={chip.filter}
-                  type="button"
-                  onClick={() => selectFilter(chip.filter)}
-                  aria-pressed={active}
-                  className={cn(
-                    "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-                    active
-                      ? "border-primary bg-primary text-primary-foreground"
-                      : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
-                  )}
-                >
-                  {chip.label}{" "}
-                  <span className="ml-1.5 tabular-nums opacity-70">{chipCounts.get(chip.filter)}</span>
-                </button>
-              );
-            })}
+            {QUICK_STATUS_CHIPS.map((chip) => (
+              <StatusChip
+                key={chip.filter}
+                label={chip.label}
+                count={chipCounts.get(chip.filter)}
+                active={chip.filter === "All" ? isAllActive : query.filter === chip.filter}
+                onClick={() => selectFilter(chip.filter)}
+              />
+            ))}
           </div>
           <Button
             variant="outline"
@@ -300,12 +289,17 @@ export function ExpenseFilterSection({
 
       {isMobile === true && mobileFiltersOpen ? (
         <div id="expense-mobile-filters" className="mx-5 mb-4 flex flex-col gap-4 rounded-xl border border-border bg-muted/20 p-4">
-          <StatusChipRow
-            query={query}
-            isAllActive={isAllActive}
-            chipCounts={chipCounts}
-            onSelect={selectFilter}
-          />
+          <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-1.5">
+            {QUICK_STATUS_CHIPS.map((chip) => (
+              <StatusChip
+                key={chip.filter}
+                label={chip.label}
+                count={chipCounts.get(chip.filter)}
+                active={chip.filter === "All" ? isAllActive : query.filter === chip.filter}
+                onClick={() => selectFilter(chip.filter)}
+              />
+            ))}
+          </div>
           <AdvancedFilters
             query={query}
             allCategories={allCategories}
@@ -347,40 +341,31 @@ export function ExpenseFilterSection({
   );
 }
 
-function StatusChipRow({
-  query,
-  isAllActive,
-  chipCounts,
-  onSelect,
+function StatusChip({
+  label,
+  count,
+  active,
+  onClick,
 }: {
-  query: ExpenseQuery;
-  isAllActive: boolean;
-  chipCounts: Map<ExpenseFilter, number>;
-  onSelect: (filter: ExpenseFilter) => void;
+  label: string;
+  count: number | undefined;
+  active: boolean;
+  onClick: () => void;
 }) {
   return (
-    <div role="group" aria-label="Filter by status" className="flex flex-wrap gap-1.5">
-      {QUICK_STATUS_CHIPS.map((chip) => {
-        const active = chip.filter === "All" ? isAllActive : query.filter === chip.filter;
-        return (
-          <button
-            key={chip.filter}
-            type="button"
-            onClick={() => onSelect(chip.filter)}
-            aria-pressed={active}
-            className={cn(
-              "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
-              active
-                ? "border-primary bg-primary text-primary-foreground"
-                : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
-            )}
-          >
-            {chip.label}{" "}
-            <span className="ml-1.5 tabular-nums opacity-70">{chipCounts.get(chip.filter)}</span>
-          </button>
-        );
-      })}
-    </div>
+    <button
+      type="button"
+      onClick={onClick}
+      aria-pressed={active}
+      className={cn(
+        "rounded-full border px-3 py-1.5 text-xs font-medium transition-colors",
+        active
+          ? "border-primary bg-primary text-primary-foreground"
+          : "border-border bg-card text-muted-foreground hover:bg-muted hover:text-foreground",
+      )}
+    >
+      {label} <span className="ml-1.5 tabular-nums opacity-70">{count}</span>
+    </button>
   );
 }
 

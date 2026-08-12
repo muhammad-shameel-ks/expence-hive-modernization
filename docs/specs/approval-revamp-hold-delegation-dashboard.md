@@ -34,6 +34,7 @@ Seven connected work items, delivered in dependency order: the role model first,
 
 - Departments require a manager (head); department creation and management include assigning the head, and existing headless departments are surfaced as incomplete.
 - The admin user-creation flow takes name, email, role, and department; the manager field is locked to the department head, so a headless department blocks creation until an admin assigns it a head.
+- Assigning a Manager to a headless department auto-promotes them to its head (in `assignRole`/`assignDepartment`); the promotion is immediate, audited under the role/department assignment, and only fills a vacant head - an existing head is never replaced.
 - Bulk CSV import creates many users with the same defaults and row-level validation feedback.
 - Created users are pre-provisioned records picked up at first sign-in; provisioning reconciles with pre-created records (match on identity, never overwrite admin-set assignments).
 

@@ -18,6 +18,7 @@ The company wants the administrator to create users directly, and asked whether 
 4. **Bulk import is part of the flow:** a CSV roster creates many users in one action, defaulting manager to the department head with row-level validation feedback, and an optional per-row manager column to override that default (point 2).
 5. **Created users are pre-provisioned records:** the employee simply signs in with company identity and is picked up; no invitation email is sent. Existing first-sign-in provisioning and created records must not duplicate.
 6. Existing departments without a head are surfaced in department management as incomplete and must be assigned one before new members can rely on the default.
+7. **A Manager placed into a headless department auto-promotes to its head.** Both the role-assignment and department-assignment commands (`assignRole`, `assignDepartment`) set a Manager as department head when the department has none; the promotion is immediate, never replaces an existing head, and is not a separate audited action - it lands under the assignment audit event that caused it. This is a convenience on top of point 6: the incomplete surface and the headless submission block still stand for departments that never receive a Manager, and a department management head assignment overrides the default.
 
 ## Consequences
 

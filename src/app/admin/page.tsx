@@ -27,7 +27,7 @@ export default async function AdminPage() {
     admin.listRoles(actor.id),
     admin.listDepartments(actor.id),
     isSuperadmin ? admin.getAbsenceTimeoutDays(actor.id) : Promise.resolve(null),
-    expenseCommands().listHeldClaims(employee.id),
+    isSuperadmin ? expenseCommands().listHeldClaims(employee.id) : Promise.resolve([]),
   ]);
   const workspace = await expenseCommands().getWorkspace(employee.id);
   return (

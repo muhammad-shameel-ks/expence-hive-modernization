@@ -31,10 +31,6 @@ function canAccessFinance(employee: ExpenseEmployee): boolean {
   return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessFinance;
 }
 
-function canAccessAdminConsole(employee: ExpenseEmployee): boolean {
-  return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessAdminConsole;
-}
-
 // A held claim is frozen against terminal actions (ADR-0016): the flow
 // status is kept, but approve/reject/verify/pay are all refused until the
 // current stage actor resumes the claim.
@@ -583,6 +579,12 @@ export function createExpenseCommands({
       if (!requester.role) {
         throw new ExpenseError("validation", "You need an assigned role before you can submit a reimbursement.");
       }
+      // Submitting is a per-role privilege (ADR-0015): the requester's own
+      // role must carry the can_submit capability, resolved from the role
+      // record. Superadmin holds it by construction.
+      if (!resolveRoleCapabilities(requester.role).canSubmit) {
+        throw new ExpenseError("unauthorized", "Your role does not have the submit privilege.");
+      }
       const flow = await store.getPublishedFlowForRole(requester.organizationId, requester.role.id);
       if (!flow || flow.steps.length === 0) {
         throw new ExpenseError("validation", "No approval flow is published for your role yet.");
@@ -767,12 +769,13 @@ export function createExpenseCommands({
       // delegation) and the claim lands at that step. The step must still
       // be pending - a later step auto-skipped by an amount guard is never
       // a delegation target, or the claim would strand on a decided stage.
+      const delegateeRoleId = delegatee.role?.id ?? null;
       const targetIndex =
-        delegatee.role === null
+        delegateeRoleId === null
           ? -1
           : claim.steps.findIndex(
               (step, index) =>
-                index > currentIndex && step.status === "pending" && step.roleId === delegatee.role!.id,
+                index > currentIndex && step.status === "pending" && step.roleId === delegateeRoleId,
             );
       if (targetIndex === -1) {
         // Same-stage delegation: only the person changes, the flow keeps
@@ -920,8 +923,11 @@ export function createExpenseCommands({
 
     async listHeldClaims(actorId) {
       const employee = await requireEmployee(actorId);
-      if (!canAccessAdminConsole(employee)) {
-        throw new ExpenseError("unauthorized", "Only the admin console can view held claims.");
+      // Held-claims oversight is a Superadmin-only built-in (ADR-0016):
+      // holds can span every department, so the view is not a console
+      // toggle.
+      if (!employee.role || employee.role.code !== SUPERADMIN_ROLE_CODE) {
+        throw new ExpenseError("unauthorized", "Only Superadmin can view held claims.");
       }
       const [claims, employees] = await Promise.all([
         store.listClaimsForOrganization(employee.organizationId),

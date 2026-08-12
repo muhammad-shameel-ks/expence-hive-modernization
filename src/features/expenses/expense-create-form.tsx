@@ -86,7 +86,13 @@ export type ExpenseDraftInitial = {
   receiptFileName?: string;
 };
 
-export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftInitial | null }) {
+export function ExpenseCreateForm({
+  initial = null,
+  canSubmit = true,
+}: {
+  initial?: ExpenseDraftInitial | null;
+  canSubmit?: boolean;
+}) {
   const [step, setStep] = useState<1 | 2 | 3>(1);
   const isMobile = useIsMobile();
   const [form, setForm] = useState<FormState>(() => ({
@@ -257,6 +263,7 @@ export function ExpenseCreateForm({ initial = null }: { initial?: ExpenseDraftIn
                   onSubmit={submitClaim}
                   busy={busy}
                   error={error}
+                  canSubmit={canSubmit}
                 />
               )}
             </div>
@@ -453,6 +460,7 @@ function ReviewStep({
   onSubmit,
   busy,
   error,
+  canSubmit,
 }: {
   form: FormState;
   source: ReceiptSource | null;
@@ -460,6 +468,7 @@ function ReviewStep({
   onSubmit: () => void;
   busy: boolean;
   error: string | null;
+  canSubmit: boolean;
 }) {
   const attachedName = source?.fileName;
   const submitButtonRef = useRef<HTMLButtonElement>(null);
@@ -480,7 +489,8 @@ function ReviewStep({
       <SummaryPanel form={form} label="Submission summary" />
       {attachedName ? <p className={styles.receiptPreview}>Attached: {attachedName}</p> : <p className={styles.hint}>No receipt attached. You can continue with the exception path.</p>}
       {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
-      <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Edit details</button><button ref={submitButtonRef} className={styles.button} type="button" disabled={busy} onClick={onSubmit}>{busy ? "Submitting..." : "Submit for approval →"}</button></div>
+      {!canSubmit ? <p role="status" className={styles.hint}>Your role does not have the submit privilege, so this draft cannot be sent for approval. Ask a Superadmin to enable it.</p> : null}
+      <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Edit details</button><button ref={submitButtonRef} className={styles.button} type="button" disabled={busy || !canSubmit} onClick={onSubmit}>{busy ? "Submitting..." : "Submit for approval →"}</button></div>
     </section>
   );
 }

@@ -8,8 +8,8 @@ import { SectionHeading } from "./section-heading";
 // Company settings (ADR-0018): the absence auto-skip timeout drives how
 // long a pending stage waits for its assigned actor before the claim
 // advances on its own, enforced by the scheduled sweep worker and the lazy
-// read path alike. This section is also where slice 04 surfaces the
-// held-claims exemption note once holds land.
+// read path alike. Held claims are exempt from the sweep (ADR-0016), which
+// is how the holds list surfaces them as stalled.
 export function SettingsSection({
   absenceTimeoutDays: initialAbsenceTimeoutDays,
   onMessage,

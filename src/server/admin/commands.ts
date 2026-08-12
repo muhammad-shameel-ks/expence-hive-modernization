@@ -252,11 +252,12 @@ export function createAdminCommands({
   }
 
   // Company auto-skip configuration is a Superadmin-only built-in
-  // (ADR-0015/ADR-0018), never gated by the admin-console toggle.
+  // (ADR-0015/ADR-0018), never gated by the admin-console toggle. The
+  // message names both directions so it fits the read path too.
   async function requireSuperadmin(actorId: string): Promise<AdminEmployee> {
     const actor = await store.getEmployee(actorId);
     if (!actor || actor.role?.code !== SUPERADMIN_ROLE_CODE) {
-      throw new AdminError("unauthorized", "Only Superadmin can change the absence timeout.");
+      throw new AdminError("unauthorized", "Only Superadmin can view or change the absence timeout.");
     }
     return actor;
   }
