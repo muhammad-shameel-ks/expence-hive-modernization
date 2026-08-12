@@ -1,5 +1,9 @@
 import { absenceTimeoutMillis } from "../shared/absence-timeout";
-import { resolveRoleCapabilities, type RoleCapabilities } from "../shared/authorization";
+import {
+  ACTION_PRIVILEGES,
+  resolveRoleCapabilities,
+  type RoleCapabilities,
+} from "../shared/authorization";
 import type { ExpenseClaim, ExpenseEmployee } from "./ports";
 
 export function terminalIndex(claim: ExpenseClaim): number {
@@ -13,11 +17,13 @@ export function isTerminalIndex(claim: ExpenseClaim, index: number): boolean {
 // The action privileges that let a role act on a pending stage: approving
 // at an approval stage, or verifying/paying at the finance stage. A role
 // holding neither cannot progress a claim, so its pending steps are swept
-// forward like a vacant stage (ADR-0015). The finance-head role of the
-// default catalog approves its stage with can_access_finance alone, so the
-// check accepts either privilege rather than requiring can_approve.
+// forward like a vacant stage (ADR-0015). Derived from the shared catalog
+// so adding a third action privilege is a single-edit change. The
+// finance-head role of the default catalog approves its stage with
+// can_access_finance alone, so the check accepts either privilege rather
+// than requiring can_approve.
 function hasActionPrivilege(capabilities: RoleCapabilities): boolean {
-  return capabilities.canApprove || capabilities.canAccessFinance;
+  return ACTION_PRIVILEGES.some((privilege) => capabilities[privilege]);
 }
 
 // A pending stage is absent when its role is vacant (no assigned actor,

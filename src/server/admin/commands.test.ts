@@ -1909,7 +1909,7 @@ describe("createEmployee", () => {
     expect(people.some((person) => person.id === employee.id)).toBe(true);
   });
 
-  it("honors an explicit manager override", async () => {
+  it("accepts an explicit managerId matching the department head", async () => {
     const { admin, executive, department } = await buildWithDefaults();
 
     const employee = await admin.createEmployee("emp-superadmin", {
@@ -1917,10 +1917,27 @@ describe("createEmployee", () => {
       email: "grace@hive.local",
       roleId: executive.id,
       departmentId: department.id,
-      managerId: "emp-katherine",
+      managerId: "emp-superadmin",
     });
 
-    expect(employee.managerId).toBe("emp-katherine");
+    expect(employee.managerId).toBe("emp-superadmin");
+  });
+
+  it("rejects an explicit manager override that differs from the department head", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+        managerId: "emp-katherine",
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The manager is always the department head when creating a single user.",
+    });
   });
 
   it("rejects a duplicate email, matching case-insensitively", async () => {
@@ -1992,8 +2009,12 @@ describe("createEmployee", () => {
     ).rejects.toMatchObject({ code: "not-found" });
   });
 
-  it("rejects a deactivated manager override", async () => {
-    const { admin, executive, department } = await buildWithDefaults();
+  it("rejects creation when the department head is deactivated", async () => {
+    const { admin, executive } = await buildWithDefaults();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Support",
+      headId: "emp-katherine",
+    });
     await admin.deactivateEmployee("emp-superadmin", "emp-katherine");
 
     await expect(
@@ -2002,7 +2023,6 @@ describe("createEmployee", () => {
         email: "grace@hive.local",
         roleId: executive.id,
         departmentId: department.id,
-        managerId: "emp-katherine",
       }),
     ).rejects.toMatchObject({ code: "validation" });
   });

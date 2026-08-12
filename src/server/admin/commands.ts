@@ -538,16 +538,28 @@ export function createAdminCommands({
       if (!department) {
         throw new AdminError("not-found", "Department does not exist or is inactive.");
       }
-      // The manager auto-defaults to the department head (ADR-0019) and can
-      // be overridden in the same request. An explicit override works even
-      // for a headless department; without one the head is required.
-      const managerId = input.managerId ?? department.head?.id ?? null;
-      if (managerId === null) {
+      // The single-user manager is always the department head (ADR-0019):
+      // the bulk-import CSV is the one path that accepts an explicit
+      // manager override. The head is required, so a headless department
+      // blocks creation until a head is assigned.
+      const headId = department.head?.id ?? null;
+      if (headId === null) {
         throw new AdminError(
           "validation",
           `The "${department.name}" department has no head; assign one before creating members.`,
         );
       }
+      if (
+        input.managerId !== undefined &&
+        input.managerId !== null &&
+        input.managerId !== headId
+      ) {
+        throw new AdminError(
+          "validation",
+          "The manager is always the department head when creating a single user.",
+        );
+      }
+      const managerId = headId;
       const manager = await store.getEmployee(managerId);
       if (!manager || manager.organizationId !== actor.organizationId) {
         throw new AdminError("not-found", "Manager does not exist.");

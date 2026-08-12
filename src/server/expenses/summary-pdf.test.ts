@@ -207,6 +207,76 @@ describe("expense summary PDF builder", () => {
     expect(text).toContain("Rejected on: Aug 4, 2026, 10:00 AM");
   });
 
+  it("renders the hold trail: held and resumed events with actor and reason", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
+        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng", role: { ...ROLE_MANAGER, capabilities: { ...SUBMIT_ONLY, canApprove: true, canHold: true } } }),
+        emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
+        emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+      ],
+      flows: [
+        {
+          id: "flow-standard",
+          roleId: ROLE_EXECUTIVE.id,
+          steps: [
+            { kind: "role", roleId: ROLE_MANAGER.id },
+            { kind: "role", roleId: ROLE_FINANCE_HEAD.id },
+            { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
+          ],
+        },
+      ],
+    });
+    const commands = createExpenseCommands({
+      store,
+      blobStore: new InMemoryBlobStore(),
+      idFactory: (() => {
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    const submitted = await commands.submitClaim("emp-shameel", (await commands.createDraft("emp-shameel", {
+      title: "Taxi",
+      category: "Travel",
+      subCategory: "Cab/Taxi",
+      remark: "Airport pickup",
+      amountMinor: 85000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    })).id);
+    await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
+    const [heldClaim, heldEmployees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const heldBytes = await buildExpenseSummaryPdf({ claim: heldClaim, employees: heldEmployees });
+    const heldText = await extractText(heldBytes);
+    expect(heldText).toContain("Held");
+    expect(heldText).toContain("Since Aug 4, 2026, 10:00 AM by Ada Lovelace");
+    expect(heldText).toContain("Awaiting the missing invoice");
+
+    await commands.resumeClaim("emp-ada", submitted.id);
+    const [claim, employees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const bytes = await buildExpenseSummaryPdf({ claim, employees });
+
+    const text = await extractText(bytes);
+    expect(text).toContain("Held and resumed");
+    expect(text).toContain("Held");
+    expect(text).toContain("Resumed");
+    expect(text).toContain("Awaiting the missing invoice");
+    expect(text).toContain("Ada Lovelace");
+  });
+
   it("paginates a long wrapped comment instead of clipping it", async () => {
     const { commands } = build();
     const submitted = await createSubmittedClaim(commands);

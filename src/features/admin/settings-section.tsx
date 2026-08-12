@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { Settings } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { MAX_ABSENCE_TIMEOUT_DAYS } from "@/server/shared/absence-timeout";
 import { SectionHeading } from "./section-heading";
 
 // Company settings (ADR-0018): the absence auto-skip timeout drives how
@@ -72,14 +73,14 @@ export function SettingsSection({
             id="absence-timeout-days"
             type="number"
             min={1}
-            max={90}
+            max={MAX_ABSENCE_TIMEOUT_DAYS}
             className="mt-2 h-10 w-full rounded-lg border border-[#d6dfe8] px-3 text-sm text-[#33445c] outline-none focus:border-[#8ab5c6] focus:ring-2 focus:ring-[#b7d8e5]"
             value={absenceTimeoutDays}
             onChange={(event) => setAbsenceTimeoutDays(Number(event.target.value))}
           />
           <Button
             className="mt-4"
-            disabled={saving || !Number.isInteger(absenceTimeoutDays) || absenceTimeoutDays < 1 || absenceTimeoutDays > 90}
+            disabled={saving || !Number.isInteger(absenceTimeoutDays) || absenceTimeoutDays < 1 || absenceTimeoutDays > MAX_ABSENCE_TIMEOUT_DAYS}
             onClick={saveAbsenceTimeout}
           >
             Save timeout
