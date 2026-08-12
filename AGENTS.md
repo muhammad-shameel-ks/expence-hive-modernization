@@ -12,7 +12,7 @@
 
 ## Current Work
 
-- What: payments queue export feature - Excel export of the queue (popover chooser: current view vs full queue, client-side SheetJS, shared column schema driving both table and export), server-side PDF expense summary (pdf-lib, all statuses in the drawer + queue side panel, receipt attached), and rejected claims joining the payment queue with the rejection reason surfaced read-only in comments (ADRs 0008-0011).
-- Plan: `docs/specs/payment-queue-export-and-pdf-summary.md` (ADRs 0008-0011, CONTEXT.md updated); tracked as issue #46.
-- Next: review done (review-maxxing, standards + spec) - all findings fixed; 653 vitest tests passing (36 files), lint/build green. Ready to commit.
+- What: approval workflow revamp - per-role privilege toggles with mid-flight removal confirmation, hold state on claims, delegation replacing takeover, role-adaptive dashboard with period switch, and the unified one-per-status filter section (ADRs 0015-0021).
+- Plan: `docs/specs/approval-revamp-hold-delegation-dashboard.md` (ADRs 0015-0021); tracked as PR #58, issues #51, #54-57.
+- Next: opencode review on PR #58 passed (score 9); dead `org-roles/impact` endpoint removed. 1065 vitest tests passing (52 files), lint/build green. Ready to merge.
 
