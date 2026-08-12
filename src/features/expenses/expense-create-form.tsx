@@ -237,7 +237,6 @@ export function ExpenseCreateForm({
                   source={receiptSource}
                   chooseReceipt={chooseReceipt}
                   error={error}
-                  onSkip={() => setStep(2)}
                   onContinue={() => setStep(2)}
                   onRemove={() => {
                     setReceipt(null);
@@ -248,14 +247,13 @@ export function ExpenseCreateForm({
               ) : step === 2 ? (
                 <DetailsStep
                   form={form}
-                  source={receiptSource}
                   update={update}
                   onBack={() => setStep(1)}
                   onReview={saveDraft}
                   busy={busy}
                   error={error}
                 />
-              ) : (
+              ) : receiptSource ? (
                 <ReviewStep
                   form={form}
                   source={receiptSource}
@@ -265,7 +263,7 @@ export function ExpenseCreateForm({
                   error={error}
                   canSubmit={canSubmit}
                 />
-              )}
+              ) : null}
             </div>
             <aside className={`${styles.wizardSide} ${step === 3 ? styles.splitAside : ""}`}>
               {step === 1 ? <CaptureRail done={Boolean(receiptSource)} step={1} /> : null}
@@ -319,14 +317,12 @@ function ReceiptStep({
   source,
   chooseReceipt,
   error,
-  onSkip,
   onContinue,
   onRemove,
 }: {
   source: ReceiptSource | null;
   chooseReceipt: (event: ChangeEvent<HTMLInputElement>) => void;
   error: string | null;
-  onSkip: () => void;
   onContinue: () => void;
   onRemove: () => void;
 }) {
@@ -355,7 +351,6 @@ function ReceiptStep({
               onChange={chooseReceipt}
             />
           </label>
-          <button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onSkip}>Skip for now</button>
           {source?.kind === "local" ? (
             <button
               className={`${styles.button} ${styles.buttonSecondary}`}
@@ -393,7 +388,6 @@ function ReceiptStep({
 
 function DetailsStep({
   form,
-  source,
   update,
   onBack,
   onReview,
@@ -401,19 +395,17 @@ function DetailsStep({
   error,
 }: {
   form: FormState;
-  source: ReceiptSource | null;
   update: <K extends keyof FormState>(key: K, value: FormState[K]) => void;
   onBack: () => void;
   onReview: () => void;
   busy: boolean;
   error: string | null;
 }) {
-  const attached = Boolean(source);
   return (
     <section className={styles.panel} aria-label="Expense details">
       <div className={styles.panelHeader}>
         <div><p className={styles.eyebrow}>DETAILS</p><h2>Just fill the gaps</h2></div>
-        <span className={styles.statusChip}>{attached ? "Receipt attached" : "Receipt skipped"}</span>
+        <span className={styles.statusChip}>Receipt attached</span>
       </div>
       <form className={styles.fieldStack} onSubmit={onReview}>
         <Field label="What was this expense for?"><input className={styles.textInput} required value={form.title} placeholder="e.g. Client dinner with Acme Corp" onChange={(event) => update("title", event.target.value)} /></Field>
@@ -463,14 +455,13 @@ function ReviewStep({
   canSubmit,
 }: {
   form: FormState;
-  source: ReceiptSource | null;
+  source: ReceiptSource;
   onBack: () => void;
   onSubmit: () => void;
   busy: boolean;
   error: string | null;
   canSubmit: boolean;
 }) {
-  const attachedName = source?.fileName;
   const submitButtonRef = useRef<HTMLButtonElement>(null);
 
   useEffect(() => {
@@ -487,7 +478,7 @@ function ReviewStep({
     <section className={styles.panel} aria-label="Review expense claim">
       <div className={styles.panelHeader}><div><p className={styles.eyebrow}>FINAL CHECK</p><h2>Review before submission</h2></div><span className={styles.statusChip}>Draft</span></div>
       <SummaryPanel form={form} label="Submission summary" />
-      {attachedName ? <p className={styles.receiptPreview}>Attached: {attachedName}</p> : <p className={styles.hint}>No receipt attached. You can continue with the exception path.</p>}
+      <p className={styles.receiptPreview}>Attached: {source.fileName}</p>
       {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
       {!canSubmit ? <p role="status" className={styles.hint}>Your role does not have the submit privilege, so this draft cannot be sent for approval. Ask a Superadmin to enable it.</p> : null}
       <div className={styles.actions}><button className={`${styles.button} ${styles.buttonSecondary}`} type="button" onClick={onBack}>Edit details</button><button ref={submitButtonRef} className={styles.button} type="button" disabled={busy || !canSubmit} onClick={onSubmit}>{busy ? "Submitting..." : "Submit for approval →"}</button></div>

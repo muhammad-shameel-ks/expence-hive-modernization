@@ -602,6 +602,13 @@ export function createExpenseCommands({
       if (!flow || flow.steps.length === 0) {
         throw new ExpenseError("validation", "No approval flow is published for your role yet.");
       }
+      // A claim cannot enter the approval pipeline without its receipt:
+      // without it there is nothing to reimburse against (ADR-0022).
+      // Drafts may still exist receipt-less (autosave, resumed legacy drafts),
+      // but submission is the enforcement point.
+      if (!claim.attachment) {
+        throw new ExpenseError("validation", "A receipt is required before this claim can be submitted.");
+      }
       const employees = await store.listEmployees(requester.organizationId);
       const roleNames = new Map(
         employees.flatMap((employee) =>

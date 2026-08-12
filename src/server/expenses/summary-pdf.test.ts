@@ -72,7 +72,7 @@ function build() {
   return { commands, blobStore };
 }
 
-async function createSubmittedClaim(commands: ExpenseCommands, withReceipt = true) {
+async function createSubmittedClaim(commands: ExpenseCommands) {
   const claim = await commands.createDraft("emp-shameel", {
     title: "Taxi",
     category: "Travel",
@@ -81,9 +81,7 @@ async function createSubmittedClaim(commands: ExpenseCommands, withReceipt = tru
     amountMinor: 85000,
     currency: "INR",
     expenseDate: "2026-08-04",
-    attachment: withReceipt
-      ? { fileName: "boarding-pass.pdf", contentType: "application/pdf", data: PDF_RECEIPT }
-      : undefined,
+    attachment: { fileName: "boarding-pass.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
   });
   return commands.submitClaim("emp-shameel", claim.id);
 }
@@ -148,9 +146,19 @@ describe("expense summary PDF builder", () => {
 
   it("attaches no file when no receipt bytes are provided", async () => {
     const { commands } = build();
-    const submitted = await createSubmittedClaim(commands, false);
+    // A claim without a receipt can no longer be submitted (ADR-0022), so
+    // the no-receipt tolerance is exercised on a receipt-less draft.
+    const draft = await commands.createDraft("emp-shameel", {
+      title: "Taxi",
+      category: "Travel",
+      subCategory: "Cab/Taxi",
+      remark: "Airport pickup",
+      amountMinor: 85000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+    });
     const [claim, employees] = await Promise.all([
-      commands.getClaim("emp-shameel", submitted.id),
+      commands.getClaim("emp-shameel", draft.id),
       commands.listEmployees("emp-shameel"),
     ]);
 
@@ -248,6 +256,7 @@ describe("expense summary PDF builder", () => {
       amountMinor: 85000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     })).id);
     await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
     const [heldClaim, heldEmployees] = await Promise.all([
@@ -357,6 +366,7 @@ describe("expense summary PDF builder", () => {
       amountMinor: 30000,
       currency: "INR",
       expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     })).id);
     const [claim, employees] = await Promise.all([
       commands.getClaim("emp-shameel", submitted.id),
