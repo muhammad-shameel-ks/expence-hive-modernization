@@ -283,6 +283,84 @@ describe("PostgresExpenseStore", () => {
     });
   });
 
+  it("maps the role's six privilege toggles onto the employee's role record", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      expect(sql).toContain("r.can_approve AS role_can_approve");
+      expect(sql).toContain("r.can_hold AS role_can_hold");
+      return Promise.resolve({
+        rows: [
+          {
+            id: "emp-1",
+            organization_id: "org-1",
+            name: "Ada Lovelace",
+            department_id: "dept-1",
+            active: true,
+            role_id: "role-manager",
+            role_code: "manager",
+            role_name: "Manager",
+            role_department_id: null,
+            role_can_submit: true,
+            role_can_approve: true,
+            role_can_access_finance: false,
+            role_can_hold: false,
+            role_can_view_org_activity: false,
+            role_can_access_admin_console: false,
+            manager_id: null,
+          },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const employee = await store.getEmployee("emp-1");
+
+    expect(employee?.role).toEqual({
+      id: "role-manager",
+      code: "manager",
+      displayName: "Manager",
+      departmentId: null,
+      capabilities: {
+        canSubmit: true,
+        canApprove: true,
+        canAccessFinance: false,
+        canHold: false,
+        canViewOrganizationActivity: false,
+        canAccessAdminConsole: false,
+      },
+    });
+  });
+
+  it("maps a role row without capability columns to a record with no capability set", async () => {
+    const poolQuery = vi.fn().mockResolvedValue({
+      rows: [
+        {
+          id: "emp-1",
+          organization_id: "org-1",
+          name: "Ada Lovelace",
+          department_id: null,
+          active: true,
+          role_id: "role-manager",
+          role_code: "manager",
+          role_name: "Manager",
+          role_department_id: null,
+          manager_id: null,
+        },
+      ],
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const employee = await store.getEmployee("emp-1");
+
+    expect(employee?.role).toEqual({
+      id: "role-manager",
+      code: "manager",
+      displayName: "Manager",
+      departmentId: null,
+    });
+  });
+
   it("maps an absent active flag and manager to inactive with no manager", async () => {
     const poolQuery = vi.fn().mockImplementation(() =>
       Promise.resolve({
@@ -656,6 +734,70 @@ describe("PostgresExpenseStore claim lifecycle", () => {
     expect(stepUpsertCall?.[1]).toEqual(
       expect.arrayContaining(["Auto-skipped by threshold guard (< ₹5,000)"]),
     );
+  });
+
+  it("writes the hold shape columns in updateClaim", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const client = { query, release: vi.fn() };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+    const claim = buildClaim();
+    claim.heldAt = "2026-08-04T10:00:00.000Z";
+    claim.heldBy = "emp-ada";
+    claim.heldReason = "Awaiting the missing invoice";
+
+    await store.updateClaim(claim);
+
+    const updateCall = query.mock.calls.find(
+      ([sql]) => typeof sql === "string" && sql.includes("UPDATE reimbursement_claims"),
+    );
+    expect(updateCall?.[0]).toContain("held_at");
+    expect(updateCall?.[0]).toContain("held_by");
+    expect(updateCall?.[0]).toContain("held_reason");
+    expect(updateCall?.[1]).toEqual(
+      expect.arrayContaining(["2026-08-04T10:00:00.000Z", "emp-ada", "Awaiting the missing invoice"]),
+    );
+  });
+
+  it("maps the hold shape columns back into the claim", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string) => {
+      if (sql.includes("FROM reimbursement_claims")) {
+        return Promise.resolve({
+          rows: [
+            {
+              id: "claim-1",
+              organization_id: "org-1",
+              requester_id: "emp-shameel",
+              reference: "EXP-2026-0001",
+              title: "Bengaluru client flight",
+              category: "Travel",
+              amount_minor: "1250000",
+              expense_date: "2026-08-04",
+              status: "in-approval",
+              current_stage: "role-manager",
+              current_actor_id: "emp-ada",
+              version: "2",
+              created_at: "2026-08-04T10:00:00.000Z",
+              submitted_at: "2026-08-04T10:00:00.000Z",
+              held_at: "2026-08-05T09:00:00.000Z",
+              held_by: "emp-ada",
+              held_reason: "Awaiting the missing invoice",
+            },
+          ],
+        });
+      }
+      return Promise.resolve({ rows: [] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const claim = await store.getClaim("claim-1");
+
+    expect(claim).toMatchObject({
+      heldAt: "2026-08-05T09:00:00.000Z",
+      heldBy: "emp-ada",
+      heldReason: "Awaiting the missing invoice",
+    });
   });
 
   it("deletes a draft claim only when its version still matches", async () => {

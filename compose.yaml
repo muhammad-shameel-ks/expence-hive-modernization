@@ -40,6 +40,37 @@ services:
       - "127.0.0.1:1025:1025"
       - "127.0.0.1:8025:8025"
 
+  # Enforces the company-wise absence auto-skip timeout (ADR-0018) even
+  # when nobody opens the app: one pass over every organization's in-flight
+  # claims per SWEEP_INTERVAL_MS (default 15 minutes), through the same
+  # sweepAbsentClaims command as the lazy read-path backstop. The node
+  # image must match the host's libc so the mounted node_modules' native
+  # binaries run; the container refreshes dependencies with install
+  # scripts disabled, applies pending migrations, and then loops.
+  # The healthcheck probes the heartbeat file the worker rewrites after
+  # every successful pass.
+  sweep:
+    image: node:24-slim
+    working_dir: /app
+    environment:
+      DATABASE_URL: postgresql://expensehive:expensehive@postgres:5432/expensehive
+      SWEEP_INTERVAL_MS: "900000"
+    volumes:
+      - .:/app
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command:
+      - sh
+      - -c
+      - npm install --ignore-scripts --no-audit --no-fund >/dev/null 2>&1 && npm run db:migrate && npm run sweep:worker
+    healthcheck:
+      test: ["CMD-SHELL", "test -f /tmp/expensehive-sweep-ok"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
+      start_period: 120s
+
 volumes:
   postgres-data:
   azurite-data:

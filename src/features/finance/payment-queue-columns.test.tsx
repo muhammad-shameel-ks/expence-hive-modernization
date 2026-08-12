@@ -143,6 +143,22 @@ describe("PAYMENT_QUEUE_COLUMNS renderers", () => {
     expect(renderToStaticMarkup(column.render(paid, helpers))).toContain("Paid");
   });
 
+  it("renders the Held badge for a held claim (ADR-0016)", () => {
+    const column = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
+    const held = buildClaim({
+      status: "in-finance",
+      heldAt: "2026-08-05T10:00:00.000Z",
+      heldBy: "employee-2",
+      heldReason: "Awaiting the missing invoice",
+    });
+    const heldHelpers = buildHelpers({ paymentStatusFor: (c) => (c.heldAt ? "Held" : "Not Paid") });
+    const html = renderToStaticMarkup(column.render(held, heldHelpers));
+    expect(html).toContain("Held");
+    // Frozen: no terminal action button rides along.
+    expect(html).not.toContain("Verify for payment");
+    expect(html).not.toContain("Mark paid");
+  });
+
   it("renders the terminal action button from the helpers' action lookup", () => {
     const column = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
     const actionable = buildHelpers({ terminalActionFor: () => "pay" });
@@ -232,6 +248,20 @@ describe("PAYMENT_QUEUE_COLUMNS text values", () => {
     const paymentStatus = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
     expect(paymentStatus.textValue(buildClaim({ status: "paid" }), helpers)).toBe("Paid");
     expect(paymentStatus.textValue(buildClaim({ status: "rejected" }), helpers)).toBe("Rejected");
+  });
+
+  it("maps a held claim to the Held payment status string", () => {
+    const paymentStatus = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
+    const held = buildClaim({
+      status: "in-finance",
+      heldAt: "2026-08-05T10:00:00.000Z",
+      heldBy: "employee-2",
+      heldReason: "Awaiting the missing invoice",
+    });
+    const heldHelpers = buildTextHelpers({
+      paymentStatusFor: (c) => (c.heldAt ? "Held" : c.status === "paid" ? "Paid" : "Not Paid"),
+    });
+    expect(paymentStatus.textValue(held, heldHelpers)).toBe("Held");
   });
 
   it("exports the approved-on date from the helpers' approval lookup", () => {

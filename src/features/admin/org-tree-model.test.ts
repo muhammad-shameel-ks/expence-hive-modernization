@@ -3,8 +3,22 @@ import type { AdminDepartment, AdminEmployee } from "@/server/admin/ports";
 import { groupPeopleByDepartment } from "./org-tree-model";
 
 const departments: AdminDepartment[] = [
-  { id: "dept-engineering", organizationId: "org-1", name: "Engineering", active: true },
-  { id: "dept-operations", organizationId: "org-1", name: "Operations", active: true },
+  {
+    id: "dept-engineering",
+    organizationId: "org-1",
+    name: "Engineering",
+    active: true,
+    headId: "emp-2",
+    head: { id: "emp-2", name: "Ada Lovelace" },
+  },
+  {
+    id: "dept-operations",
+    organizationId: "org-1",
+    name: "Operations",
+    active: true,
+    headId: null,
+    head: null,
+  },
 ];
 
 function employee(id: string, overrides: Partial<AdminEmployee> = {}): AdminEmployee {

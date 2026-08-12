@@ -203,4 +203,78 @@ describe("claimToExpense", () => {
     expect(event?.actor).toBe("Policy");
     expect(event?.actorId).toBeUndefined();
   });
+
+  it("maps the hold shape onto the expense and drops the primary action while held", () => {
+    const claim = rejectedClaim({
+      status: "in-approval",
+      heldAt: "2026-08-05T12:00:00.000Z",
+      heldBy: "emp-ada",
+      heldReason: "Awaiting the missing invoice",
+      steps: [
+        { id: "s1", roleId: "role-manager", assignedActorId: "emp-ada", status: "pending" },
+      ],
+      history: [
+        { id: "h1", kind: "draft", actorId: "emp-shameel", createdAt: "2026-08-04T09:00:00.000Z" },
+        { id: "h2", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" },
+        {
+          id: "h3",
+          kind: "held",
+          actorId: "emp-ada",
+          detail: "Awaiting the missing invoice",
+          createdAt: "2026-08-05T12:00:00.000Z",
+        },
+      ],
+    });
+
+    const expense = claimToExpense(claim, employees);
+
+    expect(expense.held).toEqual({
+      by: "Ada Lovelace",
+      at: "2026-08-05T12:00:00.000Z",
+      reason: "Awaiting the missing invoice",
+    });
+    expect(expense.primaryAction).toBeUndefined();
+    // The flow status is kept: the claim is merely paused at its stage.
+    expect(expense.status).toBe("in-approval");
+    expect(expense.history.map((event) => event.kind)).toContain("held");
+  });
+
+  it("maps a resumed history event and leaves the hold shape unset after resume", () => {
+    const claim = rejectedClaim({
+      status: "in-approval",
+      steps: [
+        { id: "s1", roleId: "role-manager", assignedActorId: "emp-ada", status: "pending" },
+        { id: "s2", roleId: "role-finance-executive", assignedActorId: "emp-finance", status: "pending" },
+      ],
+      history: [
+        { id: "h1", kind: "draft", actorId: "emp-shameel", createdAt: "2026-08-04T09:00:00.000Z" },
+        { id: "h2", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" },
+        {
+          id: "h3",
+          kind: "held",
+          actorId: "emp-ada",
+          detail: "Awaiting the missing invoice",
+          createdAt: "2026-08-05T12:00:00.000Z",
+        },
+        {
+          id: "h4",
+          kind: "resumed",
+          actorId: "emp-ada",
+          createdAt: "2026-08-06T09:00:00.000Z",
+        },
+      ],
+    });
+
+    const expense = claimToExpense(claim, employees);
+
+    expect(expense.held).toBeUndefined();
+    expect(expense.history.map((event) => event.kind)).toEqual([
+      "draft",
+      "submitted",
+      "held",
+      "resumed",
+    ]);
+    // A resumed claim regains its primary action.
+    expect(expense.primaryAction).toBe("approve");
+  });
 });

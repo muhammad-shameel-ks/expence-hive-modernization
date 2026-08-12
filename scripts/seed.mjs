@@ -41,6 +41,35 @@ const ROLES = [
   { code: "superadmin", displayName: "Superadmin", locked: true },
 ];
 
+// The default privilege catalog (ADR-0015): submit-only for the locked
+// catalog except Manager (+approve), Finance Executive (+finance access),
+// Finance Head (+finance access, +org activity), and the built-in
+// Superadmin (all six). Custom roles default to submit-only.
+const SUBMIT_ONLY = {
+  can_submit: true,
+  can_approve: false,
+  can_access_finance: false,
+  can_hold: false,
+  can_view_org_activity: false,
+  can_access_admin_console: false,
+};
+
+const DEFAULT_CAPABILITIES = {
+  intern: SUBMIT_ONLY,
+  executive: SUBMIT_ONLY,
+  manager: { ...SUBMIT_ONLY, can_approve: true },
+  "finance-head": { ...SUBMIT_ONLY, can_access_finance: true, can_view_org_activity: true },
+  "finance-executive": { ...SUBMIT_ONLY, can_access_finance: true },
+  superadmin: {
+    can_submit: true,
+    can_approve: true,
+    can_access_finance: true,
+    can_hold: true,
+    can_view_org_activity: true,
+    can_access_admin_console: true,
+  },
+};
+
 const EMPLOYEE_ROLES = [
   { employeeId: "emp-superadmin", roleCode: "superadmin" },
   { employeeId: "emp-shameel", roleCode: "executive" },
@@ -228,11 +257,35 @@ async function main() {
     }
 
     for (const role of ROLES) {
+      const capabilities = DEFAULT_CAPABILITIES[role.code] ?? SUBMIT_ONLY;
       await client.query(
-        `INSERT INTO roles (id, organization_id, code, display_name, locked)
-         VALUES ($1, $2, $3, $4, $5)
-         ON CONFLICT (organization_id, code) DO UPDATE SET display_name = EXCLUDED.display_name, locked = EXCLUDED.locked`,
-        [`role-${role.code}`, ORGANIZATION.id, role.code, role.displayName, role.locked],
+        `INSERT INTO roles
+           (id, organization_id, code, display_name, locked,
+            can_submit, can_approve, can_access_finance, can_hold,
+            can_view_org_activity, can_access_admin_console)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+         ON CONFLICT (organization_id, code) DO UPDATE SET
+           display_name = EXCLUDED.display_name,
+           locked = EXCLUDED.locked,
+           can_submit = EXCLUDED.can_submit,
+           can_approve = EXCLUDED.can_approve,
+           can_access_finance = EXCLUDED.can_access_finance,
+           can_hold = EXCLUDED.can_hold,
+           can_view_org_activity = EXCLUDED.can_view_org_activity,
+           can_access_admin_console = EXCLUDED.can_access_admin_console`,
+        [
+          `role-${role.code}`,
+          ORGANIZATION.id,
+          role.code,
+          role.displayName,
+          role.locked,
+          capabilities.can_submit,
+          capabilities.can_approve,
+          capabilities.can_access_finance,
+          capabilities.can_hold,
+          capabilities.can_view_org_activity,
+          capabilities.can_access_admin_console,
+        ],
       );
     }
 

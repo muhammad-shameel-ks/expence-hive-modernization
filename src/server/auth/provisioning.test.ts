@@ -127,3 +127,126 @@ describe("createDevProvisioner", () => {
     expect(people.find((person) => person.id === "emp-ada")).toEqual(EXISTING_EMPLOYEE);
   });
 });
+
+describe("pre-created employee reconciliation (ADR-0019)", () => {
+  it("picks up a pre-created employee record without touching admin-set fields", async () => {
+    const identityProvider = new InMemoryIdentityStore([]);
+    const adminStore = new InMemoryAdminStore(
+      [
+        {
+          id: "emp-precreated",
+          organizationId: "org-1",
+          name: "Grace Hopper",
+          email: "grace@hive.local",
+          department: "Engineering",
+          departmentId: "dept-1",
+          role: { id: "role-manager", code: "manager", displayName: "Manager" },
+          active: true,
+          managerId: "emp-ada",
+        },
+      ],
+      [EXECUTIVE_ROLE],
+    );
+    const provisioner = createDevProvisioner({
+      adminStore,
+      identityProvider,
+      organizationId: "org-1",
+      defaultRoleCode: "executive",
+    });
+
+    const employee = await provisioner.provision("grace@hive.local");
+
+    expect(employee).toEqual({
+      id: "emp-precreated",
+      email: "grace@hive.local",
+      name: "Grace Hopper",
+    });
+    expect(identityProvider.findByEmail("grace@hive.local")).toEqual(employee);
+    const people = await adminStore.listEmployees("org-1");
+    expect(people).toHaveLength(1);
+    expect(people[0]).toMatchObject({
+      id: "emp-precreated",
+      name: "Grace Hopper",
+      role: { id: "role-manager", code: "manager", displayName: "Manager" },
+      departmentId: "dept-1",
+      managerId: "emp-ada",
+      active: true,
+    });
+  });
+
+  it("normalizes the email when matching a pre-created record", async () => {
+    const identityProvider = new InMemoryIdentityStore([]);
+    const adminStore = new InMemoryAdminStore([
+      {
+        id: "emp-precreated",
+        organizationId: "org-1",
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        department: "",
+        departmentId: null,
+        role: null,
+        active: true,
+        managerId: null,
+      },
+    ]);
+    const provisioner = createDevProvisioner({
+      adminStore,
+      identityProvider,
+      organizationId: "org-1",
+      defaultRoleCode: "executive",
+    });
+
+    const employee = await provisioner.provision("  Grace@Hive.Local ");
+
+    expect(employee?.id).toBe("emp-precreated");
+    expect(employee?.email).toBe("grace@hive.local");
+  });
+
+  it("creates a fresh record when the email matches nobody", async () => {
+    const identityProvider = new InMemoryIdentityStore([]);
+    const adminStore = new InMemoryAdminStore([], [EXECUTIVE_ROLE]);
+    const provisioner = createDevProvisioner({
+      adminStore,
+      identityProvider,
+      organizationId: "org-1",
+      defaultRoleCode: "executive",
+    });
+
+    const employee = await provisioner.provision("new.person@hive.local");
+
+    expect(employee?.id).toMatch(/^emp-/);
+    const people = await adminStore.listEmployees("org-1");
+    expect(people).toHaveLength(1);
+    expect(people[0]).toMatchObject({ email: "new.person@hive.local" });
+  });
+
+  it("does not duplicate a record when a pre-created employee signs in twice", async () => {
+    const identityProvider = new InMemoryIdentityStore([]);
+    const adminStore = new InMemoryAdminStore([
+      {
+        id: "emp-precreated",
+        organizationId: "org-1",
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        department: "",
+        departmentId: null,
+        role: null,
+        active: true,
+        managerId: null,
+      },
+    ]);
+    const provisioner = createDevProvisioner({
+      adminStore,
+      identityProvider,
+      organizationId: "org-1",
+      defaultRoleCode: "executive",
+    });
+
+    const first = await provisioner.provision("grace@hive.local");
+    const second = await provisioner.provision("grace@hive.local");
+
+    expect(second).toEqual(first);
+    const people = await adminStore.listEmployees("org-1");
+    expect(people).toHaveLength(1);
+  });
+});

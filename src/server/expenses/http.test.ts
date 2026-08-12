@@ -6,14 +6,16 @@ import { createExpenseCommands } from "./commands";
 import {
   handleApproveExpenseRequest,
   handleCreateExpenseRequest,
+  handleDelegateExpenseRequest,
   handleDeleteExpenseRequest,
   handleFinancePaymentQueueRequest,
   handleGetExpenseRequest,
   handleGetReceiptRequest,
   handleGetExpenseSummaryRequest,
+  handleHoldExpenseRequest,
   handleRejectExpenseRequest,
+  handleResumeExpenseRequest,
   handleSubmitExpenseRequest,
-  handleTakeOverExpenseRequest,
   handleUpdateCommentsRequest,
   handleUpdateExpenseRequest,
 } from "./http";
@@ -21,11 +23,23 @@ import { InMemoryExpenseStore } from "./in-memory";
 import type { ExpenseEmployee } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES } from "./receipt-validation";
 
-const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive" };
-const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager" };
-const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head" };
-const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive" };
-const ROLE_INTERN = { id: "role-intern", code: "intern", displayName: "Intern" };
+// The default privilege catalog (ADR-0015) the migration and seeds backfill:
+// submit-only except Manager +approve, Finance Head +finance +org activity,
+// Finance Executive +finance.
+const SUBMIT_ONLY = {
+  canSubmit: true,
+  canApprove: false,
+  canAccessFinance: false,
+  canHold: false,
+  canViewOrganizationActivity: false,
+  canAccessAdminConsole: false,
+};
+
+const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive", capabilities: { ...SUBMIT_ONLY } };
+const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager", capabilities: { ...SUBMIT_ONLY, canApprove: true } };
+const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true, canViewOrganizationActivity: true } };
+const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true } };
+const ROLE_INTERN = { id: "role-intern", code: "intern", displayName: "Intern", capabilities: { ...SUBMIT_ONLY } };
 
 function emp(
   id: string,
@@ -73,6 +87,7 @@ function build() {
       emp("emp-sanil", "Sanil Davis", ROLE_MANAGER, { departmentId: "dept-eng" }),
       emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
       emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+      emp("emp-super", "Super Boss", { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" }),
     ],
     flows: [
       {
@@ -614,7 +629,7 @@ describe("expense HTTP boundary", () => {
     expect(deniedResponse.status).toBe(403);
   });
 
-  it("lets a later-stage role take over a claim with a reason code", async () => {
+  it("lets a Superadmin delegate a claim to another person with a reason", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
       createRequest({
@@ -636,23 +651,27 @@ describe("expense HTTP boundary", () => {
       claim.id,
     );
 
-    const response = await handleTakeOverExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/take-over`, {
+    const response = await handleDelegateExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/delegate`, {
         method: "POST",
-        body: JSON.stringify({ reasonCode: "Urgent payment deadline" }),
+        body: JSON.stringify({ delegateeId: "emp-sanil", reason: "Ada is on leave" }),
       }),
       commands,
-      "emp-finance",
+      "emp-super",
       claim.id,
     );
 
     expect(response.status).toBe(200);
-    await expect(response.json()).resolves.toMatchObject({
-      claim: { status: "in-finance", currentStage: ROLE_FINANCE_EXECUTIVE.id },
+    const body = await response.json();
+    expect(body.claim).toMatchObject({
+      status: "in-approval",
+      currentStage: ROLE_MANAGER.id,
+      currentActorId: "emp-sanil",
     });
+    expect(body.claim.history.at(-1)).toMatchObject({ kind: "delegated", actorId: "emp-super" });
   });
 
-  it("rejects a take-over request without a reason code", async () => {
+  it("rejects a delegate request without a delegatee or a reason", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
       createRequest({
@@ -674,17 +693,63 @@ describe("expense HTTP boundary", () => {
       claim.id,
     );
 
-    const response = await handleTakeOverExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/take-over`, {
+    const noDelegatee = await handleDelegateExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/delegate`, {
         method: "POST",
-        body: JSON.stringify({}),
+        body: JSON.stringify({ reason: "Ada is on leave" }),
+      }),
+      commands,
+      "emp-super",
+      claim.id,
+    );
+    expect(noDelegatee.status).toBe(422);
+
+    const noReason = await handleDelegateExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/delegate`, {
+        method: "POST",
+        body: JSON.stringify({ delegateeId: "emp-sanil" }),
+      }),
+      commands,
+      "emp-super",
+      claim.id,
+    );
+    expect(noReason.status).toBe(422);
+  });
+
+  it("returns 403 when a non-Superadmin calls the delegate endpoint", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest({
+        title: "Urgent client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+
+    const response = await handleDelegateExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/delegate`, {
+        method: "POST",
+        body: JSON.stringify({ delegateeId: "emp-sanil", reason: "Ada is on leave" }),
       }),
       commands,
       "emp-finance",
       claim.id,
     );
 
-    expect(response.status).toBe(422);
+    expect(response.status).toBe(403);
+    await expect(response.json()).resolves.toMatchObject({ message: "Only Superadmin can delegate a claim." });
   });
 
   it("lets an assigned approver reject a claim outright with a reason", async () => {
@@ -896,7 +961,7 @@ describe("expense HTTP boundary", () => {
     const store = new InMemoryExpenseStore({
       employees: [
         emp("emp-intern", "Ananya Iyer", ROLE_INTERN, { departmentId: "dept-eng", managerId: "emp-abilash" }),
-        emp("emp-abilash", "Abilash", { id: "role-team-lead", code: "team-lead", displayName: "Team Lead" }, { departmentId: "dept-eng" }),
+        emp("emp-abilash", "Abilash", { id: "role-team-lead", code: "team-lead", displayName: "Team Lead", capabilities: { ...SUBMIT_ONLY } }, { departmentId: "dept-eng" }),
         emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
         emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
       ],
@@ -1226,5 +1291,205 @@ describe("expense summary endpoint", () => {
     const bytes = new Uint8Array(await response.arrayBuffer());
     expect(isPdfBytes(bytes)).toBe(true);
     await expect(PDFDocument.load(bytes)).resolves.toBeInstanceOf(PDFDocument);
+  });
+});
+
+describe("hold and resume HTTP boundary", () => {
+  // The build() fixtures give the Manager role no can_hold capability, so
+  // these tests build their own store with a manager who holds the
+  // privilege (ADR-0016).
+  const HOLD_MANAGER = {
+    ...ROLE_MANAGER,
+    capabilities: { ...SUBMIT_ONLY, canApprove: true, canHold: true },
+  };
+
+  function buildWithHoldManager() {
+    const store = new InMemoryExpenseStore({
+      employees: [
+        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
+        emp("emp-katherine", "Katherine Johnson", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
+        emp("emp-ada", "Ada Lovelace", HOLD_MANAGER, { departmentId: "dept-eng" }),
+        emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
+        emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+      ],
+      flows: [
+        {
+          id: "flow-standard",
+          roleId: ROLE_EXECUTIVE.id,
+          steps: [
+            { kind: "role", roleId: ROLE_MANAGER.id },
+            { kind: "role", roleId: ROLE_FINANCE_HEAD.id },
+            { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
+          ],
+        },
+      ],
+    });
+    const blobStore = new InMemoryBlobStore();
+    const commands = createExpenseCommands({
+      store,
+      blobStore,
+      idFactory: (() => {
+        const counters = new Map<string, number>();
+        return (prefix: string) => {
+          const next = (counters.get(prefix) ?? 0) + 1;
+          counters.set(prefix, next);
+          return `${prefix}-${next}`;
+        };
+      })(),
+      now: () => new Date("2026-08-04T10:00:00.000Z"),
+    });
+    return { commands, blobStore };
+  }
+
+  async function createAndSubmit(commands: ReturnType<typeof buildWithHoldManager>["commands"]) {
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+      }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = (await createResponse.json()) as { claim: { id: string; ref: string } };
+    const submitResponse = await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+    return (await submitResponse.json()) as { claim: { id: string } };
+  }
+
+  it("holds a claim through the route and returns the stamped claim with employees", async () => {
+    const { commands } = buildWithHoldManager();
+    const { claim } = await createAndSubmit(commands);
+
+    const response = await handleHoldExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/hold`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Awaiting the missing invoice" }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    expect(body.claim).toMatchObject({
+      id: claim.id,
+      heldBy: "emp-ada",
+      heldReason: "Awaiting the missing invoice",
+    });
+    expect(body.employees.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a hold without a reason at the boundary", async () => {
+    const { commands } = buildWithHoldManager();
+    const { claim } = await createAndSubmit(commands);
+
+    const response = await handleHoldExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/hold`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("returns the hold conflict message when a claim is already held", async () => {
+    const { commands } = buildWithHoldManager();
+    const { claim } = await createAndSubmit(commands);
+    await commands.holdClaim("emp-ada", claim.id, "First hold");
+
+    const response = await handleHoldExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/hold`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Second hold" }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      message: "This claim is already held.",
+    });
+  });
+
+  it("resumes a held claim through the route", async () => {
+    const { commands } = buildWithHoldManager();
+    const { claim } = await createAndSubmit(commands);
+    await commands.holdClaim("emp-ada", claim.id, "Awaiting the missing invoice");
+
+    const response = await handleResumeExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/resume`, { method: "POST" }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    const body = await response.json();
+    // Resume clears the hold shape; undefined fields are dropped by JSON.
+    expect(body.claim).toMatchObject({ id: claim.id });
+    expect(body.claim.heldAt).toBeUndefined();
+    expect(body.claim.heldBy).toBeUndefined();
+    expect(body.claim.heldReason).toBeUndefined();
+    expect(body.employees.length).toBeGreaterThan(0);
+  });
+
+  it("rejects a resume of a claim that is not held with a conflict", async () => {
+    const { commands } = buildWithHoldManager();
+    const { claim } = await createAndSubmit(commands);
+
+    const response = await handleResumeExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/resume`, { method: "POST" }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(409);
+    await expect(response.json()).resolves.toMatchObject({
+      message: "This claim is not held.",
+    });
+  });
+
+  it("blocks the terminal action routes while a claim is held", async () => {
+    const { commands } = buildWithHoldManager();
+    const { claim } = await createAndSubmit(commands);
+    await commands.holdClaim("emp-ada", claim.id, "Holding for review");
+
+    const approveResponse = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+    expect(approveResponse.status).toBe(409);
+    await expect(approveResponse.json()).resolves.toMatchObject({
+      message: "This claim is held and cannot be acted on until it is resumed.",
+    });
+
+    const rejectResponse = await handleRejectExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/reject`, {
+        method: "POST",
+        body: JSON.stringify({ reason: "Too expensive" }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+    expect(rejectResponse.status).toBe(409);
   });
 });

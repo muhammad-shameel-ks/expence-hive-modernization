@@ -2,6 +2,8 @@ import { Pool } from "pg";
 import { AdminError } from "./commands";
 import { auditRangeBounds } from "./audit-filter";
 import { guardFromRow } from "../shared/amount-guard";
+import { DEFAULT_ABSENCE_TIMEOUT_DAYS } from "../shared/absence-timeout";
+import { SUBMIT_ONLY_CAPABILITIES, type RoleCapabilities } from "../shared/authorization";
 import type {
   AdminDepartment,
   AdminEmployee,
@@ -42,10 +44,49 @@ const employeeRoleJoin = `
   LEFT JOIN roles r ON r.id = er.role_id
 `;
 
+// The six role capability columns (ADR-0015) as a role record's privilege
+// set. Reads the row's aliased capability fields (role_can_* for employee
+// joins, can_* for role rows). Legacy mock rows without the columns yield
+// undefined, which resolution treats as the submit-only default; real
+// roles rows always carry them after migration 0025.
+function roleCapabilitiesFromRow(row: Row): RoleCapabilities | undefined {
+  if (row.can_submit === null || row.can_submit === undefined) return undefined;
+  return {
+    canSubmit: Boolean(row.can_submit),
+    canApprove: Boolean(row.can_approve),
+    canAccessFinance: Boolean(row.can_access_finance),
+    canHold: Boolean(row.can_hold),
+    canViewOrganizationActivity: Boolean(row.can_view_org_activity),
+    canAccessAdminConsole: Boolean(row.can_access_admin_console),
+  };
+}
+
+// The employee join aliases the six capability columns under role_* so the
+// same helper reads them via the role_* keys.
+function roleCapabilitiesFromEmployeeRow(row: Row): RoleCapabilities | undefined {
+  const caps = roleCapabilitiesFromRow({
+    can_submit: row.role_can_submit,
+    can_approve: row.role_can_approve,
+    can_access_finance: row.role_can_access_finance,
+    can_hold: row.role_can_hold,
+    can_view_org_activity: row.role_can_view_org_activity,
+    can_access_admin_console: row.role_can_access_admin_console,
+  });
+  return caps;
+}
+
+const roleCapabilityColumns = `
+  r.can_submit AS role_can_submit, r.can_approve AS role_can_approve,
+  r.can_access_finance AS role_can_access_finance, r.can_hold AS role_can_hold,
+  r.can_view_org_activity AS role_can_view_org_activity,
+  r.can_access_admin_console AS role_can_access_admin_console
+`;
+
 const employeeSelect = `
   SELECT e.id, e.organization_id, e.name, e.email, e.active, e.department_id,
     d.name AS department_name,
     r.id AS role_id, r.code AS role_code, r.display_name AS role_name,
+    ${roleCapabilityColumns},
     ha.manager_id
   FROM employees e
   LEFT JOIN departments d ON d.id = e.department_id
@@ -57,10 +98,12 @@ function roleRefFromRow(row: Row): AdminEmployee["role"] {
   if (row.role_id === null || row.role_id === undefined) {
     return null;
   }
+  const capabilities = roleCapabilitiesFromEmployeeRow(row);
   return {
     id: String(row.role_id),
     code: String(row.role_code),
     displayName: String(row.role_name),
+    ...(capabilities ? { capabilities } : {}),
   };
 }
 
@@ -84,7 +127,14 @@ function employeeFromRow(row: Row): AdminEmployee {
   };
 }
 
+const roleSelectColumns = `
+  id, organization_id, code, display_name, department_id, active, locked,
+  can_submit, can_approve, can_access_finance, can_hold,
+  can_view_org_activity, can_access_admin_console
+`;
+
 function roleFromRow(row: Row): AdminRole {
+  const capabilities = roleCapabilitiesFromRow(row);
   return {
     id: String(row.id),
     organizationId: String(row.organization_id),
@@ -93,6 +143,7 @@ function roleFromRow(row: Row): AdminRole {
     departmentId: row.department_id === null ? null : String(row.department_id),
     active: Boolean(row.active),
     locked: Boolean(row.locked),
+    ...(capabilities ? { capabilities } : {}),
   };
 }
 
@@ -102,6 +153,11 @@ function departmentFromRow(row: Row): AdminDepartment {
     organizationId: String(row.organization_id),
     name: String(row.name),
     active: Boolean(row.active),
+    headId: row.head_id === null || row.head_id === undefined ? null : String(row.head_id),
+    head:
+      row.head_id === null || row.head_id === undefined
+        ? null
+        : { id: String(row.head_id), name: String(row.head_name) },
   };
 }
 
@@ -142,6 +198,21 @@ export class PostgresAdminStore implements AdminStore {
         WHERE e.id = $1
       `,
       [id],
+    );
+    return result.rows.length > 0 ? employeeFromRow(result.rows[0]) : null;
+  }
+
+  async findEmployeeByEmail(
+    organizationId: string,
+    email: string,
+  ): Promise<AdminEmployee | null> {
+    const result = await this.pool.query<Row>(
+      `
+        ${employeeSelect}
+        WHERE e.organization_id = $1 AND e.email = $2
+        LIMIT 1
+      `,
+      [organizationId, email],
     );
     return result.rows.length > 0 ? employeeFromRow(result.rows[0]) : null;
   }
@@ -198,6 +269,10 @@ export class PostgresAdminStore implements AdminStore {
       "UPDATE employees SET department_id = $1 WHERE id = $2",
       [departmentId, employeeId],
     );
+    await this.pool.query(
+      "UPDATE departments SET head_id = NULL WHERE head_id = $1 AND id != $2",
+      [employeeId, departmentId],
+    );
   }
 
   async setEmployeeActive(employeeId: string, active: boolean): Promise<void> {
@@ -220,7 +295,12 @@ export class PostgresAdminStore implements AdminStore {
 
   async listDepartments(organizationId: string): Promise<AdminDepartment[]> {
     const result = await this.pool.query<Row>(
-      "SELECT id, organization_id, name, active FROM departments WHERE organization_id = $1 ORDER BY name",
+      `SELECT d.id, d.organization_id, d.name, d.active, d.head_id,
+              h.name AS head_name
+       FROM departments d
+       LEFT JOIN employees h ON h.id = d.head_id
+       WHERE d.organization_id = $1
+       ORDER BY d.name`,
       [organizationId],
     );
     return result.rows.map(departmentFromRow);
@@ -233,8 +313,8 @@ export class PostgresAdminStore implements AdminStore {
     const id = `dept-${crypto.randomUUID()}`;
     try {
       await this.pool.query(
-        "INSERT INTO departments (id, organization_id, name) VALUES ($1, $2, $3)",
-        [id, organizationId, input.name],
+        "INSERT INTO departments (id, organization_id, name, head_id) VALUES ($1, $2, $3, $4)",
+        [id, organizationId, input.name, input.headId],
       );
     } catch (error) {
       if (isUniqueViolation(error, "idx_departments_org_name")) {
@@ -242,7 +322,79 @@ export class PostgresAdminStore implements AdminStore {
       }
       throw error;
     }
-    return { id, organizationId, name: input.name, active: true };
+    const headResult = await this.pool.query<Row>(
+      "SELECT id, name FROM employees WHERE id = $1",
+      [input.headId],
+    );
+    const head = headResult.rows[0];
+    return {
+      id,
+      organizationId,
+      name: input.name,
+      active: true,
+      headId: input.headId,
+      head: head ? { id: String(head.id), name: String(head.name) } : null,
+    };
+  }
+
+  async setDepartmentHead(departmentId: string, headId: string): Promise<void> {
+    await this.pool.query("UPDATE departments SET head_id = $1 WHERE id = $2", [
+      headId,
+      departmentId,
+    ]);
+  }
+
+  // Bulk employee creation is one transaction: any failing row (the only
+  // realistic failure is the employees.email unique violation) rolls the
+  // whole import back, so a roster never lands partially.
+  async createEmployees(
+    organizationId: string,
+    inputs: Array<{
+      id: string;
+      name: string;
+      email: string;
+      roleId?: string | null;
+      departmentId?: string | null;
+      managerId?: string | null;
+    }>,
+  ): Promise<AdminEmployee[]> {
+    const client = await this.pool.connect();
+    const created: AdminEmployee[] = [];
+    try {
+      await client.query("BEGIN");
+      for (const input of inputs) {
+        const result = await client.query<Row>(
+          `INSERT INTO employees (id, organization_id, name, email, department_id)
+           VALUES ($1, $2, $3, $4, $5)
+           RETURNING id, organization_id, name, email, active`,
+          [input.id, organizationId, input.name, input.email, input.departmentId ?? null],
+        );
+        created.push(employeeFromRow(result.rows[0] ?? {}));
+        if (input.roleId) {
+          await client.query(
+            "INSERT INTO employee_roles (employee_id, role_id) VALUES ($1, $2)",
+            [input.id, input.roleId],
+          );
+        }
+        if (input.managerId) {
+          await client.query(
+            `INSERT INTO hierarchy_assignments (employee_id, manager_id) VALUES ($1, $2)
+             ON CONFLICT (employee_id) DO UPDATE SET manager_id = $2, updated_at = now()`,
+            [input.id, input.managerId],
+          );
+        }
+      }
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      if (isUniqueViolation(error, "employees_email_key")) {
+        throw new AdminError("validation", "One of the imported email addresses already exists.");
+      }
+      throw error;
+    } finally {
+      client.release();
+    }
+    return created;
   }
 
   async deactivateDepartment(departmentId: string): Promise<void> {
@@ -251,7 +403,7 @@ export class PostgresAdminStore implements AdminStore {
 
   async listRoles(organizationId: string): Promise<AdminRole[]> {
     const result = await this.pool.query<Row>(
-      "SELECT id, organization_id, code, display_name, department_id, active, locked FROM roles WHERE organization_id = $1 ORDER BY display_name",
+      `SELECT ${roleSelectColumns} FROM roles WHERE organization_id = $1 ORDER BY display_name`,
       [organizationId],
     );
     return result.rows.map(roleFromRow);
@@ -259,7 +411,7 @@ export class PostgresAdminStore implements AdminStore {
 
   async getRole(roleId: string): Promise<AdminRole | null> {
     const result = await this.pool.query<Row>(
-      "SELECT id, organization_id, code, display_name, department_id, active, locked FROM roles WHERE id = $1",
+      `SELECT ${roleSelectColumns} FROM roles WHERE id = $1`,
       [roleId],
     );
     return result.rows.length > 0 ? roleFromRow(result.rows[0]) : null;
@@ -267,10 +419,26 @@ export class PostgresAdminStore implements AdminStore {
 
   async createRole(organizationId: string, input: RoleInput): Promise<AdminRole> {
     const id = `role-${crypto.randomUUID()}`;
+    const capabilities = input.capabilities ?? SUBMIT_ONLY_CAPABILITIES;
     try {
       await this.pool.query(
-        "INSERT INTO roles (id, organization_id, code, display_name, locked) VALUES ($1, $2, $3, $4, false)",
-        [id, organizationId, input.code, input.displayName],
+        `INSERT INTO roles
+           (id, organization_id, code, display_name, locked,
+            can_submit, can_approve, can_access_finance, can_hold,
+            can_view_org_activity, can_access_admin_console)
+         VALUES ($1, $2, $3, $4, false, $5, $6, $7, $8, $9, $10)`,
+        [
+          id,
+          organizationId,
+          input.code,
+          input.displayName,
+          capabilities.canSubmit,
+          capabilities.canApprove,
+          capabilities.canAccessFinance,
+          capabilities.canHold,
+          capabilities.canViewOrganizationActivity,
+          capabilities.canAccessAdminConsole,
+        ],
       );
     } catch (error) {
       if (isUniqueViolation(error, "idx_roles_org_code")) {
@@ -286,7 +454,26 @@ export class PostgresAdminStore implements AdminStore {
       departmentId: null,
       active: true,
       locked: false,
+      capabilities,
     };
+  }
+
+  async setRoleCapabilities(roleId: string, capabilities: RoleCapabilities): Promise<void> {
+    await this.pool.query(
+      `UPDATE roles SET
+         can_submit = $2, can_approve = $3, can_access_finance = $4, can_hold = $5,
+         can_view_org_activity = $6, can_access_admin_console = $7
+       WHERE id = $1`,
+      [
+        roleId,
+        capabilities.canSubmit,
+        capabilities.canApprove,
+        capabilities.canAccessFinance,
+        capabilities.canHold,
+        capabilities.canViewOrganizationActivity,
+        capabilities.canAccessAdminConsole,
+      ],
+    );
   }
 
   async deactivateRole(roleId: string): Promise<void> {
@@ -524,6 +711,30 @@ export class PostgresAdminStore implements AdminStore {
     ]);
     const total = Number(countResult.rows[0]?.count ?? 0);
     return { events: rows.rows.map(auditEventFromRow), total };
+  }
+
+  async getAbsenceTimeoutDays(organizationId: string): Promise<number> {
+    const result = await this.pool.query<Row>(
+      "SELECT absence_timeout_days FROM organization_settings WHERE organization_id = $1",
+      [organizationId],
+    );
+    return result.rows.length > 0
+      ? Number(result.rows[0].absence_timeout_days)
+      : DEFAULT_ABSENCE_TIMEOUT_DAYS;
+  }
+
+  async setAbsenceTimeoutDays(organizationId: string, days: number): Promise<void> {
+    await this.pool.query(
+      `INSERT INTO organization_settings (organization_id, absence_timeout_days)
+       VALUES ($1, $2)
+       ON CONFLICT (organization_id) DO UPDATE SET absence_timeout_days = EXCLUDED.absence_timeout_days`,
+      [organizationId, days],
+    );
+  }
+
+  async listOrganizations(): Promise<string[]> {
+    const result = await this.pool.query<Row>("SELECT id FROM organizations ORDER BY id");
+    return result.rows.map((row) => String(row.id));
   }
 }
 

@@ -151,6 +151,15 @@ describe("paymentStatusFor", () => {
     expect(paymentStatusFor(claim({ status: "in-finance" }))).toBe("Not Paid");
     expect(paymentStatusFor(claim({ status: "rejected" }))).toBe("Rejected");
   });
+
+  it("reports Held for a held claim regardless of its flow status (ADR-0016)", () => {
+    expect(
+      paymentStatusFor(claim({ status: "in-finance", heldAt: "2026-08-05T10:00:00Z" })),
+    ).toBe("Held");
+    expect(
+      paymentStatusFor(claim({ status: "in-approval", heldAt: "2026-08-05T10:00:00Z" })),
+    ).toBe("Held");
+  });
 });
 
 describe("rejectionFor", () => {

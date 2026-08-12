@@ -1,6 +1,7 @@
 import type { Pool } from "pg";
 import type { ReceiptContentType } from "../blob/keys";
 import { guardFromRow } from "../shared/amount-guard";
+import type { RoleCapabilities } from "../shared/authorization";
 import { ExpenseError } from "./commands";
 import type {
   ActivityEntry,
@@ -139,7 +140,8 @@ export class PostgresExpenseStore implements ExpenseStore {
       const result = await client.query(
         `UPDATE reimbursement_claims
          SET title = $2, category = $3, sub_category = $4, remark = $5, amount_minor = $6, expense_date = $7,
-             status = $8, current_stage = $9, current_actor_id = $10, current_stage_since = $11, version = $12, submitted_at = $13, comments = $14, updated_at = now()
+             status = $8, current_stage = $9, current_actor_id = $10, current_stage_since = $11, version = $12, submitted_at = $13, comments = $14,
+             held_at = $15, held_by = $16, held_reason = $17, updated_at = now()
          WHERE id = $1 AND version < $12`,
         [
           claim.id,
@@ -156,6 +158,9 @@ export class PostgresExpenseStore implements ExpenseStore {
           claim.version,
           claim.submittedAt ?? null,
           claim.comments ?? null,
+          claim.heldAt ?? null,
+          claim.heldBy ?? null,
+          claim.heldReason ?? null,
         ],
       );
       if (result.rowCount !== 1) throw new ExpenseError("conflict", "Claim was changed by another request.");
@@ -301,7 +306,12 @@ function activityFromRow(row: Row): ActivityEntry {
 
 const employeeQuery = `
   SELECT e.id, e.organization_id, e.name, e.department_id, e.active,
-         r.id AS role_id, r.code AS role_code, r.display_name AS role_name, r.department_id AS role_department_id,
+         r.id AS role_id, r.code AS role_code, r.display_name AS role_name,
+         r.department_id AS role_department_id,
+         r.can_submit AS role_can_submit, r.can_approve AS role_can_approve,
+         r.can_access_finance AS role_can_access_finance, r.can_hold AS role_can_hold,
+         r.can_view_org_activity AS role_can_view_org_activity,
+         r.can_access_admin_console AS role_can_access_admin_console,
          ha.manager_id
   FROM employees e
   LEFT JOIN LATERAL (
@@ -312,7 +322,24 @@ const employeeQuery = `
   WHERE e.id = $1
 `;
 
+// The six role capability columns (ADR-0015) as a role record's privilege
+// set. Legacy mock rows without the columns yield undefined, which
+// resolution treats as the submit-only default; real role rows always
+// carry them after migration 0025.
+function roleCapabilitiesFromRow(row: Row): RoleCapabilities | undefined {
+  if (row.role_can_submit === null || row.role_can_submit === undefined) return undefined;
+  return {
+    canSubmit: Boolean(row.role_can_submit),
+    canApprove: Boolean(row.role_can_approve),
+    canAccessFinance: Boolean(row.role_can_access_finance),
+    canHold: Boolean(row.role_can_hold),
+    canViewOrganizationActivity: Boolean(row.role_can_view_org_activity),
+    canAccessAdminConsole: Boolean(row.role_can_access_admin_console),
+  };
+}
+
 function employeeFromRow(row: Row): ExpenseEmployee {
+  const capabilities = roleCapabilitiesFromRow(row);
   return {
     id: String(row.id),
     organizationId: String(row.organization_id),
@@ -325,6 +352,7 @@ function employeeFromRow(row: Row): ExpenseEmployee {
           code: String(row.role_code),
           displayName: String(row.role_name),
           departmentId: row.role_department_id ? String(row.role_department_id) : null,
+          ...(capabilities ? { capabilities } : {}),
         }
       : null,
     managerId: row.manager_id ? String(row.manager_id) : null,
@@ -382,6 +410,9 @@ function claimFromRow(row: Row): ExpenseClaim {
     currentStage: row.current_stage ? String(row.current_stage) : undefined,
     currentActorId: row.current_actor_id ? String(row.current_actor_id) : undefined,
     currentStageSince: row.current_stage_since ? new Date(String(row.current_stage_since)).toISOString() : undefined,
+    heldAt: row.held_at ? new Date(String(row.held_at)).toISOString() : undefined,
+    heldBy: row.held_by ? String(row.held_by) : undefined,
+    heldReason: row.held_reason ? String(row.held_reason) : undefined,
     steps: [],
     history: [],
     version: Number(row.version),

@@ -332,6 +332,70 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
   });
 });
 
+describe("PaymentQueueTable held claims", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function buildHeldClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
+    return buildClaim({
+      id: "claim-held",
+      ref: "EXP-0004",
+      title: "Held conference flight",
+      status: "in-finance",
+      heldAt: "2026-08-05T10:00:00.000Z",
+      heldBy: "employee-2",
+      heldReason: "Awaiting the missing invoice",
+      steps: [
+        {
+          id: "s-1",
+          roleId: "role-finance-executive",
+          status: "pending",
+        },
+      ],
+      ...overrides,
+    });
+  }
+
+  it("shows the Held badge in the payment status cell", () => {
+    render(<PaymentQueueTable claims={[buildHeldClaim()]} employees={[]} />);
+
+    expect(screen.getByText("Held")).toBeInTheDocument();
+    // The underlying flow status is kept, so the status cell still names it.
+    expect(screen.getByText("in-finance")).toBeInTheDocument();
+  });
+
+  it("freezes a held claim against verify/pay even for a terminal pool member", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildHeldClaim()]}
+        employees={[]}
+        currentUserId="emp-finance-2"
+        currentUserRoleId="role-finance-executive"
+      />,
+    );
+
+    expect(screen.getByText("Held")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
+  });
+
+  it("freezes a verified-but-held claim against pay", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildHeldClaim({ steps: [{ id: "s-1", roleId: "role-finance-executive", status: "verified" }] })]}
+        employees={[]}
+        currentUserId="emp-finance-2"
+        currentUserRoleId="role-finance-executive"
+      />,
+    );
+
+    expect(screen.getByText("Held")).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
+  });
+});
+
 describe("PaymentQueueTable rejected rows", () => {
   afterEach(() => {
     cleanup();

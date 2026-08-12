@@ -5,7 +5,7 @@
 
 import { useMemo, useState, type ReactNode } from "react";
 import { ArrowUpRight, ChevronDown, Clock3 } from "lucide-react";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
+import { inPeriod, type DashboardPeriod } from "@/server/expenses/dashboard-read-models";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -16,19 +16,24 @@ import {
 } from "@/components/ui/dialog";
 import { cn } from "@/lib/utils";
 import { groupAttentionItems } from "./dashboard-attention";
-import { STATUS_META, type Expense } from "./mock-data";
-import { formatMoney, statusBadgeClass } from "./journey-meta";
+import { ExpenseFilterSection } from "./expense-filter-section";
+import type { Expense } from "./mock-data";
+import { formatMoney } from "./journey-meta";
+import { StatusBadge } from "./status-badge";
 
 const RECENT_COUNT = 5;
 
 export function ExpenseOverview({
   expenses,
+  period,
   currentUser,
   currentUserId,
   currentUserRoleId,
   onOpen,
 }: {
   expenses: Expense[];
+  /** The dashboard's period switch (ADR-0020): the recent list is bucketed to the same period as the cards. */
+  period: DashboardPeriod;
   currentUser: string;
   currentUserId?: string;
   currentUserRoleId?: string;
@@ -36,18 +41,17 @@ export function ExpenseOverview({
 }) {
   // "Your Expense" is claims this person raised, not claims routed to them
   // for a decision. The workspace list mixes both because approvers need
-  // their assigned claims too, so this section filters back down to mine.
+  // their assigned claims too, so this section filters back down to mine,
+  // then to the selected period. The shared filter section (ADR-0021) layers
+  // client-side chips/filters/sort on top of that server-side period bucket;
+  // the period switch refreshes the route but the filter state survives in
+  // the URL.
   const ownExpenses = useMemo(
-    () => (currentUserId ? expenses.filter((e) => e.requesterId === currentUserId) : expenses),
-    [expenses, currentUserId],
-  );
-
-  const recent = useMemo(
     () =>
-      [...ownExpenses]
-        .sort((a, b) => (a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0))
-        .slice(0, RECENT_COUNT),
-    [ownExpenses],
+      (currentUserId ? expenses.filter((e) => e.requesterId === currentUserId) : expenses).filter(
+        (e) => inPeriod(e.submittedAt, period, new Date()),
+      ),
+    [expenses, currentUserId, period],
   );
 
   const { pending } = useMemo(
@@ -78,31 +82,39 @@ export function ExpenseOverview({
             </a>
           </Button>
         </header>
-        <ul className="divide-y divide-border">
-          {recent.map((expense) => (
-            <li key={expense.id}>
-              <button
-                type="button"
-                onClick={() => onOpen(expense)}
-                className="flex w-full items-center justify-between gap-3 px-5 py-2.5 text-left transition-colors hover:bg-muted/40"
-              >
-                <p className="truncate text-sm font-medium text-foreground">{expense.title}</p>
-                <div className="flex shrink-0 items-center gap-2.5">
-                  <AnimatedBadge
-                    status={STATUS_META[expense.status].tone}
-                    size="sm"
-                    className={statusBadgeClass(expense.status)}
-                  >
-                    {STATUS_META[expense.status].label}
-                  </AnimatedBadge>
-                  <span className="w-20 shrink-0 text-right text-sm tabular-nums font-medium text-foreground">
-                    {formatMoney(expense.amount, expense.currency)}
-                  </span>
-                </div>
-              </button>
-            </li>
-          ))}
-        </ul>
+        <ExpenseFilterSection expenses={ownExpenses}>
+          {({ rows, hasActiveFilters }) => (
+            <ul className="divide-y divide-border">
+              {rows.length === 0 ? (
+                <li className="px-5 py-8 text-center text-sm text-muted-foreground">
+                  {ownExpenses.length === 0
+                    ? period === "overall"
+                      ? "No claims yet"
+                      : "No claims in this period"
+                    : "No claims match your filters"}
+                </li>
+              ) : (
+                (hasActiveFilters ? rows : rows.slice(0, RECENT_COUNT)).map((expense) => (
+                  <li key={expense.id}>
+                    <button
+                      type="button"
+                      onClick={() => onOpen(expense)}
+                      className="flex w-full items-center justify-between gap-3 px-5 py-2.5 text-left transition-colors hover:bg-muted/40"
+                    >
+                      <p className="truncate text-sm font-medium text-foreground">{expense.title}</p>
+                      <div className="flex shrink-0 items-center gap-2.5">
+                        <StatusBadge held={expense.held} status={expense.status} />
+                        <span className="w-20 shrink-0 text-right text-sm tabular-nums font-medium text-foreground">
+                          {formatMoney(expense.amount, expense.currency)}
+                        </span>
+                      </div>
+                    </button>
+                  </li>
+                ))
+              )}
+            </ul>
+          )}
+        </ExpenseFilterSection>
       </section>
 
       <section
@@ -150,16 +162,8 @@ export function ExpenseOverview({
                     <p className="mt-0.5 font-mono text-[11px] text-muted-foreground">{expense.ref}</p>
                   </div>
                   <div className="flex shrink-0 items-center gap-2.5">
-                    <AnimatedBadge
-                      status={STATUS_META[expense.status].tone}
-                      size="sm"
-                      className={statusBadgeClass(expense.status)}
-                    >
-                      {STATUS_META[expense.status].label}
-                    </AnimatedBadge>
-                    <span className="w-20 shrink-0 text-right text-sm tabular-nums font-medium text-foreground">
-                      {formatMoney(expense.amount, expense.currency)}
-                    </span>
+                    <StatusBadge held={expense.held} status={expense.status} />
+                    <ChevronDown className="size-4 text-muted-foreground" aria-hidden />
                   </div>
                 </button>
               </li>

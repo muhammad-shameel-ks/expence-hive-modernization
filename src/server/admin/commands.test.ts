@@ -1,7 +1,16 @@
 import { describe, expect, it } from "vitest";
 import { AdminError, createAdminCommands } from "./commands";
 import { InMemoryAdminStore } from "./in-memory";
-import type { AdminEmployee, AdminRole, AuditEvent, FlowStepInput } from "./ports";
+import { InMemoryExpenseStore } from "../expenses/in-memory";
+import type { ExpenseClaim } from "../expenses/ports";
+import type { RoleCapabilities } from "../shared/authorization";
+import type {
+  AdminDepartment,
+  AdminEmployee,
+  AdminRole,
+  AuditEvent,
+  FlowStepInput,
+} from "./ports";
 
 const SUPERADMIN_ROLE = { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" };
 
@@ -63,10 +72,14 @@ const employees: AdminEmployee[] = [
   },
 ];
 
-function buildAdmin(roles: AdminRole[] = []) {
+function buildAdmin(roles: AdminRole[] = [], claims: ExpenseClaim[] = []) {
   const store = new InMemoryAdminStore(employees.map((employee) => ({ ...employee })), roles);
-  const admin = createAdminCommands({ store });
-  return { admin, store };
+  const expensesStore = new InMemoryExpenseStore({ employees: [] });
+  for (const claim of claims) {
+    void expensesStore.createClaim(claim);
+  }
+  const admin = createAdminCommands({ store, expensesStore });
+  return { admin, store, expensesStore };
 }
 
 describe("getAdminActor", () => {
@@ -230,7 +243,7 @@ describe("assignRole", () => {
 describe("assignDepartment", () => {
   it("lets an admin assign a department to an employee", async () => {
     const { admin } = buildAdmin();
-    const dept = await admin.createDepartment("emp-superadmin", { name: "Operations" });
+    const dept = await admin.createDepartment("emp-superadmin", { name: "Operations", headId: "emp-superadmin" });
 
     await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: dept.id });
 
@@ -239,13 +252,60 @@ describe("assignDepartment", () => {
       department: "Operations",
     });
   });
+
+  it("updates departmentId even when employee.department string matches department.name", async () => {
+    const { admin, store } = buildAdmin();
+    const deptIt = await admin.createDepartment("emp-superadmin", { name: "IT", headId: "emp-superadmin" });
+    const deptEng = await admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" });
+
+    await store.setEmployeeDepartment("emp-katherine", deptIt.id);
+    const employee = await store.getEmployee("emp-katherine");
+    if (employee) {
+      employee.department = "Engineering";
+    }
+
+    await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: deptEng.id });
+
+    const updated = await store.getEmployee("emp-katherine");
+    expect(updated?.departmentId).toBe(deptEng.id);
+  });
+
+  it("automatically assigns a manager as department head when assigned to a headless department", async () => {
+    const { admin, store } = buildAdmin([LOCKED_MANAGER_ROLE]);
+    const dept = await admin.createDepartment("emp-superadmin", { name: "Executive", headId: "emp-superadmin" });
+    await store.setDepartmentHead(dept.id, "");
+
+    await admin.assignRole("emp-superadmin", { employeeId: "emp-katherine", roleId: "role-manager" });
+    await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: dept.id });
+
+    const departments = await admin.listDepartments("emp-superadmin");
+    const executive = departments.find((d) => d.id === dept.id);
+    expect(executive?.headId).toBe("emp-katherine");
+  });
+
+  it("does not auto-assign a department head for a role that merely mentions 'manager'", async () => {
+    const { admin, store } = buildAdmin();
+    const caseManagerRole = await admin.createRole("emp-superadmin", {
+      code: "case-manager",
+      displayName: "Case Manager",
+    });
+    const dept = await admin.createDepartment("emp-superadmin", { name: "Support", headId: "emp-superadmin" });
+    await store.setDepartmentHead(dept.id, "");
+    await admin.assignRole("emp-superadmin", { employeeId: "emp-katherine", roleId: caseManagerRole.id });
+
+    await admin.assignDepartment("emp-superadmin", { employeeId: "emp-katherine", departmentId: dept.id });
+
+    const departments = await admin.listDepartments("emp-superadmin");
+    const support = departments.find((d) => d.id === dept.id);
+    expect(support?.headId).toBeFalsy();
+  });
 });
 
 describe("departments", () => {
   it("lets an admin create a department", async () => {
     const { admin } = buildAdmin();
 
-    const department = await admin.createDepartment("emp-superadmin", { name: "Engineering" });
+    const department = await admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" });
 
     expect(department).toMatchObject({ name: "Engineering", active: true });
     await expect(admin.listDepartments("emp-superadmin")).resolves.toMatchObject([
@@ -256,16 +316,18 @@ describe("departments", () => {
   it("rejects a department without a name", async () => {
     const { admin } = buildAdmin();
 
-    await expect(admin.createDepartment("emp-superadmin", { name: "  " })).rejects.toMatchObject({
+    await expect(
+      admin.createDepartment("emp-superadmin", { name: "  ", headId: "emp-superadmin" }),
+    ).rejects.toMatchObject({
       code: "validation",
     });
   });
 
   it("rejects a duplicate department name in the same organization", async () => {
     const { admin } = buildAdmin();
-    await admin.createDepartment("emp-superadmin", { name: "Engineering" });
+    await admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" });
 
-    await expect(admin.createDepartment("emp-superadmin", { name: "Engineering" })).rejects.toMatchObject({
+    await expect(admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" })).rejects.toMatchObject({
       code: "validation",
     });
   });
@@ -273,14 +335,16 @@ describe("departments", () => {
   it("rejects a non-admin actor", async () => {
     const { admin } = buildAdmin();
 
-    await expect(admin.createDepartment("emp-katherine", { name: "Engineering" })).rejects.toMatchObject({
+    await expect(
+      admin.createDepartment("emp-katherine", { name: "Engineering", headId: "emp-superadmin" }),
+    ).rejects.toMatchObject({
       code: "unauthorized",
     });
   });
 
   it("lets an admin deactivate a department", async () => {
     const { admin } = buildAdmin();
-    const department = await admin.createDepartment("emp-superadmin", { name: "Engineering" });
+    const department = await admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" });
 
     await admin.deactivateDepartment("emp-superadmin", department.id);
 
@@ -319,7 +383,7 @@ describe("roles", () => {
 
   it("creates a role with no department scoping even when one exists in the org", async () => {
     const { admin } = buildAdmin();
-    await admin.createDepartment("emp-superadmin", { name: "Engineering" });
+    await admin.createDepartment("emp-superadmin", { name: "Engineering", headId: "emp-superadmin" });
 
     const role = await admin.createRole("emp-superadmin", {
       code: "team-lead",
@@ -419,6 +483,213 @@ describe("roles", () => {
 
     const roles = await admin.listRoles("emp-superadmin");
     expect(roles.find((candidate) => candidate.id === role.id)).toMatchObject({ active: false });
+  });
+});
+
+describe("role capabilities", () => {
+  const MANAGER_CAPABILITIES = {
+    canSubmit: true,
+    canApprove: true,
+    canAccessFinance: false,
+    canHold: false,
+    canViewOrganizationActivity: false,
+    canAccessAdminConsole: false,
+  };
+
+  // A custom role seeded directly into the store with a privilege set,
+  // mirroring what the migration and seeds produce for a console-created
+  // role.
+  const CUSTOM_REVIEWER_ROLE = {
+    id: "role-reviewer",
+    organizationId: "org-1",
+    code: "reviewer",
+    displayName: "Reviewer",
+    departmentId: null,
+    active: true,
+    locked: false,
+    capabilities: MANAGER_CAPABILITIES,
+  };
+
+  const claimWithPendingStepAt = (roleId: string, overrides: Partial<ExpenseClaim> = {}): ExpenseClaim => ({
+    id: `claim-${crypto.randomUUID()}`,
+    ref: `EXP-2026-${Math.floor(Math.random() * 9000 + 1000)}`,
+    organizationId: "org-1",
+    requesterId: "emp-shameel",
+    title: "Pending at role step",
+    category: "Travel",
+    subCategory: "",
+    remark: "",
+    amountMinor: 5000,
+    currency: "INR",
+    expenseDate: "2026-08-04",
+    status: "in-approval",
+    currentStage: roleId,
+    currentActorId: "emp-ada",
+    steps: [
+      { id: `step-${crypto.randomUUID()}`, roleId, assignedActorId: "emp-ada", status: "pending" },
+    ],
+    history: [],
+    version: 1,
+    createdAt: "2026-08-04T10:00:00.000Z",
+    submittedAt: "2026-08-04T10:00:00.000Z",
+    ...overrides,
+  });
+
+  it("creates a custom role with its privilege set", async () => {
+    const { admin } = buildAdmin();
+
+    const role = await admin.createRole("emp-superadmin", {
+      code: "reviewer",
+      displayName: "Reviewer",
+      capabilities: MANAGER_CAPABILITIES,
+    });
+
+    expect(role.capabilities).toEqual(MANAGER_CAPABILITIES);
+    const roles = await admin.listRoles("emp-superadmin");
+    expect(roles.find((candidate) => candidate.id === role.id)?.capabilities).toEqual(
+      MANAGER_CAPABILITIES,
+    );
+  });
+
+  it("creates a custom role with the submit-only default when no set is given", async () => {
+    const { admin } = buildAdmin();
+
+    const role = await admin.createRole("emp-superadmin", {
+      code: "reviewer",
+      displayName: "Reviewer",
+    });
+
+    expect(role.capabilities).toEqual({
+      canSubmit: true,
+      canApprove: false,
+      canAccessFinance: false,
+      canHold: false,
+      canViewOrganizationActivity: false,
+      canAccessAdminConsole: false,
+    });
+  });
+
+  it("rejects a role with a malformed capability set", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(
+      admin.createRole("emp-superadmin", {
+        code: "reviewer",
+        displayName: "Reviewer",
+        capabilities: { canSubmit: true } as unknown as RoleCapabilities,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("updates a role's capabilities without confirmation when no action privilege is removed", async () => {
+    const { admin } = buildAdmin([CUSTOM_REVIEWER_ROLE]);
+
+    const result = await admin.updateRoleCapabilities("emp-superadmin", "role-reviewer", {
+      ...MANAGER_CAPABILITIES,
+      canViewOrganizationActivity: true,
+    });
+
+    expect(result.role.capabilities).toMatchObject({ canViewOrganizationActivity: true });
+    expect(result.pendingClaims).toEqual([]);
+    const roles = await admin.listRoles("emp-superadmin");
+    expect(roles.find((candidate) => candidate.id === "role-reviewer")?.capabilities).toMatchObject({
+      canViewOrganizationActivity: true,
+    });
+  });
+
+  it("applies a removal without confirmation when no claim is pending at the role's steps", async () => {
+    const { admin } = buildAdmin([CUSTOM_REVIEWER_ROLE]);
+
+    await expect(
+      admin.updateRoleCapabilities("emp-superadmin", "role-reviewer", {
+        ...MANAGER_CAPABILITIES,
+        canApprove: false,
+      }),
+    ).resolves.toMatchObject({ pendingClaims: [] });
+  });
+
+  it("rejects an unconfirmed action-privilege removal, carrying the full pending-claim impact", async () => {
+    const { admin } = buildAdmin(
+      [CUSTOM_REVIEWER_ROLE],
+      [claimWithPendingStepAt("role-reviewer", { title: "Reviewer claim one" })],
+    );
+
+    const error = await admin
+      .updateRoleCapabilities("emp-superadmin", "role-reviewer", {
+        ...MANAGER_CAPABILITIES,
+        canApprove: false,
+      })
+      .catch((caught: unknown) => caught);
+
+    expect(error).toBeInstanceOf(AdminError);
+    expect((error as AdminError).code).toBe("conflict");
+    expect((error as AdminError).message).toContain("Removing approve affects 1 pending claim");
+    expect((error as AdminError).impact).toEqual({
+      removedActionPrivileges: ["canApprove"],
+      pendingClaims: [
+        expect.objectContaining({ ref: expect.any(String), title: "Reviewer claim one" }),
+      ],
+    });
+  });
+
+  it("applies the removal once confirmed and reports the claims that will skip", async () => {
+    const { admin, store } = buildAdmin(
+      [CUSTOM_REVIEWER_ROLE],
+      [claimWithPendingStepAt("role-reviewer")],
+    );
+
+    const result = await admin.updateRoleCapabilities("emp-superadmin", "role-reviewer", {
+      ...MANAGER_CAPABILITIES,
+      canApprove: false,
+    }, { confirmed: true });
+
+    expect(result.role.capabilities).toMatchObject({ canApprove: false });
+    expect(result.pendingClaims).toHaveLength(1);
+    expect(result.pendingClaims[0]).toMatchObject({ ref: expect.any(String), stage: "Reviewer" });
+    const event = store.audit.find((candidate) => candidate.action === "update-role-capabilities");
+    expect(event?.detail).toContain("Reviewer");
+  });
+
+  it("rejects editing the built-in Superadmin role", async () => {
+    const superadminRole = {
+      id: "role-superadmin",
+      organizationId: "org-1",
+      code: "superadmin",
+      displayName: "Superadmin",
+      departmentId: null,
+      active: true,
+      locked: true,
+      capabilities: {
+        canSubmit: true,
+        canApprove: true,
+        canAccessFinance: true,
+        canHold: true,
+        canViewOrganizationActivity: true,
+        canAccessAdminConsole: true,
+      },
+    };
+    const { admin } = buildAdmin([superadminRole]);
+
+    await expect(
+      admin.updateRoleCapabilities("emp-superadmin", "role-superadmin", {
+        ...MANAGER_CAPABILITIES,
+        canApprove: false,
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "Superadmin privileges are built in and cannot be edited.",
+    });
+  });
+
+  it("rejects updates from a non-admin actor and to an unknown or inactive role", async () => {
+    const { admin } = buildAdmin([CUSTOM_REVIEWER_ROLE]);
+
+    await expect(
+      admin.updateRoleCapabilities("emp-katherine", "role-reviewer", MANAGER_CAPABILITIES),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+    await expect(
+      admin.updateRoleCapabilities("emp-superadmin", "role-missing", MANAGER_CAPABILITIES),
+    ).rejects.toMatchObject({ code: "validation" });
   });
 });
 
@@ -1084,7 +1355,10 @@ describe("deactivateEmployee", () => {
         managerId: null,
       },
     ]);
-    const admin = createAdminCommands({ store });
+    const admin = createAdminCommands({
+      store,
+      expensesStore: new InMemoryExpenseStore({ employees: [] }),
+    });
 
     await expect(admin.deactivateEmployee("emp-superadmin", "emp-shameel")).rejects.toMatchObject({
       code: "conflict",
@@ -1456,5 +1730,612 @@ describe("listAuditEvents", () => {
       "audit-2",
       "audit-1",
     ]);
+  });
+});
+
+describe("createDepartment with a head", () => {
+  it("creates a department carrying its head", async () => {
+    const { admin } = buildAdmin();
+
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Research",
+      headId: "emp-katherine",
+    });
+
+    expect(department).toMatchObject({
+      name: "Research",
+      active: true,
+      headId: "emp-katherine",
+      head: { id: "emp-katherine", name: "Katherine Johnson" },
+    });
+  });
+
+  it("rejects a head from another organization", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(
+      admin.createDepartment("emp-superadmin", { name: "Research", headId: "emp-other-org" }),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  it("rejects a deactivated head", async () => {
+    const { admin } = buildAdmin();
+    await admin.deactivateEmployee("emp-superadmin", "emp-katherine");
+
+    await expect(
+      admin.createDepartment("emp-superadmin", { name: "Research", headId: "emp-katherine" }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects an unknown head", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(
+      admin.createDepartment("emp-superadmin", { name: "Research", headId: "emp-missing" }),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+});
+
+describe("setDepartmentHead", () => {
+  it("changes the head of a department and records an audit event", async () => {
+    const { admin, store } = buildAdmin();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+
+    await admin.setDepartmentHead("emp-superadmin", {
+      departmentId: department.id,
+      headId: "emp-katherine",
+    });
+
+    const departments = await admin.listDepartments("emp-superadmin");
+    expect(departments.find((candidate) => candidate.id === department.id)).toMatchObject({
+      headId: "emp-katherine",
+      head: { id: "emp-katherine", name: "Katherine Johnson" },
+    });
+    const event = store.audit.find((candidate) => candidate.action === "set-department-head");
+    expect(event?.detail).toContain(
+      "Katherine Johnson is now the head of the Engineering department",
+    );
+  });
+
+  it("does not duplicate the audit event when the head is unchanged", async () => {
+    const { admin, store } = buildAdmin();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+
+    await admin.setDepartmentHead("emp-superadmin", {
+      departmentId: department.id,
+      headId: "emp-superadmin",
+    });
+
+    expect(store.audit.filter((event) => event.action === "set-department-head")).toHaveLength(0);
+  });
+
+  it("rejects an unknown department", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(
+      admin.setDepartmentHead("emp-superadmin", {
+        departmentId: "dept-missing",
+        headId: "emp-katherine",
+      }),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  it("rejects a head outside the organization", async () => {
+    const { admin } = buildAdmin();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+
+    await expect(
+      admin.setDepartmentHead("emp-superadmin", {
+        departmentId: department.id,
+        headId: "emp-other-org",
+      }),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  it("rejects a deactivated head", async () => {
+    const { admin } = buildAdmin();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+    await admin.deactivateEmployee("emp-superadmin", "emp-katherine");
+
+    await expect(
+      admin.setDepartmentHead("emp-superadmin", {
+        departmentId: department.id,
+        headId: "emp-katherine",
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects a non-admin actor", async () => {
+    const { admin } = buildAdmin();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+
+    await expect(
+      admin.setDepartmentHead("emp-katherine", {
+        departmentId: department.id,
+        headId: "emp-superadmin",
+      }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+  });
+});
+
+describe("createEmployee", () => {
+  async function buildWithDefaults() {
+    const { admin, store } = buildAdmin();
+    const executive = await store.createRole("org-1", {
+      code: "executive",
+      displayName: "Executive",
+    });
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+    return { admin, store, executive, department };
+  }
+
+  it("creates an employee whose manager defaults to the department head", async () => {
+    const { admin, store, executive, department } = await buildWithDefaults();
+
+    const employee = await admin.createEmployee("emp-superadmin", {
+      name: "Grace Hopper",
+      email: "grace@hive.local",
+      roleId: executive.id,
+      departmentId: department.id,
+    });
+
+    expect(employee).toMatchObject({
+      name: "Grace Hopper",
+      email: "grace@hive.local",
+      department: "Engineering",
+      departmentId: department.id,
+      managerId: "emp-superadmin",
+      active: true,
+    });
+    const people = await store.listEmployees("org-1");
+    expect(people.some((person) => person.id === employee.id)).toBe(true);
+  });
+
+  it("accepts an explicit managerId matching the department head", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    const employee = await admin.createEmployee("emp-superadmin", {
+      name: "Grace Hopper",
+      email: "grace@hive.local",
+      roleId: executive.id,
+      departmentId: department.id,
+      managerId: "emp-superadmin",
+    });
+
+    expect(employee.managerId).toBe("emp-superadmin");
+  });
+
+  it("rejects an explicit manager override that differs from the department head", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+        managerId: "emp-katherine",
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: "The manager is always the department head when creating a single user.",
+    });
+  });
+
+  it("rejects a duplicate email, matching case-insensitively", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "Katherine@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({
+      code: "validation",
+      message: 'An employee with email "katherine@hive.local" already exists.',
+    });
+  });
+
+  it("rejects an invalid email address", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "not-an-email",
+        roleId: executive.id,
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects a missing name", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "   ",
+        email: "grace@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects an unknown role", async () => {
+    const { admin, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: "role-missing",
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("rejects an inactive department", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+    await admin.deactivateDepartment("emp-superadmin", department.id);
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({ code: "not-found" });
+  });
+
+  it("rejects creation when the department head is deactivated", async () => {
+    const { admin, executive } = await buildWithDefaults();
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Support",
+      headId: "emp-katherine",
+    });
+    await admin.deactivateEmployee("emp-superadmin", "emp-katherine");
+
+    await expect(
+      admin.createEmployee("emp-superadmin", {
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({ code: "validation" });
+  });
+
+  it("records an audit event for the creation", async () => {
+    const { admin, store, executive, department } = await buildWithDefaults();
+
+    await admin.createEmployee("emp-superadmin", {
+      name: "Grace Hopper",
+      email: "grace@hive.local",
+      roleId: executive.id,
+      departmentId: department.id,
+    });
+
+    const event = store.audit.find((candidate) => candidate.action === "create-employee");
+    expect(event).toMatchObject({ actorId: "emp-superadmin", action: "create-employee" });
+    expect(event?.detail).toContain("Grace Hopper created");
+  });
+
+  it("rejects a non-admin actor", async () => {
+    const { admin, executive, department } = await buildWithDefaults();
+
+    await expect(
+      admin.createEmployee("emp-katherine", {
+        name: "Grace Hopper",
+        email: "grace@hive.local",
+        roleId: executive.id,
+        departmentId: department.id,
+      }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+  });
+});
+
+describe("importEmployees", () => {
+  const CSV_HEADER = "name,email,role,department,manager";
+
+  async function buildWithDefaults() {
+    const { admin, store } = buildAdmin();
+    await store.createRole("org-1", { code: "executive", displayName: "Executive" });
+    const department = await admin.createDepartment("emp-superadmin", {
+      name: "Engineering",
+      headId: "emp-superadmin",
+    });
+    return { admin, store, department };
+  }
+
+  it("imports a roster with managers defaulted to department heads", async () => {
+    const { admin, store } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,\nAda Iyer,ada.iyer@hive.local,executive,Engineering,\n`,
+    });
+
+    expect(result.created).toHaveLength(2);
+    expect(result.failed).toEqual([]);
+    const people = await store.listEmployees("org-1");
+    const grace = people.find((person) => person.email === "grace@hive.local");
+    expect(grace).toMatchObject({
+      name: "Grace Hopper",
+      department: "Engineering",
+      managerId: "emp-superadmin",
+    });
+    const ada = people.find((person) => person.email === "ada.iyer@hive.local");
+    expect(ada).toMatchObject({ managerId: "emp-superadmin" });
+    const event = store.audit.find((candidate) => candidate.action === "import-employees");
+    expect(event?.detail).toContain("Imported 2 employees");
+  });
+
+  it("honors a per-row manager override by email", async () => {
+    const { admin } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,katherine@hive.local\n`,
+    });
+
+    expect(result.failed).toEqual([]);
+    const people = await admin.listEmployees("emp-superadmin");
+    expect(people.find((person) => person.email === "grace@hive.local")?.managerId).toBe(
+      "emp-katherine",
+    );
+  });
+
+  it("matches roles by display name case-insensitively", async () => {
+    const { admin } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,EXECUTIVE,Engineering,\n`,
+    });
+
+    expect(result.failed).toEqual([]);
+    expect(result.created).toHaveLength(1);
+  });
+
+  it("writes nothing when any row fails, reporting per-row errors", async () => {
+    const { admin, store } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,\nBad Row,bad@hive.local,no-such-role,Engineering,\n`,
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]).toMatchObject({
+      rowNumber: 3,
+      email: "bad@hive.local",
+      status: "failed",
+    });
+    expect(result.failed[0]?.error).toContain('Unknown role "no-such-role"');
+    const people = await store.listEmployees("org-1");
+    expect(people.some((person) => person.email === "grace@hive.local")).toBe(false);
+  });
+
+  it("flags duplicate emails within the file", async () => {
+    const { admin } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,\nGrace Again,grace@hive.local,executive,Engineering,\n`,
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.failed).toHaveLength(1);
+    expect(result.failed[0]?.error).toContain("Duplicate email within the file.");
+  });
+
+  it("flags emails that already exist in the organization", async () => {
+    const { admin } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,katherine@hive.local,executive,Engineering,\n`,
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.failed[0]?.error).toContain("already exists");
+  });
+
+  it("requires a head when no manager override is given", async () => {
+    const { admin, store } = await buildWithDefaults();
+    await admin.createDepartment("emp-superadmin", {
+      name: "Headless",
+      headId: "emp-superadmin",
+    });
+    // Simulate a pre-migration headless department (rows created before
+    // 0026): the head reference is nulled on the stored row.
+    const stored = store as unknown as { departments: AdminDepartment[] };
+    const headless = stored.departments.find((department) => department.name === "Headless");
+    if (headless) {
+      headless.headId = null;
+      headless.head = null;
+    }
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Headless,\n`,
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.failed[0]?.error).toContain(
+      'The "Headless" department has no head; assign one before importing members.',
+    );
+  });
+
+  it("rejects an unknown manager email", async () => {
+    const { admin } = await buildWithDefaults();
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,nobody@hive.local\n`,
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.failed[0]?.error).toContain('Unknown manager "nobody@hive.local"');
+  });
+
+  it("rejects a deactivated manager email", async () => {
+    const { admin } = await buildWithDefaults();
+    await admin.deactivateEmployee("emp-superadmin", "emp-katherine");
+
+    const result = await admin.importEmployees("emp-superadmin", {
+      csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,katherine@hive.local\n`,
+    });
+
+    expect(result.created).toEqual([]);
+    expect(result.failed[0]?.error).toContain("A deactivated employee cannot be a manager.");
+  });
+
+  it("rejects a structurally broken CSV without touching the store", async () => {
+    const { admin, store } = await buildWithDefaults();
+
+    await expect(
+      admin.importEmployees("emp-superadmin", { csv: "no header here\nAda,ada@hive.local" }),
+    ).rejects.toMatchObject({ code: "validation" });
+    const people = await store.listEmployees("org-1");
+    expect(people).toHaveLength(3);
+  });
+
+  it("rejects an empty roster", async () => {
+    const { admin } = await buildWithDefaults();
+
+    await expect(
+      admin.importEmployees("emp-superadmin", {
+        csv: `${CSV_HEADER}\n`,
+      }),
+    ).rejects.toMatchObject({ code: "validation", message: "The CSV has no rows to import." });
+  });
+
+  it("rejects a non-admin actor", async () => {
+    const { admin } = await buildWithDefaults();
+
+    await expect(
+      admin.importEmployees("emp-katherine", {
+        csv: `${CSV_HEADER}\nGrace Hopper,grace@hive.local,executive,Engineering,\n`,
+      }),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+  });
+});
+
+describe("absence timeout setting", () => {
+  it("reads the default 3-day timeout when no setting exists", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(admin.getAbsenceTimeoutDays("emp-superadmin")).resolves.toBe(3);
+  });
+
+  it("stores and reads back a configured timeout for the actor's organization", async () => {
+    const { admin } = buildAdmin();
+
+    await admin.setAbsenceTimeoutDays("emp-superadmin", 7);
+
+    await expect(admin.getAbsenceTimeoutDays("emp-superadmin")).resolves.toBe(7);
+  });
+
+  it("keeps organizations independent", async () => {
+    const { admin } = buildAdmin();
+    const store = new InMemoryAdminStore([
+      ...employees.map((employee) => ({ ...employee })),
+      {
+        id: "emp-org2-superadmin",
+        organizationId: "org-2",
+        name: "Org Two Superadmin",
+        email: "org2superadmin@hive.local",
+        department: "Operations",
+        role: SUPERADMIN_ROLE,
+        active: true,
+        managerId: null,
+      },
+    ]);
+    const orgTwoAdmin = createAdminCommands({
+      store,
+      expensesStore: new InMemoryExpenseStore({ employees: [] }),
+    });
+
+    await admin.setAbsenceTimeoutDays("emp-superadmin", 7);
+
+    await expect(orgTwoAdmin.getAbsenceTimeoutDays("emp-org2-superadmin")).resolves.toBe(3);
+  });
+
+  it("rejects a non-integer, below-one, or above-ceiling value", async () => {
+    const { admin } = buildAdmin();
+
+    for (const days of [0, -1, 1.5, 91, 100]) {
+      await expect(admin.setAbsenceTimeoutDays("emp-superadmin", days)).rejects.toMatchObject({
+        code: "validation",
+      });
+    }
+    await expect(admin.getAbsenceTimeoutDays("emp-superadmin")).resolves.toBe(3);
+  });
+
+  it("rejects a non-admin actor", async () => {
+    const { admin } = buildAdmin();
+
+    await expect(admin.getAbsenceTimeoutDays("emp-katherine")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    await expect(admin.setAbsenceTimeoutDays("emp-katherine", 5)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("rejects a custom role with admin-console access that is not Superadmin", async () => {
+    const { admin } = buildAdmin();
+
+    const role = await admin.createRole("emp-superadmin", {
+      code: "ops-admin",
+      displayName: "Ops Admin",
+    });
+    await admin.updateRoleCapabilities("emp-superadmin", role.id, {
+      canSubmit: true,
+      canApprove: false,
+      canAccessFinance: false,
+      canHold: false,
+      canViewOrganizationActivity: false,
+      canAccessAdminConsole: true,
+    });
+    await admin.assignRole("emp-superadmin", { employeeId: "emp-katherine", roleId: role.id });
+
+    // Sanity check: the role does grant admin-console access elsewhere.
+    await expect(admin.getAdminActor("emp-katherine")).resolves.not.toBeNull();
+
+    await expect(admin.getAbsenceTimeoutDays("emp-katherine")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    await expect(admin.setAbsenceTimeoutDays("emp-katherine", 5)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("records an audit event when the timeout changes", async () => {
+    const { admin, store } = buildAdmin();
+
+    await admin.setAbsenceTimeoutDays("emp-superadmin", 10);
+
+    const { events } = await store.listAuditEvents("org-1", {}, { page: 1, pageSize: 50 });
+    expect(events[0]).toMatchObject({
+      action: "set-absence-timeout",
+      detail: "Absence auto-skip timeout set to 10 days.",
+    });
   });
 });

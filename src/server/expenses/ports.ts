@@ -1,11 +1,16 @@
 import type { ReceiptContentType } from "../blob/keys";
 import type { AmountGuard } from "../shared/amount-guard";
+import type { RoleCapabilities } from "../shared/authorization";
 
 export type ExpenseRole = {
   id: string;
   code: string;
   displayName: string;
   departmentId?: string | null;
+  // The six privilege toggles (ADR-0015), resolved from the roles table.
+  // Present on records read from the store; absent on legacy data, which
+  // resolves to the submit-only default.
+  capabilities?: RoleCapabilities | null;
 };
 
 export type ExpenseEmployee = {
@@ -58,7 +63,7 @@ export type ExpenseStep = {
   status: ExpenseStepStatus;
   decidedAt?: string;
   // The frozen reason when an amount guard auto-skipped this step at
-  // submission (ADR-0012): null/absent for takeover or absence skips.
+  // submission (ADR-0012): null/absent for delegation or absence skips.
   skipReason?: string;
 };
 
@@ -73,8 +78,10 @@ export type ExpenseHistoryEvent = {
     | "paid"
     | "skipped"
     | "auto-skipped"
-    | "takeover"
-    | "comment";
+    | "comment"
+    | "held"
+    | "resumed"
+    | "delegated";
   actorId?: string;
   actorName?: string;
   detail?: string;
@@ -84,13 +91,13 @@ export type ExpenseHistoryEvent = {
 // The subset of history-event kinds that represent a personal action worth
 // surfacing in an actor's activity feed: decisions and authored comments,
 // not system-generated events (draft/submitted/skipped) or another actor's
-// takeover of a stage this actor never touched.
+// delegation of a stage this actor never touched.
 export const ACTIVITY_EVENT_KINDS = [
   "approved",
   "rejected",
   "verified",
   "paid",
-  "takeover",
+  "delegated",
   "comment",
 ] as const satisfies readonly ExpenseHistoryEvent["kind"][];
 
@@ -111,6 +118,19 @@ export type ActivityEntry = {
   createdAt: string;
 };
 
+// One row of the admin held-claims oversight view (ADR-0016): every held
+// claim in an organization with the names resolved for display, so the
+// Superadmin console never renders raw ids.
+export type HeldClaimRow = {
+  claimId: string;
+  ref: string;
+  title: string;
+  heldBy: string;
+  heldReason: string;
+  heldAt: string;
+  stage: string;
+};
+
 export type ExpenseClaim = {
   id: string;
   ref: string;
@@ -127,6 +147,12 @@ export type ExpenseClaim = {
   currentStage?: string;
   currentActorId?: string;
   currentStageSince?: string;
+  // The hold state (ADR-0016): when heldAt is set the claim is paused at
+  // its current stage - the flow position is kept, the claim is frozen
+  // against terminal actions, and it is exempt from the absence sweep.
+  heldAt?: string;
+  heldBy?: string;
+  heldReason?: string;
   attachment?: ExpenseAttachment;
   comments?: string;
   steps: ExpenseStep[];

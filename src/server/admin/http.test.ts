@@ -4,18 +4,24 @@ import {
   handleAssignDepartmentRequest,
   handleAssignManagerRequest,
   handleAssignRoleRequest,
+  handleBulkImportEmployeesRequest,
   handleCreateDepartmentRequest,
+  handleCreateEmployeeRequest,
   handleCreateFlowRequest,
   handleCreateRoleRequest,
   handleDeactivateDepartmentRequest,
   handleDeactivateEmployeeRequest,
   handleDeactivateRoleRequest,
+  handleGetAbsenceTimeoutRequest,
   handleListAuditRequest,
   handlePublishFlowRequest,
   handleReactivateEmployeeRequest,
+  handleSetAbsenceTimeoutRequest,
+  handleSetDepartmentHeadRequest,
+  handleUpdateRoleCapabilitiesRequest,
   handleUpdateFlowRequest,
 } from "./http";
-import type { AdminDepartment, AdminRole, FlowDraft, FlowInput } from "./ports";
+import type { AdminDepartment, AdminEmployee, AdminRole, FlowDraft, FlowInput } from "./ports";
 
 function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
   return {
@@ -27,13 +33,28 @@ function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
     deactivateEmployee: async () => {},
     reactivateEmployee: async () => {},
     assignManager: async () => {},
+    createEmployee: async (): Promise<AdminEmployee> => ({
+      id: "emp-1",
+      organizationId: "org-1",
+      name: "Ada Lovelace",
+      email: "ada@hive.local",
+      department: "Engineering",
+      departmentId: "dept-1",
+      role: { id: "role-1", code: "executive", displayName: "Executive" },
+      active: true,
+      managerId: "emp-2",
+    }),
+    importEmployees: async () => ({ total: 0, created: [], failed: [] }),
     listDepartments: async () => [],
     createDepartment: async (): Promise<AdminDepartment> => ({
       id: "dept-1",
       organizationId: "org-1",
       name: "Engineering",
       active: true,
+      headId: "emp-2",
+      head: { id: "emp-2", name: "Ada Lovelace" },
     }),
+    setDepartmentHead: async () => {},
     deactivateDepartment: async () => {},
     listRoles: async () => [],
     createRole: async (): Promise<AdminRole> => ({
@@ -69,6 +90,20 @@ function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
     }),
     deleteFlow: async () => {},
     listAuditEvents: async () => ({ events: [], total: 0 }),
+    updateRoleCapabilities: async () => ({
+      role: {
+        id: "role-1",
+        organizationId: "org-1",
+        code: "team-lead",
+        displayName: "Team Lead",
+        departmentId: null,
+        active: true,
+        locked: false,
+      },
+      pendingClaims: [],
+    }),
+    getAbsenceTimeoutDays: async () => 3,
+    setAbsenceTimeoutDays: async () => {},
     ...overrides,
   };
 }
@@ -396,7 +431,7 @@ describe("handleCreateDepartmentRequest", () => {
     const response = await handleCreateDepartmentRequest(
       new Request("http://localhost/api/admin/departments", {
         method: "POST",
-        body: JSON.stringify({ name: "Engineering" }),
+        body: JSON.stringify({ name: "Engineering", headId: "emp-2" }),
       }),
       buildCommands(),
       "emp-superadmin",
@@ -405,7 +440,7 @@ describe("handleCreateDepartmentRequest", () => {
     expect(response.status).toBe(201);
   });
 
-  it("rejects a body without a string name", async () => {
+  it("rejects a body without a string name or headId", async () => {
     const response = await handleCreateDepartmentRequest(
       new Request("http://localhost/api/admin/departments", {
         method: "POST",
@@ -459,6 +494,168 @@ describe("handleCreateRoleRequest", () => {
     );
 
     expect(response.status).toBe(422);
+  });
+
+  it("passes a capability set through to role creation", async () => {
+    const createRole = vi.fn().mockResolvedValue({
+      id: "role-1",
+      organizationId: "org-1",
+      code: "reviewer",
+      displayName: "Reviewer",
+      departmentId: null,
+      active: true,
+      locked: false,
+      capabilities: {
+        canSubmit: true,
+        canApprove: true,
+        canAccessFinance: false,
+        canHold: false,
+        canViewOrganizationActivity: false,
+        canAccessAdminConsole: false,
+      },
+    });
+    const response = await handleCreateRoleRequest(
+      new Request("http://localhost/api/admin/org-roles", {
+        method: "POST",
+        body: JSON.stringify({
+          code: "reviewer",
+          displayName: "Reviewer",
+          capabilities: {
+            canSubmit: true,
+            canApprove: true,
+            canAccessFinance: false,
+            canHold: false,
+            canViewOrganizationActivity: false,
+            canAccessAdminConsole: false,
+          },
+        }),
+      }),
+      buildCommands({ createRole }),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(201);
+    expect(createRole).toHaveBeenCalledWith("emp-superadmin", {
+      code: "reviewer",
+      displayName: "Reviewer",
+      capabilities: {
+        canSubmit: true,
+        canApprove: true,
+        canAccessFinance: false,
+        canHold: false,
+        canViewOrganizationActivity: false,
+        canAccessAdminConsole: false,
+      },
+    });
+  });
+
+  it("rejects a malformed capability set", async () => {
+    const response = await handleCreateRoleRequest(
+      new Request("http://localhost/api/admin/org-roles", {
+        method: "POST",
+        body: JSON.stringify({
+          code: "reviewer",
+          displayName: "Reviewer",
+          capabilities: { canSubmit: true },
+        }),
+      }),
+      buildCommands(),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(422);
+  });
+});
+
+describe("handleUpdateRoleCapabilitiesRequest", () => {
+  const CAPABILITIES_WITHOUT_APPROVE = {
+    canSubmit: true,
+    canApprove: false,
+    canAccessFinance: false,
+    canHold: false,
+    canViewOrganizationActivity: false,
+    canAccessAdminConsole: false,
+  };
+
+  it("returns 200 with the updated role and the claims that will skip", async () => {
+    const updateRoleCapabilities = vi.fn().mockResolvedValue({
+      role: {
+        id: "role-1",
+        organizationId: "org-1",
+        code: "reviewer",
+        displayName: "Reviewer",
+        departmentId: null,
+        active: true,
+        locked: false,
+        capabilities: CAPABILITIES_WITHOUT_APPROVE,
+      },
+      pendingClaims: [{ ref: "EXP-2026-0001", title: "Reviewer claim", requesterId: "emp-1", requesterName: "Ada", stage: "Reviewer" }],
+    });
+    const response = await handleUpdateRoleCapabilitiesRequest(
+      new Request("http://localhost/api/admin/org-roles/capabilities", {
+        method: "POST",
+        body: JSON.stringify({
+          roleId: "role-1",
+          capabilities: CAPABILITIES_WITHOUT_APPROVE,
+          confirmed: true,
+        }),
+      }),
+      buildCommands({ updateRoleCapabilities }),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(json(response)).resolves.toMatchObject({
+      ok: true,
+      pendingClaims: [{ title: "Reviewer claim" }],
+    });
+    expect(updateRoleCapabilities).toHaveBeenCalledWith("emp-superadmin", "role-1", CAPABILITIES_WITHOUT_APPROVE, {
+      confirmed: true,
+    });
+  });
+
+  it("serializes the unconfirmed-removal conflict with its impact", async () => {
+    const impact = {
+      removedActionPrivileges: ["canApprove"],
+      pendingClaims: [{ ref: "EXP-2026-0001", title: "Reviewer claim", requesterId: "emp-1", requesterName: "Ada", stage: "Reviewer" }],
+    };
+    const updateRoleCapabilities = vi.fn().mockRejectedValue(
+      new AdminError("conflict", "Removing approve affects 1 pending claim.", impact),
+    );
+    const response = await handleUpdateRoleCapabilitiesRequest(
+      new Request("http://localhost/api/admin/org-roles/capabilities", {
+        method: "POST",
+        body: JSON.stringify({ roleId: "role-1", capabilities: CAPABILITIES_WITHOUT_APPROVE }),
+      }),
+      buildCommands({ updateRoleCapabilities }),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(409);
+    await expect(json(response)).resolves.toEqual({
+      error: "conflict",
+      impact,
+    });
+  });
+
+  it("rejects a malformed body", async () => {
+    for (const body of [
+      { capabilities: CAPABILITIES_WITHOUT_APPROVE },
+      { roleId: "role-1" },
+      { roleId: "role-1", capabilities: { canSubmit: true } },
+      { roleId: "role-1", capabilities: CAPABILITIES_WITHOUT_APPROVE, confirmed: "yes" },
+    ]) {
+      const response = await handleUpdateRoleCapabilitiesRequest(
+        new Request("http://localhost/api/admin/org-roles/capabilities", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        buildCommands(),
+        "emp-superadmin",
+      );
+
+      expect(response.status).toBe(422);
+    }
   });
 });
 
@@ -856,5 +1053,351 @@ describe("handleListAuditRequest", () => {
     );
 
     expect(response.status).toBe(500);
+  });
+});
+
+describe("handleCreateEmployeeRequest", () => {
+  it("returns 201 with the created employee", async () => {
+    const response = await handleCreateEmployeeRequest(
+      new Request("http://localhost/api/admin/employees", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Grace Hopper",
+          email: "grace@hive.local",
+          roleId: "role-1",
+          departmentId: "dept-1",
+          managerId: "emp-2",
+        }),
+      }),
+      buildCommands(),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { ok: boolean; employee: { name: string } };
+    expect(body.ok).toBe(true);
+    expect(body.employee.name).toBe("Ada Lovelace");
+  });
+
+  it("accepts an omitted managerId as the department-head default", async () => {
+    const createEmployee = vi.fn().mockResolvedValue({
+      id: "emp-1",
+      organizationId: "org-1",
+      name: "Ada Lovelace",
+      email: "ada@hive.local",
+      department: "Engineering",
+      departmentId: "dept-1",
+      role: null,
+      active: true,
+      managerId: null,
+    });
+    const commands = buildCommands({ createEmployee });
+    const response = await handleCreateEmployeeRequest(
+      new Request("http://localhost/api/admin/employees", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Ada Lovelace",
+          email: "ada@hive.local",
+          roleId: "role-1",
+          departmentId: "dept-1",
+        }),
+      }),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(201);
+    expect(createEmployee).toHaveBeenCalledWith(
+      "emp-superadmin",
+      expect.objectContaining({ managerId: null }),
+    );
+  });
+
+  it("rejects a body missing name, email, roleId or departmentId", async () => {
+    const cases = [
+      { email: "a@hive.local", roleId: "r", departmentId: "d" },
+      { name: "Ada", roleId: "r", departmentId: "d" },
+      { name: "Ada", email: "a@hive.local", departmentId: "d" },
+      { name: "Ada", email: "a@hive.local", roleId: "r" },
+      {},
+    ];
+    for (const body of cases) {
+      const response = await handleCreateEmployeeRequest(
+        new Request("http://localhost/api/admin/employees", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(response.status, JSON.stringify(body)).toBe(422);
+    }
+  });
+
+  it("rejects a non-string managerId", async () => {
+    const response = await handleCreateEmployeeRequest(
+      new Request("http://localhost/api/admin/employees", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Ada",
+          email: "a@hive.local",
+          roleId: "role-1",
+          departmentId: "dept-1",
+          managerId: 42,
+        }),
+      }),
+      buildCommands(),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(422);
+  });
+
+  it("maps an unauthorized actor to 403", async () => {
+    const commands = buildCommands({
+      createEmployee: async () =>
+        Promise.reject(new AdminError("unauthorized", "Only Superadmin can use the admin workspace.")),
+    });
+    const response = await handleCreateEmployeeRequest(
+      new Request("http://localhost/api/admin/employees", {
+        method: "POST",
+        body: JSON.stringify({
+          name: "Ada",
+          email: "a@hive.local",
+          roleId: "role-1",
+          departmentId: "dept-1",
+        }),
+      }),
+      commands,
+      "emp-katherine",
+    );
+
+    expect(response.status).toBe(403);
+  });
+});
+
+describe("handleSetDepartmentHeadRequest", () => {
+  it("returns 200 when the head changes", async () => {
+    const response = await handleSetDepartmentHeadRequest(
+      new Request("http://localhost/api/admin/departments/head", {
+        method: "POST",
+        body: JSON.stringify({ departmentId: "dept-1", headId: "emp-2" }),
+      }),
+      buildCommands(),
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(json(response)).resolves.toEqual({ ok: true });
+  });
+
+  it("rejects a body without string departmentId or headId", async () => {
+    const cases = [{}, { departmentId: "dept-1" }, { headId: "emp-2" }, { departmentId: 1, headId: "emp-2" }];
+    for (const body of cases) {
+      const response = await handleSetDepartmentHeadRequest(
+        new Request("http://localhost/api/admin/departments/head", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(response.status, JSON.stringify(body)).toBe(422);
+    }
+  });
+});
+
+describe("handleBulkImportEmployeesRequest", () => {
+  const CSV = "name,email,role,department,manager\nGrace Hopper,grace@hive.local,executive,Engineering,\n";
+
+  it("returns 201 with per-row results when the import succeeds", async () => {
+    const importEmployees = vi.fn().mockResolvedValue({
+      total: 1,
+      created: [
+        {
+          rowNumber: 2,
+          email: "grace@hive.local",
+          status: "created",
+          employee: {
+            id: "emp-1",
+            organizationId: "org-1",
+            name: "Grace Hopper",
+            email: "grace@hive.local",
+            department: "Engineering",
+            departmentId: "dept-1",
+            role: null,
+            active: true,
+            managerId: "emp-2",
+          },
+        },
+      ],
+      failed: [],
+    });
+    const commands = buildCommands({ importEmployees });
+    const response = await handleBulkImportEmployeesRequest(
+      new Request("http://localhost/api/admin/employees/import", {
+        method: "POST",
+        body: JSON.stringify({ csv: CSV }),
+      }),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(201);
+    const body = (await response.json()) as { ok: boolean; result: { total: number } };
+    expect(body.ok).toBe(true);
+    expect(body.result.total).toBe(1);
+    expect(importEmployees).toHaveBeenCalledWith("emp-superadmin", { csv: CSV });
+  });
+
+  it("returns 422 with the per-row failures when any row fails", async () => {
+    const commands = buildCommands({
+      importEmployees: async () => ({
+        total: 2,
+        created: [],
+        failed: [
+          {
+            rowNumber: 3,
+            email: "bad@hive.local",
+            status: "failed",
+            error: 'Unknown role "no-such-role"',
+          },
+        ],
+      }),
+    });
+    const response = await handleBulkImportEmployeesRequest(
+      new Request("http://localhost/api/admin/employees/import", {
+        method: "POST",
+        body: JSON.stringify({ csv: CSV }),
+      }),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(422);
+    const body = (await response.json()) as { error: string; result: { failed: Array<{ error: string }> } };
+    expect(body.error).toBe("validation");
+    expect(body.result.failed[0]?.error).toContain('Unknown role "no-such-role"');
+  });
+
+  it("rejects a body without a csv string", async () => {
+    const cases = [{}, { csv: 42 }, { csv: null }];
+    for (const body of cases) {
+      const response = await handleBulkImportEmployeesRequest(
+        new Request("http://localhost/api/admin/employees/import", {
+          method: "POST",
+          body: JSON.stringify(body),
+        }),
+        buildCommands(),
+        "emp-superadmin",
+      );
+      expect(response.status, JSON.stringify(body)).toBe(422);
+    }
+  });
+
+  it("maps an unauthorized actor to 403", async () => {
+    const commands = buildCommands({
+      importEmployees: async () =>
+        Promise.reject(new AdminError("unauthorized", "Only Superadmin can use the admin workspace.")),
+    });
+    const response = await handleBulkImportEmployeesRequest(
+      new Request("http://localhost/api/admin/employees/import", {
+        method: "POST",
+        body: JSON.stringify({ csv: CSV }),
+      }),
+      commands,
+      "emp-katherine",
+    );
+
+    expect(response.status).toBe(403);
+  });
+});
+
+describe("handleGetAbsenceTimeoutRequest", () => {
+  it("returns the configured timeout", async () => {
+    const commands = buildCommands({ getAbsenceTimeoutDays: async () => 7 });
+
+    const response = await handleGetAbsenceTimeoutRequest(
+      new Request("http://localhost/api/admin/org-settings"),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(json(response)).resolves.toEqual({ absenceTimeoutDays: 7 });
+  });
+
+  it("maps an unauthorized actor to 403", async () => {
+    const commands = buildCommands({
+      getAbsenceTimeoutDays: async () => Promise.reject(new AdminError("unauthorized", "no")),
+    });
+
+    const response = await handleGetAbsenceTimeoutRequest(
+      new Request("http://localhost/api/admin/org-settings"),
+      commands,
+      "emp-katherine",
+    );
+
+    expect(response.status).toBe(403);
+  });
+});
+
+describe("handleSetAbsenceTimeoutRequest", () => {
+  it("saves a valid timeout and returns it", async () => {
+    const commands = buildCommands();
+    const setAbsenceTimeoutDays = vi.spyOn(commands, "setAbsenceTimeoutDays").mockResolvedValue();
+
+    const response = await handleSetAbsenceTimeoutRequest(
+      new Request("http://localhost/api/admin/org-settings", {
+        method: "POST",
+        body: JSON.stringify({ absenceTimeoutDays: 10 }),
+      }),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(200);
+    await expect(json(response)).resolves.toEqual({ ok: true, absenceTimeoutDays: 10 });
+    expect(setAbsenceTimeoutDays).toHaveBeenCalledWith("emp-superadmin", 10);
+  });
+
+  it("rejects a body without an integer absenceTimeoutDays", async () => {
+    const commands = buildCommands();
+    const setAbsenceTimeoutDays = vi.spyOn(commands, "setAbsenceTimeoutDays").mockResolvedValue();
+
+    for (const payload of [
+      {},
+      { absenceTimeoutDays: "7" },
+      { absenceTimeoutDays: 1.5 },
+      { absenceTimeoutDays: null },
+    ]) {
+      const response = await handleSetAbsenceTimeoutRequest(
+        new Request("http://localhost/api/admin/org-settings", {
+          method: "POST",
+          body: JSON.stringify(payload),
+        }),
+        commands,
+        "emp-superadmin",
+      );
+      expect(response.status).toBe(422);
+    }
+    expect(setAbsenceTimeoutDays).not.toHaveBeenCalled();
+  });
+
+  it("maps a validation rejection from the command layer to 422", async () => {
+    const commands = buildCommands({
+      setAbsenceTimeoutDays: async () => Promise.reject(new AdminError("validation", "no")),
+    });
+
+    const response = await handleSetAbsenceTimeoutRequest(
+      new Request("http://localhost/api/admin/org-settings", {
+        method: "POST",
+        body: JSON.stringify({ absenceTimeoutDays: 91 }),
+      }),
+      commands,
+      "emp-superadmin",
+    );
+
+    expect(response.status).toBe(422);
   });
 });

@@ -4,9 +4,8 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, ArrowUpRight, Download, Gavel, Paperclip, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Paperclip, PauseCircle, PlayCircle, Search, UserRoundCheck, X } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
-import { AnimatedBadge } from "@/components/motion/animated-badge";
 import { EASE_OUT } from "@/lib/ease";
 import { Button } from "@/components/ui/button";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
@@ -21,12 +20,14 @@ import {
 import { cn } from "@/lib/utils";
 import { downloadClaimSummary } from "@/lib/download-claim-summary";
 import { STATUS_META, type Expense } from "./mock-data";
-import { canTakeOver, isCurrentActor, isTerminal, nextActionFor } from "./next-action";
+import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
-import { formatMoney, initials, statusBadgeClass, submittedLabel } from "./journey-meta";
+import { formatMoney, initials, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import { JourneyFlow } from "./journey-flow";
+import { StatusBadge } from "./status-badge";
 
 
 const PRIMARY_ACTION: Partial<Record<Expense["status"], string>> = {
@@ -56,6 +57,7 @@ export function ExpenseDrawer({
   currentUserId,
   currentUserRoleId,
   currentUserRoleCode,
+  currentUserCanHold,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -65,15 +67,26 @@ export function ExpenseDrawer({
   /** Role id of the viewer; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
   currentUserRoleCode?: string;
+  /** Whether the viewer's role carries the can_hold capability (ADR-0015/0016). */
+  currentUserCanHold?: boolean;
 }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
-  const [takeoverOpen, setTakeoverOpen] = useState(false);
-  const [takeoverReason, setTakeoverReason] = useState("");
-  const [takingOver, setTakingOver] = useState(false);
-  const [takeoverError, setTakeoverError] = useState<string | null>(null);
+  const [holdOpen, setHoldOpen] = useState(false);
+  const [holdReason, setHoldReason] = useState("");
+  const [holding, setHolding] = useState(false);
+  const [holdError, setHoldError] = useState<string | null>(null);
+  const [resuming, setResuming] = useState(false);
+  const [delegateOpen, setDelegateOpen] = useState(false);
+  const [delegateReason, setDelegateReason] = useState("");
+  const [delegateSearch, setDelegateSearch] = useState("");
+  const [delegateeId, setDelegateeId] = useState<string | null>(null);
+  const [delegating, setDelegating] = useState(false);
+  const [delegateError, setDelegateError] = useState<string | null>(null);
+  const [delegateCandidates, setDelegateCandidates] = useState<ExpenseEmployee[]>([]);
+  const [delegateLoading, setDelegateLoading] = useState(false);
   const [deleteOpen, setDeleteOpen] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState<string | null>(null);
@@ -177,6 +190,18 @@ export function ExpenseDrawer({
     !!activeExpense &&
     !!isCurrentActor(activeExpense, currentUser, currentUserId) &&
     (activeExpense.primaryAction === "approve" || activeExpense.primaryAction === "verify");
+
+  // Holding (ADR-0016) is per-role: the claim's current stage actor can
+  // pause it when their role carries the can_hold capability, and only
+  // while the claim is in flight and not already held. Resuming is purely
+  // positional - the current stage actor unpauses, no capability needed.
+  const isMine = !!activeExpense && !!isCurrentActor(activeExpense, currentUser, currentUserId);
+  const inFlight =
+    !!activeExpense &&
+    activeExpense.status !== "draft" &&
+    !isTerminal(activeExpense.status);
+  const canHold = !!activeExpense && inFlight && !activeExpense.held && isMine && !!currentUserCanHold;
+  const canResume = !!activeExpense?.held && isMine;
 
   // One fetch+error-extraction shape for every drawer mutation: a POST (or
   // DELETE) with a JSON body fallback, surfacing the server's message or a
@@ -364,29 +389,29 @@ export function ExpenseDrawer({
     }
   }
 
-  function openTakeover() {
-    setTakeoverReason("");
-    setTakeoverError(null);
-    setTakeoverOpen(true);
+  function openHold() {
+    setHoldReason("");
+    setHoldError(null);
+    setHoldOpen(true);
   }
 
-  async function performTakeover() {
+  async function performHold() {
     if (!activeExpense) return;
-    const reasonCode = takeoverReason.trim();
-    if (!reasonCode) {
-      setTakeoverError("Enter a justification or reason code for taking over this claim.");
+    const reason = holdReason.trim();
+    if (!reason) {
+      setHoldError("Enter a reason for holding this claim.");
       return;
     }
-    setTakingOver(true);
-    setTakeoverError(null);
+    setHolding(true);
+    setHoldError(null);
     try {
       const result = await mutate(
-        `/api/expenses/${activeExpense.id}/take-over`,
-        "Could not take over this claim.",
+        `/api/expenses/${activeExpense.id}/hold`,
+        "Could not hold this claim.",
         {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reasonCode }),
+          body: JSON.stringify({ reason }),
         }
       );
       if (result.ok) {
@@ -394,14 +419,120 @@ export function ExpenseDrawer({
         if (updated) {
           setOverrideExpense(updated);
         }
-        setTakeoverOpen(false);
+        setHoldOpen(false);
         queueSyncedRef.current = true;
         router.refresh();
       } else {
-        setTakeoverError(result.error);
+        setHoldError(result.error);
       }
     } finally {
-      setTakingOver(false);
+      setHolding(false);
+    }
+  }
+
+  async function performResume() {
+    if (!activeExpense || resuming) return;
+    setResuming(true);
+    setActionError(null);
+    try {
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/resume`,
+        "Could not resume this claim."
+      );
+      if (result.ok) {
+        const updated = resolveUpdatedExpense(result.body);
+        if (updated) {
+          setOverrideExpense(updated);
+        }
+        queueSyncedRef.current = true;
+        router.refresh();
+      } else {
+        setActionError(result.error);
+      }
+    } finally {
+      setResuming(false);
+    }
+  }
+
+  // Delegation (ADR-0017) is Superadmin-only: the administrator re-routes an
+  // in-flight claim to another specific person without acting on it. The
+  // person picker loads the organization's employees from the claim endpoint
+  // on open, offers only active employees, and excludes the claim's current
+  // actor (re-pointing the task to the person already holding it is a
+  // no-op). A held claim stays held - the note tells the delegatee to resume
+  // it (ADR-0016).
+  function openDelegate() {
+    setDelegateReason("");
+    setDelegateSearch("");
+    setDelegateeId(null);
+    setDelegateError(null);
+    setDelegateCandidates([]);
+    setDelegateOpen(true);
+    if (!activeExpense) return;
+    setDelegateLoading(true);
+    void fetch(`/api/expenses/${activeExpense.id}`)
+      .then(async (response) => {
+        if (!response.ok) {
+          setDelegateError("Could not load the employee list. Please try again.");
+          return;
+        }
+        const body = (await response.json()) as { employees?: ExpenseEmployee[] };
+        setDelegateCandidates(body.employees ?? []);
+      })
+      .catch(() => {
+        setDelegateError("Could not load the employee list. Please try again.");
+      })
+      .finally(() => {
+        setDelegateLoading(false);
+      });
+  }
+
+  const delegateCandidatesFiltered = delegateCandidates.filter(
+    (candidate) =>
+      candidate.active &&
+      candidate.id !== activeExpense?.nextActorId &&
+      candidate.id !== currentUserId &&
+      (!delegateSearch.trim() ||
+        candidate.name.toLowerCase().includes(delegateSearch.trim().toLowerCase()) ||
+        (candidate.role?.displayName.toLowerCase() ?? "").includes(delegateSearch.trim().toLowerCase())),
+  );
+
+  async function performDelegate() {
+    if (!activeExpense) return;
+    if (!delegateeId) {
+      setDelegateError("Choose a person to delegate to.");
+      return;
+    }
+    const reason = delegateReason.trim();
+    if (!reason) {
+      setDelegateError("Enter a reason for delegating this claim.");
+      return;
+    }
+    setDelegating(true);
+    setDelegateError(null);
+    try {
+      const result = await mutate(
+        `/api/expenses/${activeExpense.id}/delegate`,
+        "Could not delegate this claim.",
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ delegateeId, reason }),
+        }
+      );
+      if (result.ok) {
+        const updated = resolveUpdatedExpense(result.body);
+        if (updated) {
+          setOverrideExpense(updated);
+        }
+        setDelegateOpen(false);
+        queueSyncedRef.current = true;
+        router.refresh();
+      } else {
+        setDelegateError(result.error);
+      }
+    } finally {
+      setDelegating(false);
     }
   }
 
@@ -496,7 +627,20 @@ export function ExpenseDrawer({
 
       <section className="mt-6" aria-label="What happens next">
         <h3 className="text-sm font-semibold text-foreground">What happens next</h3>
-        {terminal ? (
+        {activeExpense.held ? (
+          <div className="mt-2 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4 text-sm">
+            <p className="font-medium text-foreground">This claim is on hold.</p>
+            <p className="mt-1 text-muted-foreground">
+              The current stage actor must resume it before any action is possible.
+            </p>
+            {activeExpense.held.reason ? (
+              <p className="mt-2 flex gap-2 text-violet-700 dark:text-violet-400">
+                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+                {activeExpense.held.reason}
+              </p>
+            ) : null}
+          </div>
+        ) : terminal ? (
           <div className="mt-2 rounded-xl border border-border bg-card p-4 text-sm">
             <p className="text-muted-foreground">
               {activeExpense.status === "rejected"
@@ -600,9 +744,7 @@ export function ExpenseDrawer({
                 {activeExpense.title}
               </h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <AnimatedBadge status={statusMeta.tone} size="sm" className={statusBadgeClass(activeExpense.status)}>
-                  {statusMeta.label}
-                </AnimatedBadge>
+                <StatusBadge held={activeExpense.held} status={activeExpense.status} />
                 <span className="text-xs text-muted-foreground">{activeExpense.category}</span>
               </div>
             </div>
@@ -682,28 +824,55 @@ export function ExpenseDrawer({
               ) : (
                 <>
                   {!showPostVerifyPrompt ? (
-                    <Button
-                      className="flex-1"
-                      disabled={!activeExpense.primaryAction || !next.mine || acting}
-                      loading={acting}
-                      onClick={performAction}
-                    >
-                      {actionLabel}
-                    </Button>
+                    activeExpense.held ? (
+                      canResume ? (
+                        <Button
+                          className="flex-1 gap-1.5"
+                          loading={resuming}
+                          onClick={performResume}
+                        >
+                          <PlayCircle className="h-3.5 w-3.5" />
+                          Resume claim
+                        </Button>
+                      ) : (
+                        <Button className="flex-1" disabled>
+                          On hold
+                        </Button>
+                      )
+                    ) : (
+                      <Button
+                        className="flex-1"
+                        disabled={!activeExpense.primaryAction || !next.mine || acting}
+                        loading={acting}
+                        onClick={performAction}
+                      >
+                        {actionLabel}
+                      </Button>
+                    )
                   ) : null}
-                  {canReject ? (
+                  {!activeExpense.held && canReject ? (
                     <Button variant="destructive" onClick={openReject}>
                       Reject
                     </Button>
                   ) : null}
-                  {activeExpense && canTakeOver(activeExpense, currentUserId, currentUserRoleCode, currentUserRoleId) ? (
+                  {canHold ? (
+                    <Button
+                      variant="outline"
+                      className="gap-1.5 border-violet-500/50 text-violet-700 hover:bg-violet-500/10 dark:text-violet-400"
+                      onClick={openHold}
+                    >
+                      <PauseCircle className="h-3.5 w-3.5" />
+                      Hold
+                    </Button>
+                  ) : null}
+                  {activeExpense && currentUserRoleCode === SUPERADMIN_ROLE_CODE && inFlight ? (
                     <Button
                       variant="outline"
                       className="gap-1.5 border-amber-500/50 text-amber-600 hover:bg-amber-500/10 dark:text-amber-400"
-                      onClick={openTakeover}
+                      onClick={openDelegate}
                     >
-                      <Gavel className="h-3.5 w-3.5" />
-                      Take over
+                      <UserRoundCheck className="h-3.5 w-3.5" />
+                      Delegate
                     </Button>
                   ) : null}
                   <Button variant="outline" loading={downloading} onClick={downloadSummary}>
@@ -721,34 +890,130 @@ export function ExpenseDrawer({
         </>
       ) : null}
 
-      <Dialog open={takeoverOpen} onOpenChange={setTakeoverOpen}>
+      <Dialog open={delegateOpen} onOpenChange={setDelegateOpen}>
         <DialogContent>
           <DialogHeader>
-            <DialogTitle>Take over this claim</DialogTitle>
+            <DialogTitle>Delegate this claim</DialogTitle>
             <DialogDescription>
-              As a higher-stage approver or Finance Head, taking over this claim waives all pending earlier stages and advances it directly to your stage or terminal Finance.
+              Re-route this claim to a specific person. The claim keeps its place in the flow; only the responsible person changes. A reason is required.
+            </DialogDescription>
+          </DialogHeader>
+          {activeExpense?.held ? (
+            <p className="flex gap-2 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 text-xs text-violet-700 dark:text-violet-400">
+              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
+              This claim is held. Delegating keeps it held - the new actor resumes it.
+            </p>
+          ) : null}
+          <div className="flex flex-col gap-2">
+            <label htmlFor="delegate-search" className="text-xs font-medium text-muted-foreground">
+              Person
+            </label>
+            <div className="relative">
+              <Search className="pointer-events-none absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" aria-hidden />
+              <input
+                id="delegate-search"
+                type="search"
+                value={delegateSearch}
+                onChange={(e) => setDelegateSearch(e.target.value)}
+                className="w-full rounded-xl border border-border bg-background py-2.5 pl-9 pr-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                placeholder="Search active employees"
+              />
+            </div>
+            {delegateLoading ? (
+              <p className="py-3 text-center text-xs text-muted-foreground">Loading employees...</p>
+            ) : (
+              <ul className="max-h-48 overflow-y-auto rounded-xl border border-border">
+                {delegateCandidatesFiltered.length === 0 ? (
+                  <li className="px-3 py-3 text-xs text-muted-foreground">
+                    No matching employees.
+                  </li>
+                ) : (
+                  delegateCandidatesFiltered.map((candidate) => {
+                    const selected = delegateeId === candidate.id;
+                    return (
+                      <li key={candidate.id}>
+                        <button
+                          type="button"
+                          aria-pressed={selected}
+                          onClick={() => setDelegateeId(candidate.id)}
+                          className={cn(
+                            "flex w-full items-center gap-2 px-3 py-2 text-left text-sm transition-colors hover:bg-muted/60",
+                            selected ? "bg-primary/10 text-foreground" : "text-muted-foreground",
+                          )}
+                        >
+                          <Avatar className="h-5 w-5">
+                            <AvatarFallback className="bg-primary/10 text-[9px] text-primary">
+                              {initials(candidate.name)}
+                            </AvatarFallback>
+                          </Avatar>
+                          <span className="min-w-0 flex-1">
+                            <span className="block truncate font-medium text-foreground">
+                              {candidate.name}
+                            </span>
+                            <span className="block truncate text-xs">
+                              {candidate.role?.displayName ?? "No role"}
+                            </span>
+                          </span>
+                        </button>
+                      </li>
+                    );
+                  })
+                )}
+              </ul>
+            )}
+            <label htmlFor="delegate-reason" className="mt-1 text-xs font-medium text-muted-foreground">
+              Reason
+            </label>
+            <textarea
+              id="delegate-reason"
+              value={delegateReason}
+              onChange={(e) => setDelegateReason(e.target.value)}
+              rows={3}
+              className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+              placeholder="Why is this claim being re-routed? (e.g. Manager away on leave)"
+            />
+            {delegateError ? <p className="text-xs text-destructive">{delegateError}</p> : null}
+          </div>
+          <div className="flex justify-end gap-3">
+            <Button variant="outline" onClick={() => setDelegateOpen(false)} disabled={delegating}>
+              Cancel
+            </Button>
+            <Button variant="default" onClick={performDelegate} loading={delegating}>
+              Confirm delegation
+            </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      <Dialog open={holdOpen} onOpenChange={setHoldOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Hold this claim</DialogTitle>
+            <DialogDescription>
+              The claim keeps its place in the approval flow but no stage can act on it
+              until the current stage actor resumes it. A reason is required.
             </DialogDescription>
           </DialogHeader>
           <div className="flex flex-col gap-2">
-            <label htmlFor="takeover-reason" className="text-xs font-medium text-muted-foreground">
-              Reason code / justification
+            <label htmlFor="hold-reason" className="text-xs font-medium text-muted-foreground">
+              Reason
             </label>
             <textarea
-              id="takeover-reason"
-              value={takeoverReason}
-              onChange={(e) => setTakeoverReason(e.target.value)}
+              id="hold-reason"
+              value={holdReason}
+              onChange={(e) => setHoldReason(e.target.value)}
               rows={3}
               className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              placeholder="Explain why you are taking over this claim (e.g. Manager away on leave / Urgent override)"
+              placeholder="Why is this claim on hold? (e.g. waiting for the missing invoice)"
             />
-            {takeoverError ? <p className="text-xs text-destructive">{takeoverError}</p> : null}
+            {holdError ? <p className="text-xs text-destructive">{holdError}</p> : null}
           </div>
           <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setTakeoverOpen(false)} disabled={takingOver}>
+            <Button variant="outline" onClick={() => setHoldOpen(false)} disabled={holding}>
               Cancel
             </Button>
-            <Button variant="default" onClick={performTakeover} loading={takingOver}>
-              Confirm takeover
+            <Button variant="default" onClick={performHold} loading={holding}>
+              Hold claim
             </Button>
           </div>
         </DialogContent>

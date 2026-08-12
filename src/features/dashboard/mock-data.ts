@@ -17,12 +17,14 @@ export type HistoryKind =
   | "rejected"
   | "skipped"
   | "auto-skipped"
-  | "takeover"
   | "reviewing"
   | "verified"
   | "paid"
   | "comment"
-  | "note";
+  | "note"
+  | "held"
+  | "resumed"
+  | "delegated";
 
 export interface HistoryEvent {
   id: string;
@@ -73,6 +75,12 @@ export interface Expense {
   history: HistoryEvent[];
   steps?: ExpenseStepView[];
   primaryAction?: "approve" | "verify" | "pay";
+  /** Hold state (ADR-0016): when set, the claim is paused at its current stage - the status is kept but no terminal action is offered. */
+  held?: {
+    by?: string;
+    at?: string;
+    reason?: string;
+  };
 }
 
 export const ME = "Muhammad Shameel";
@@ -91,7 +99,10 @@ export interface ActivityItem {
   actorName?: string;
   kind: HistoryKind;
   detail?: string;
+  /** Display date, e.g. "Aug 4, 10:42". */
   date: string;
+  /** Raw ISO timestamp of the action; lets the dashboard's period switch bucket the feed (ADR-0020). */
+  createdAt?: string;
 }
 
 export const STATUS_META: Record<

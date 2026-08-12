@@ -256,7 +256,7 @@ export async function handleRejectExpenseRequest(
   }
 }
 
-export async function handleTakeOverExpenseRequest(
+export async function handleDelegateExpenseRequest(
   request: Request,
   commands: ExpenseCommands,
   actorId: string,
@@ -264,11 +264,22 @@ export async function handleTakeOverExpenseRequest(
 ): Promise<Response> {
   try {
     const body = await readBody(request);
-    if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).reasonCode !== "string") {
+    if (
+      !body ||
+      typeof body !== "object" ||
+      typeof (body as Record<string, unknown>).delegateeId !== "string" ||
+      typeof (body as Record<string, unknown>).reason !== "string"
+    ) {
       return validationResponse();
     }
-    const reasonCode = (body as Record<string, unknown>).reasonCode as string;
-    return Response.json({ claim: await commands.takeOverClaim(actorId, claimId, reasonCode) });
+    const { delegateeId, reason } = body as Record<string, string>;
+    // The employee list rides along so the drawer can render the stamped
+    // claim with real actor names, not "System" placeholders.
+    const [claim, employees] = await Promise.all([
+      commands.delegateClaim(actorId, claimId, delegateeId, reason),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
   } catch (error) {
     return expenseErrorResponse(error);
   }
@@ -302,6 +313,47 @@ export async function handlePayExpenseRequest(
   try {
     const [claim, employees] = await Promise.all([
       commands.markPaid(actorId, claimId),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleHoldExpenseRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).reason !== "string") {
+      return validationResponse();
+    }
+    const reason = (body as Record<string, unknown>).reason as string;
+    // The employee list rides along so the drawer can render the stamped
+    // claim with real actor names, not "System" placeholders.
+    const [claim, employees] = await Promise.all([
+      commands.holdClaim(actorId, claimId, reason),
+      commands.listEmployees(actorId),
+    ]);
+    return Response.json({ claim, employees });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleResumeExpenseRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+  claimId: string,
+): Promise<Response> {
+  try {
+    const [claim, employees] = await Promise.all([
+      commands.resumeClaim(actorId, claimId),
       commands.listEmployees(actorId),
     ]);
     return Response.json({ claim, employees });

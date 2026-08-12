@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
+import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { ExpenseCreateForm, type ExpenseDraftInitial } from "@/features/expenses/expense-create-form";
 import { draftAttachmentFileName } from "@/features/expenses/expense-draft";
 import { AppHeader } from "@/components/layout/app-header";
@@ -71,7 +72,10 @@ export default async function NewExpensePage({
             : "Start with the receipt, then add only the context your reviewers need."}
         </p>
         <div className="mt-8">
-          <ExpenseCreateForm initial={initial} />
+          <ExpenseCreateForm
+            initial={initial}
+            canSubmit={resolveRoleCapabilities(workspace.employee.role).canSubmit}
+          />
         </div>
       </div>
     </main>

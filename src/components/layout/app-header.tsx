@@ -11,7 +11,7 @@ export function AppHeader({
   role?: ExpenseRole | null;
   activePath?: "/expenses" | "/expenses/all" | "/finance/payments" | "/finance/activity" | "/admin";
 }) {
-  const capabilities = resolveRoleCapabilities(role?.code);
+  const capabilities = resolveRoleCapabilities(role);
   const isApprover = capabilities.canApprove;
   const canViewPaymentQueue = capabilities.canAccessFinance;
   const canViewOrganizationActivity = capabilities.canViewOrganizationActivity;

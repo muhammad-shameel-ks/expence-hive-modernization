@@ -5,6 +5,7 @@ import { expenseCommands } from "@/server/expenses/dev";
 import { AdminSetup } from "@/features/admin/admin-setup";
 import { AppHeader } from "@/components/layout/app-header";
 import { devAuth } from "@/server/auth/dev";
+import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import styles from "../expenses/expenses.module.css";
 
 export default async function AdminPage() {
@@ -19,11 +20,14 @@ export default async function AdminPage() {
   if (!actor) {
     redirect("/expenses");
   }
-  const [people, flows, roles, departments] = await Promise.all([
+  const isSuperadmin = actor.role?.code === SUPERADMIN_ROLE_CODE;
+  const [people, flows, roles, departments, absenceTimeoutDays, heldClaims] = await Promise.all([
     admin.listEmployees(actor.id),
     admin.listFlows(actor.id),
     admin.listRoles(actor.id),
     admin.listDepartments(actor.id),
+    isSuperadmin ? admin.getAbsenceTimeoutDays(actor.id) : Promise.resolve(null),
+    isSuperadmin ? expenseCommands().listHeldClaims(employee.id) : Promise.resolve([]),
   ]);
   const workspace = await expenseCommands().getWorkspace(employee.id);
   return (
@@ -39,6 +43,9 @@ export default async function AdminPage() {
         roles={roles}
         departments={departments}
         currentEmployeeId={employee.id}
+        isSuperadmin={isSuperadmin}
+        absenceTimeoutDays={absenceTimeoutDays}
+        heldClaims={heldClaims}
       />
     </main>
   );

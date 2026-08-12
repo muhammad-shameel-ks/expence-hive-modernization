@@ -1,103 +1,152 @@
-import { describe, expect, it } from "vitest";
-import { expenses, type Expense } from "./mock-data";
-import { dashboardStats } from "./dashboard-stats";
+import { describe, expect, it, vi } from "vitest";
+import {
+  approverStatCards,
+  employeeStatCards,
+  financeStatCards,
+} from "./dashboard-stats";
+import type { ApproverAggregates, EmployeeAggregates, FinanceAggregates } from "@/server/expenses/dashboard-read-models";
 
-function expense(overrides: Partial<Expense>): Expense {
-  return {
-    id: "ex-test",
-    ref: "EXP-TEST",
-    title: "Test expense",
-    category: "Other",
-    amount: 100,
-    currency: "INR",
-    date: "Aug 4",
-    submittedAt: "2026-08-04T09:00:00Z",
-    status: "submitted",
-    attachments: [],
-    history: [],
-    ...overrides,
-  };
-}
+const EMPLOYEE: EmployeeAggregates = {
+  spentMinor: 59400,
+  spentCount: 1,
+  pendingMinor: 99000,
+  pendingCount: 2,
+  draftsCount: 1,
+  reimbursedMinor: 7500,
+  reimbursedCount: 1,
+};
 
-describe("dashboardStats", () => {
-  it("sums in-month spend excluding drafts, and counts it", () => {
-    const list = [
-      expense({ id: "e1", status: "in-finance", amount: 100, submittedAt: "2026-08-03T10:00:00Z" }),
-      expense({ id: "e2", status: "draft", amount: 250, submittedAt: "2026-08-04T10:00:00Z" }),
-      expense({ id: "e7", status: "rejected", amount: 60, submittedAt: "2026-08-10T10:00:00Z" }),
-    ];
-    const stats = dashboardStats(list, "2026-08");
-    expect(stats.spentThisMonth).toBe(160);
-    expect(stats.spentThisMonthCount).toBe(2);
+const APPROVER: ApproverAggregates = {
+  awaitingMyActionCount: 3,
+  awaitingMyActionTotalMinor: 150000,
+  myHoldsCount: 2,
+  holdClaimIds: ["claim-hold-1", "claim-hold-2"],
+  agedCount: 1,
+  agedClaimIds: ["claim-aged-1"],
+};
+
+const FINANCE: FinanceAggregates = {
+  queueCount: 4,
+  queueTotalMinor: 250000,
+  paidOutMinor: 125000,
+  paidOutCount: 3,
+  agedCount: 2,
+  agedClaimIds: ["claim-aged-1", "claim-aged-2"],
+  rejectedCount: 1,
+  rejectedTotalMinor: 6000,
+};
+
+describe("employeeStatCards", () => {
+  it("shows spent, pending (amount + count), drafts CTA, and reimbursed for the period", () => {
+    const cards = employeeStatCards(EMPLOYEE, "this month", { onResumeDraft: vi.fn() });
+    expect(cards.map((card) => card.label)).toEqual([
+      "Spent this month",
+      "Pending reimbursements",
+      "Drafts",
+      "Reimbursed this month",
+    ]);
+    expect(cards[0]).toMatchObject({ value: "₹594.00", hint: "1 expense" });
+    expect(cards[1]).toMatchObject({ value: "₹990.00", hint: "2 claims awaiting payment" });
+    expect(cards[2]).toMatchObject({ value: "1", action: { label: "Resume draft" } });
+    expect(cards[3]).toMatchObject({ value: "₹75.00", hint: "1 payment received" });
   });
 
-  it("ignores spend from other months", () => {
-    const list = [
-      expense({ id: "e1", status: "in-finance", amount: 100, submittedAt: "2026-07-28T10:00:00Z" }),
-      expense({ id: "e3", status: "paid", amount: 50, submittedAt: "2026-06-15T10:00:00Z" }),
-    ];
-    expect(dashboardStats(list, "2026-08").spentThisMonth).toBe(0);
+  it("pluralizes counts and formats the period into labels", () => {
+    const cards = employeeStatCards(
+      { ...EMPLOYEE, spentCount: 3, pendingCount: 1, reimbursedCount: 2 },
+      "this year",
+      { onResumeDraft: vi.fn() },
+    );
+    expect(cards[0].label).toBe("Spent this year");
+    expect(cards[0].hint).toBe("3 expenses");
+    expect(cards[1].hint).toBe("1 claim awaiting payment");
+    expect(cards[3].label).toBe("Reimbursed this year");
+    expect(cards[3].hint).toBe("2 payments received");
   });
 
-  it("counts awaiting-decision and rejected claims across all months", () => {
-    const list = [
-      expense({ id: "e5", status: "submitted", submittedAt: "2026-07-20T10:00:00Z" }),
-      expense({ id: "e5b", status: "in-approval", submittedAt: "2026-06-10T10:00:00Z" }),
-      expense({ id: "e5c", status: "in-finance", submittedAt: "2026-05-10T10:00:00Z" }),
-      expense({ id: "e6", status: "rejected", submittedAt: "2026-07-19T10:00:00Z" }),
-    ];
-    const stats = dashboardStats(list, "2026-08");
-    expect(stats.pendingApproval).toBe(3);
-    expect(stats.rejected).toBe(1);
+  it("swaps hints for empty states and drops the drafts CTA when there is nothing to resume", () => {
+    const empty = employeeStatCards(
+      { ...EMPLOYEE, spentCount: 0, pendingCount: 0, draftsCount: 0, reimbursedCount: 0 },
+      "overall",
+      { onResumeDraft: vi.fn() },
+    );
+    expect(empty[0].hint).toBe("Nothing spent overall");
+    expect(empty[1].hint).toBe("Nothing awaiting payment");
+    expect(empty[2].hint).toBe("No drafts yet - submit a new claim");
+    expect(empty[2].action).toBeUndefined();
+    expect(empty[3].hint).toBe("Nothing reimbursed overall");
   });
 
-  it("sums reimbursements for the month only", () => {
-    const list = [
-      expense({ id: "e4", status: "paid", amount: 75, submittedAt: "2026-08-01T10:00:00Z" }),
-      expense({ id: "e3", status: "paid", amount: 50, submittedAt: "2026-07-28T10:00:00Z" }),
-      expense({ id: "e7", status: "rejected", amount: 60, submittedAt: "2026-08-10T10:00:00Z" }),
-    ];
-    expect(dashboardStats(list, "2026-08").reimbursedThisMonth).toBe(75);
+  it("wires the drafts CTA to the resume callback", () => {
+    const onResumeDraft = vi.fn();
+    const cards = employeeStatCards(EMPLOYEE, "this month", { onResumeDraft });
+    cards[2].action?.onClick?.();
+    expect(onResumeDraft).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("approverStatCards", () => {
+  it("shows awaiting my action (total + count), my holds, and aging", () => {
+    const cards = approverStatCards(APPROVER, 3, { onResumeHold: vi.fn(), onReviewAged: vi.fn() });
+    expect(cards.map((card) => card.label)).toEqual(["Awaiting my action", "My holds", "Aging"]);
+    expect(cards[0]).toMatchObject({ value: "₹1,500.00", hint: "3 claims need a decision" });
+    expect(cards[1]).toMatchObject({ value: "2", hint: "Paused by you - resume from the drawer" });
+    expect(cards[2]).toMatchObject({ value: "1", hint: "Stuck beyond the 3-day timeout" });
   });
 
-  it("never counts another employee's pool claim as the viewer's spend", () => {
-    const list = [
-      expense({
-        id: "mine",
-        requesterId: "emp-finance",
-        status: "in-finance",
-        amount: 100,
-        submittedAt: "2026-08-03T10:00:00Z",
-      }),
-      expense({
-        id: "pool",
-        requesterId: "emp-shameel",
-        status: "in-finance",
-        amount: 1999,
-        submittedAt: "2026-08-10T10:00:00Z",
-      }),
-    ];
-    const stats = dashboardStats(list, "2026-08", "emp-finance");
-    expect(stats.spentThisMonth).toBe(100);
-    expect(stats.spentThisMonthCount).toBe(1);
-    // The pool claim still awaits the viewer's decision, so it counts there.
-    expect(stats.pendingApproval).toBe(2);
-  });
-
-  it("derives the expected overview from the full mock dataset", () => {
-    expect(dashboardStats(expenses, "2026-08")).toEqual({
-      spentThisMonth: 594,
-      spentThisMonthCount: 1,
-      pendingApproval: 4,
-      rejected: 2,
-      reimbursedThisMonth: 0,
+  it("names the configured timeout in the aging hints", () => {
+    const cards = approverStatCards({ ...APPROVER, agedCount: 0 }, 7, {
+      onResumeHold: vi.fn(),
+      onReviewAged: vi.fn(),
     });
-    expect(dashboardStats(expenses, "2026-07")).toEqual({
-      spentThisMonth: 2077,
-      spentThisMonthCount: 10,
-      pendingApproval: 4,
-      rejected: 2,
-      reimbursedThisMonth: 461,
-    });
+    expect(cards[2].hint).toBe("Nothing past the 7-day timeout");
+    expect(cards[2].action).toBeUndefined();
+  });
+
+  it("wires hold resume and aged-review CTAs", () => {
+    const onResumeHold = vi.fn();
+    const onReviewAged = vi.fn();
+    const cards = approverStatCards(APPROVER, 3, { onResumeHold, onReviewAged });
+    expect(cards[1].action).toEqual({ label: "Resume a hold", onClick: expect.any(Function) });
+    expect(cards[2].action).toEqual({ label: "Review oldest", onClick: expect.any(Function) });
+    cards[1].action?.onClick?.();
+    cards[2].action?.onClick?.();
+    expect(onResumeHold).toHaveBeenCalledTimes(1);
+    expect(onReviewAged).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("financeStatCards", () => {
+  it("shows queue backlog, paid out, aged, and rejected for the period", () => {
+    const cards = financeStatCards(FINANCE, "this month", 3, { onReviewAged: vi.fn() });
+    expect(cards.map((card) => card.label)).toEqual([
+      "Queue backlog",
+      "Paid out this month",
+      "Aged claims",
+      "Rejected this month",
+    ]);
+    expect(cards[0]).toMatchObject({ value: "₹2,500.00", hint: "4 claims awaiting verification or payment" });
+    expect(cards[1]).toMatchObject({ value: "₹1,250.00", hint: "3 claims paid" });
+    expect(cards[2]).toMatchObject({ value: "2", hint: "Stuck beyond the 3-day timeout" });
+    expect(cards[3]).toMatchObject({ value: "1", hint: "₹60.00 rejected" });
+  });
+
+  it("links the queue card to the payment queue page", () => {
+    const cards = financeStatCards(FINANCE, "this month", 3, { onReviewAged: vi.fn() });
+    expect(cards[0].action).toEqual({ label: "Open queue", href: "/finance/payments" });
+  });
+
+  it("swaps hints for empty states", () => {
+    const cards = financeStatCards(
+      { ...FINANCE, queueCount: 0, paidOutCount: 0, agedCount: 0, rejectedCount: 0 },
+      "this month",
+      3,
+      { onReviewAged: vi.fn() },
+    );
+    expect(cards[0].hint).toBe("Queue is clear");
+    expect(cards[1].hint).toBe("Nothing paid out this month");
+    expect(cards[2].hint).toBe("Nothing past the 3-day timeout");
+    expect(cards[3].hint).toBe("Nothing rejected this month");
+    expect(cards[2].action).toBeUndefined();
   });
 });

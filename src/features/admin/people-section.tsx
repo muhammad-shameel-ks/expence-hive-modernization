@@ -4,10 +4,13 @@ import { useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, List, Network, Search, Users, X } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import type { AdminDepartment, AdminEmployee, AdminRole } from "@/server/admin/ports";
+import { MANAGER_ROLE_CODE } from "@/server/shared/authorization";
+import { BulkImport } from "./bulk-import";
 import { initials } from "./initials";
 import { OrgTree } from "./org-tree";
 import { SectionHeading } from "./section-heading";
 import { StatusBadge } from "./status-badge";
+import { UserCreateForm } from "./user-create-form";
 
 type ActiveFilter = "all" | "active" | "deactivated";
 
@@ -20,6 +23,8 @@ export function PeopleSection({
   currentEmployeeId,
   onMessage,
   onError,
+  onPeopleChange,
+  onDepartmentsChange,
 }: {
   people: AdminEmployee[];
   roles: AdminRole[];
@@ -27,8 +32,9 @@ export function PeopleSection({
   currentEmployeeId: string;
   onMessage: (message: string) => void;
   onError: (error: string) => void;
+  onPeopleChange: (people: AdminEmployee[]) => void;
+  onDepartmentsChange?: (departments: AdminDepartment[]) => void;
 }) {
-  const [peopleState, setPeopleState] = useState(people);
   const [query, setQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("All departments");
   const [roleFilter, setRoleFilter] = useState("All roles");
@@ -45,21 +51,21 @@ export function PeopleSection({
   const activeRoles = useMemo(() => roles.filter((role) => role.active), [roles]);
 
   const departmentOptions = useMemo(
-    () => ["All departments", ...new Set(peopleState.map((person) => person.department))],
-    [peopleState],
+    () => ["All departments", ...new Set(people.map((person) => person.department))],
+    [people],
   );
 
   const roleOptions = useMemo(() => {
     const names = new Set(roles.map((role) => role.displayName));
-    for (const person of peopleState) {
+    for (const person of people) {
       if (person.role) names.add(person.role.displayName);
     }
     return ["All roles", ...[...names].sort()];
-  }, [peopleState, roles]);
+  }, [people, roles]);
 
   const filteredPeople = useMemo(
     () =>
-      peopleState.filter((person) => {
+      people.filter((person) => {
         const matchesQuery = `${person.name} ${person.email}`
           .toLowerCase()
           .includes(query.toLowerCase());
@@ -72,12 +78,12 @@ export function PeopleSection({
           (activeFilter === "active" ? person.active : !person.active);
         return matchesQuery && matchesDepartment && matchesRole && matchesActive;
       }),
-    [activeFilter, departmentFilter, peopleState, query, roleFilter],
+    [activeFilter, departmentFilter, people, query, roleFilter],
   );
 
   const selectedPerson = useMemo(
-    () => peopleState.find((person) => person.id === selectedPersonId) ?? null,
-    [peopleState, selectedPersonId],
+    () => people.find((person) => person.id === selectedPersonId) ?? null,
+    [people, selectedPersonId],
   );
 
   const setActive = async (person: AdminEmployee, active: boolean) => {
@@ -96,8 +102,8 @@ export function PeopleSection({
         const body = (await response.json()) as { error?: string };
         throw new Error(body.error ?? "unknown");
       }
-      setPeopleState((current) =>
-        current.map((item) => (item.id === person.id ? { ...item, active } : item)),
+      onPeopleChange(
+        people.map((item) => (item.id === person.id ? { ...item, active } : item)),
       );
       onMessage(active ? `${person.name} reactivated.` : `${person.name} deactivated.`);
     } catch (caught) {
@@ -126,13 +132,25 @@ export function PeopleSection({
         const body = (await response.json()) as { error?: string };
         throw new Error(body.error ?? "unknown");
       }
-      setPeopleState((current) =>
-        current.map((item) =>
+      onPeopleChange(
+        people.map((item) =>
           item.id === person.id
             ? { ...item, role: { id: role.id, code: role.code, displayName: role.displayName } }
             : item,
         ),
       );
+      if (onDepartmentsChange && person.departmentId) {
+        const isManager = role.code === MANAGER_ROLE_CODE;
+        if (isManager) {
+          onDepartmentsChange(
+            departments.map((candidate) =>
+              candidate.id === person.departmentId && (!candidate.headId || candidate.headId === "")
+                ? { ...candidate, headId: person.id, head: { id: person.id, name: person.name } }
+                : candidate,
+            ),
+          );
+        }
+      }
       onMessage(`${person.name} is now assigned to the ${role.displayName} role.`);
     } catch (caught) {
       onError(
@@ -158,13 +176,27 @@ export function PeopleSection({
         const body = (await response.json()) as { error?: string };
         throw new Error(body.error ?? "unknown");
       }
-      setPeopleState((current) =>
-        current.map((item) =>
+      onPeopleChange(
+        people.map((item) =>
           item.id === person.id
             ? { ...item, department: dept.name, departmentId: dept.id }
             : item,
         ),
       );
+      if (onDepartmentsChange) {
+        const isManager = person.role?.code === MANAGER_ROLE_CODE;
+        onDepartmentsChange(
+          departments.map((candidate) => {
+            if (candidate.id === dept.id && (!candidate.headId || candidate.headId === "") && isManager) {
+              return { ...candidate, headId: person.id, head: { id: person.id, name: person.name } };
+            }
+            if (candidate.headId === person.id && candidate.id !== dept.id) {
+              return { ...candidate, headId: null, head: null };
+            }
+            return candidate;
+          }),
+        );
+      }
       onMessage(`${person.name} is now allocated to the ${dept.name} department.`);
     } catch (caught) {
       onError(
@@ -191,12 +223,10 @@ export function PeopleSection({
         throw new Error(body.error ?? "unknown");
       }
       const manager = managerId
-        ? peopleState.find((candidate) => candidate.id === managerId)
+        ? people.find((candidate) => candidate.id === managerId)
         : null;
-      setPeopleState((current) =>
-        current.map((item) =>
-          item.id === person.id ? { ...item, managerId } : item,
-        ),
+      onPeopleChange(
+        people.map((item) => (item.id === person.id ? { ...item, managerId } : item)),
       );
       onMessage(
         manager
@@ -222,6 +252,21 @@ export function PeopleSection({
         title="People management"
         description="Search and filter people, assign roles, departments and managers, and deactivate or reactivate access."
       />
+      <div className="mt-5 grid gap-5 lg:grid-cols-2">
+        <UserCreateForm
+          people={people}
+          roles={roles}
+          departments={departments}
+          onCreated={(employee) => onPeopleChange([...people, employee])}
+          onMessage={onMessage}
+          onError={onError}
+        />
+        <BulkImport
+          onImported={(imported) => onPeopleChange([...people, ...imported])}
+          onMessage={onMessage}
+          onError={onError}
+        />
+      </div>
       <div className="mt-5 rounded-[18px] border border-[#e0e7ee] bg-white shadow-[0_18px_38px_rgba(31,50,71,0.05)]">
         <div className="flex flex-wrap items-center gap-3 border-b border-[#eef2f6] p-5">
           <div className="relative min-w-[220px] flex-1">
@@ -304,7 +349,7 @@ export function PeopleSection({
       {selectedPerson ? (
         <PersonDrawer
           person={selectedPerson}
-          people={peopleState}
+          people={people}
           roles={activeRoles}
           departments={activeDepartments}
           currentEmployeeId={currentEmployeeId}

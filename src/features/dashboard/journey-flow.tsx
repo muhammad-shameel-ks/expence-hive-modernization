@@ -12,7 +12,7 @@ import {
 import { cn } from "@/lib/utils";
 import { ME, type Expense, type ExpenseStepView } from "./mock-data";
 import { isTerminal } from "./next-action";
-import { KIND_META, simplifyAutoSkipDetail } from "./journey-meta";
+import { KIND_META, getKindMeta, simplifyAutoSkipDetail } from "./journey-meta";
 
 export interface JourneyFlowStep {
   id: string;
@@ -26,7 +26,6 @@ export interface JourneyFlowStep {
   isNext: boolean;
   pending: boolean;
   isMine: boolean;
-  isTakeover: boolean;
 }
 
 export function getJourneyFlowItems(
@@ -43,47 +42,21 @@ export function getJourneyFlowItems(
   // as a standalone history entry: the event is written at submission and
   // would otherwise appear before earlier pending stages.
   const nonAutoSkippedHistory = expense.history.filter((event) => event.kind !== "auto-skipped");
-  // Steps skipped without a skipReason come from two sources that render
-  // differently: absence/timeout auto-advance (its own "skipped" history
-  // entry, one step each) and a takeover (bypasses a contiguous run of
-  // steps). Because the current stage only ever advances forward, these
-  // steps appear in the same order as the history events that produced
-  // them, so walking both in chronological lockstep - consuming one step
-  // per "skipped" event and N steps (from the takeover's own "skipped N
-  // earlier stage(s)" detail) per takeover event - attributes each step to
-  // the event that actually skipped it, instead of guessing from status alone.
-  const skipWithoutReasonQueue = (expense.steps ?? []).filter((s) => s.status === "skipped" && !s.skipReason);
-  let skipCursor = 0;
   const historySteps: JourneyFlowStep[] = nonAutoSkippedHistory.map((event, i) => {
-    const meta = KIND_META[event.kind];
+    const meta = getKindMeta(event.kind);
     const isCurrent = !terminal && i === nonAutoSkippedHistory.length - 1;
-    const isTakeover = event.kind === "takeover";
-    const bypassedCount = isTakeover ? Number(event.detail?.match(/skipped (\d+) earlier stage/)?.[1] ?? 0) : 0;
-    const bypassedSteps = isTakeover ? skipWithoutReasonQueue.slice(skipCursor, skipCursor + bypassedCount) : [];
-    if (isTakeover) {
-      skipCursor += bypassedCount;
-    } else if (event.kind === "skipped") {
-      skipCursor += 1;
-    }
-    const reasonMatch = isTakeover ? event.detail?.match(/\(reason: (.*?)\)/) : null;
-    const extraBypassed = bypassedSteps.slice(1).map((s) => s.roleName);
     return {
       id: event.id,
-      label: isTakeover ? bypassedSteps[0]?.roleName ?? "Approval stage" : meta.label,
+      label: meta.label,
       date: event.date,
       actor: event.actor,
-      detail: isTakeover
-        ? `Taken over by ${event.actor}${reasonMatch ? ` for "${reasonMatch[1]}"` : ""}${
-            extraBypassed.length ? ` (also skipped: ${extraBypassed.join(", ")})` : ""
-          }`
-        : event.detail,
+      detail: event.detail,
       tone: meta.tone,
       icon: meta.icon,
       isCurrent,
       isNext: false,
       pending: false,
       isMine: isMine(event.actor, event.actorId),
-      isTakeover,
     };
   });
 
@@ -102,7 +75,6 @@ export function getJourneyFlowItems(
     isNext: false,
     pending: false,
     isMine: false,
-    isTakeover: false,
   });
 
   const autoSkippedSteps = (expense.steps ?? []).filter((s) => s.status === "skipped" && s.skipReason);
@@ -143,7 +115,6 @@ export function getJourneyFlowItems(
       isNext: false,
       pending: true,
       isMine: false,
-      isTakeover: false,
     });
   }
 
@@ -173,7 +144,6 @@ export function getJourneyFlowItems(
           isNext: false,
           pending: true,
           isMine: false,
-          isTakeover: false,
         });
       }
 
@@ -198,7 +168,6 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
-        isTakeover: false,
       });
     }
   } else {
@@ -207,7 +176,7 @@ export function getJourneyFlowItems(
       expense.status === "submitted" ||
       expense.status === "draft" ||
       (!historyKinds.has("approved") &&
-        !historyKinds.has("takeover") &&
+        !historyKinds.has("delegated") &&
         expense.status !== "approved" &&
         expense.status !== "in-finance" &&
         expense.status !== "paid" &&
@@ -232,7 +201,6 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
-        isTakeover: false,
       });
     }
 
@@ -260,7 +228,6 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
-        isTakeover: false,
       });
     }
 
@@ -277,16 +244,24 @@ export function getJourneyFlowItems(
         isNext: false,
         pending: true,
         isMine: false,
-        isTakeover: false,
       });
     }
   }
 
   // The pulse lands on the first *pending* stage, never on a decided stage
-  // like an amount-guard auto-skip that precedes it in flow order.
+  // like an amount-guard auto-skip that precedes it in flow order. A held
+  // claim is paused (ADR-0016): nothing pulses as next - the hold outranks
+  // the pending state - and the pending stage reads as on hold.
   const firstPending = pendingSteps.findIndex((step) => step.pending);
   if (firstPending >= 0) {
     pendingSteps[firstPending].isNext = true;
+  }
+  if (expense.held) {
+    const heldStage = pendingSteps.find((step) => step.pending);
+    if (heldStage) {
+      heldStage.detail = "On hold - awaiting resume";
+      heldStage.isNext = false;
+    }
   }
 
   return [...historySteps, ...pendingSteps];
@@ -346,17 +321,10 @@ export function JourneyFlow({
                         You
                       </span>
                     ) : null}
-                    {step.isTakeover ? (
-                      <span className="rounded-full bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold uppercase tracking-wide text-amber-700 dark:text-amber-400">
-                        Taken over
-                      </span>
-                    ) : null}
                   </div>
                   <p className="text-xs tabular-nums text-muted-foreground">{step.date}</p>
                 </div>
-                {step.isTakeover ? null : (
-                  <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
-                )}
+                <p className="mt-0.5 text-xs text-muted-foreground">{step.actor}</p>
                 {step.detail ? (
                   <p className="mt-1 text-xs text-muted-foreground">{step.detail}</p>
                 ) : null}

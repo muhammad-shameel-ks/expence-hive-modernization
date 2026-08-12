@@ -2,27 +2,50 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Plus, LayoutList } from "lucide-react";
 import { devAuth } from "@/server/auth/dev";
-import { expenseCommands } from "@/server/expenses/dev";
+import { expenseCommands, expenseDevStore } from "@/server/expenses/dev";
+import { adminDevStore } from "@/server/admin/dev";
 import { isExpenseError } from "@/server/expenses/commands";
+import {
+  createDashboardReadModels,
+  DASHBOARD_PERIOD_COOKIE,
+  dashboardViewForRole,
+  parseDashboardPeriod,
+} from "@/server/expenses/dashboard-read-models";
+import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { Button } from "@/components/ui/button";
 import styles from "./expenses.module.css";
 import { AppHeader } from "@/components/layout/app-header";
 import { ExpenseDashboard } from "@/features/dashboard/dashboard";
 import { activityEntryToItem, claimToExpense } from "@/features/dashboard/expense-read-model";
 
-export default async function ExpensesPage() {
+export default async function ExpensesPage({
+  searchParams,
+}: {
+  searchParams: Promise<{ claim?: string }>;
+}) {
   const sessionId = (await cookies()).get("eh_session")?.value;
   const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
   if (!employee) {
     redirect("/login");
   }
+  const { claim: focusClaimId } = await searchParams;
+  // The persisted period preference (ADR-0020): the switch writes the cookie
+  // client-side and refreshes the route, so this server read recomputes the
+  // cards, the claims list, and the activity feed together.
+  const period = parseDashboardPeriod((await cookies()).get(DASHBOARD_PERIOD_COOKIE)?.value);
   let workspace;
   let activityEntries;
+  let focusClaim;
   try {
     [workspace, activityEntries] = await Promise.all([
       expenseCommands().getWorkspace(employee.id),
       expenseCommands().listActivity(employee.id),
     ]);
+    // The admin held-claims view deep-links to the drawer: resolve the
+    // focused claim server-side so the dashboard can open it on mount.
+    focusClaim = focusClaimId
+      ? await expenseCommands().getClaim(employee.id, focusClaimId).catch(() => null)
+      : null;
   } catch (error) {
     // A deactivated employee still holds a session but is rejected by the
     // expense domain; send them back to sign-in instead of crashing.
@@ -31,6 +54,14 @@ export default async function ExpensesPage() {
     }
     throw error;
   }
+  const view = dashboardViewForRole(workspace.employee.role);
+  // Role-scoped aggregates (ADR-0020): computed server-side from org-level
+  // claim data through the expense store, never by re-filtering the
+  // viewer's workspace list in the client.
+  const { cards, absenceTimeoutDays } = await createDashboardReadModels({
+    store: expenseDevStore(),
+    absenceTimeout: adminDevStore(),
+  }).cards(view, period, new Date(), workspace.employee);
   const expenses = workspace.claims.map((claim) => claimToExpense(claim, workspace.employees));
   const activity = activityEntries.map(activityEntryToItem);
 
@@ -78,8 +109,13 @@ export default async function ExpensesPage() {
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
             currentUserRoleCode={workspace.employee.role?.code}
+            currentUserCanHold={resolveRoleCapabilities(workspace.employee.role).canHold}
+            cards={cards}
+            absenceTimeoutDays={absenceTimeoutDays}
+            period={period}
             expenses={expenses}
             activity={activity}
+            focusClaim={focusClaim ? claimToExpense(focusClaim, workspace.employees) : undefined}
           />
         </div>
       </div>

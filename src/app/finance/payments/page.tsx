@@ -3,6 +3,7 @@ import { redirect } from "next/navigation";
 import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
+import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { AppHeader } from "@/components/layout/app-header";
 import { PaymentQueueTable } from "@/features/finance/payment-queue-table";
 import styles from "../../expenses/expenses.module.css";
@@ -70,6 +71,7 @@ export default async function FinancePaymentsPage() {
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
             currentUserRoleCode={workspace.employee.role?.code}
+            currentUserCanHold={resolveRoleCapabilities(workspace.employee.role).canHold}
           />
         </div>
       </div>

@@ -22,10 +22,18 @@ function baseExpense(overrides: Partial<Expense> = {}): Expense {
       {
         id: "h2",
         date: "Aug 2",
-        actor: "Pramod",
-        actorId: "emp-pramod",
-        kind: "takeover",
-        detail: "Took over as Finance Executive (reason: urgent); skipped 1 earlier stage(s): Manager",
+        actor: "Super Boss",
+        actorId: "emp-super",
+        kind: "delegated",
+        detail: 'Delegated to Rishikesh (Finance Executive) for "urgent"',
+      },
+      {
+        id: "h3",
+        date: "Aug 2",
+        actor: "Super Boss",
+        actorId: "emp-super",
+        kind: "skipped",
+        detail: "Skipped: delegated to Rishikesh",
       },
     ],
     steps: [
@@ -42,29 +50,34 @@ function baseExpense(overrides: Partial<Expense> = {}): Expense {
   };
 }
 
-describe("getJourneyFlowItems takeover rendering", () => {
-  it("titles a takeover entry with the bypassed stage's role name, not the actor or the generic label", () => {
+describe("getJourneyFlowItems delegation rendering", () => {
+  it("renders the delegated entry with its own label and detail", () => {
     const steps = getJourneyFlowItems(baseExpense());
-    const takeoverStep = steps.find((s) => s.isTakeover);
-    expect(takeoverStep?.label).toBe("Manager");
+    const delegatedStep = steps.find((s) => s.id === "h2");
+    expect(delegatedStep?.label).toBe("Delegated");
+    expect(delegatedStep?.detail).toBe('Delegated to Rishikesh (Finance Executive) for "urgent"');
+    expect(delegatedStep?.actor).toBe("Super Boss");
   });
 
-  it("describes who took over and why, since the title no longer names the actor", () => {
+  it("renders each delegation skip as its own stage-skipped entry", () => {
     const steps = getJourneyFlowItems(baseExpense());
-    const takeoverStep = steps.find((s) => s.isTakeover);
-    expect(takeoverStep?.detail).toBe('Taken over by Pramod for "urgent"');
+    const skippedSteps = steps.filter((s) => s.detail === "Skipped: delegated to Rishikesh");
+    expect(skippedSteps).toHaveLength(1);
+    expect(skippedSteps[0]?.label).toBe("Stage skipped");
+    expect(skippedSteps[0]?.actor).toBe("Super Boss");
   });
 
-  it("marks non-takeover entries as isTakeover: false", () => {
+  it("marks non-delegated entries with the generic label", () => {
     const steps = getJourneyFlowItems(baseExpense());
     const submitted = steps.find((s) => s.id === "h1");
-    expect(submitted?.isTakeover).toBe(false);
+    expect(submitted?.label).toBe("Submitted");
+    expect(submitted?.detail).toBeUndefined();
   });
 
-  it("titles a takeover entry by the stage it actually bypassed, not an earlier absence-skipped stage", () => {
-    // The Team Lead step was vacancy-skipped at submission (no skipReason,
-    // same as a takeover skip), before the Finance Head takeover bypassed
-    // only the Manager step further along.
+  it("attributes a delegated skip to the step the delegation actually skipped, not an earlier absence-skipped stage", () => {
+    // The Team Lead step was vacancy-skipped at submission (a "skipped"
+    // event with no skipReason, same shape as a delegation skip), before the
+    // delegation skipped only the Manager step further along.
     const expense = baseExpense({
       history: [
         { id: "h1", date: "Aug 1", actor: "Muhammad Shameel", actorId: "emp-shameel", kind: "submitted" },
@@ -72,10 +85,18 @@ describe("getJourneyFlowItems takeover rendering", () => {
         {
           id: "h3",
           date: "Aug 2",
-          actor: "Pramod",
-          actorId: "emp-pramod",
-          kind: "takeover",
-          detail: "Took over as Finance Head (reason: urgent); skipped 1 earlier stage(s): Manager",
+          actor: "Super Boss",
+          actorId: "emp-super",
+          kind: "delegated",
+          detail: 'Delegated to Rishikesh (Finance Executive) for "urgent"',
+        },
+        {
+          id: "h4",
+          date: "Aug 2",
+          actor: "Super Boss",
+          actorId: "emp-super",
+          kind: "skipped",
+          detail: "Skipped: delegated to Rishikesh",
         },
       ],
       steps: [
@@ -92,27 +113,30 @@ describe("getJourneyFlowItems takeover rendering", () => {
     });
 
     const steps = getJourneyFlowItems(expense);
-    const takeoverStep = steps.find((s) => s.isTakeover);
-
-    expect(takeoverStep?.label).toBe("Manager");
-    expect(takeoverStep?.detail).not.toContain("Team Lead");
+    // Two standalone skipped entries: the vacancy skip and the delegation skip.
+    const skippedEntries = steps.filter((s) => s.label === "Stage skipped");
+    expect(skippedEntries).toHaveLength(2);
+    expect(skippedEntries[0]?.detail).toBe("Skipped: no active employee holds this stage");
+    expect(skippedEntries[1]?.detail).toBe("Skipped: delegated to Rishikesh");
+    expect(steps.find((s) => s.label === "Delegated")).toBeDefined();
   });
 });
 
-describe("JourneyFlow takeover rendering", () => {
+describe("JourneyFlow delegation rendering", () => {
   afterEach(cleanup);
 
-  it("shows the bypassed role as the title, a 'Taken over' chip, and who/why in the description", () => {
+  it("shows the delegated entry with who and why in the description", () => {
     render(<JourneyFlow expense={baseExpense()} currentUserId="emp-shameel" />);
 
-    expect(screen.getByText("Manager")).toBeInTheDocument();
-    expect(screen.getByText("Taken over")).toBeInTheDocument();
-    expect(screen.getByText('Taken over by Pramod for "urgent"')).toBeInTheDocument();
+    expect(screen.getByText("Delegated")).toBeInTheDocument();
+    expect(screen.getByText('Delegated to Rishikesh (Finance Executive) for "urgent"')).toBeInTheDocument();
+    expect(screen.getAllByText("Super Boss").length).toBeGreaterThan(0);
   });
 
-  it("shows the 'Taken over' chip exactly once, next to the takeover entry only", () => {
+  it("shows the delegation skip entry next to the delegated entry", () => {
     render(<JourneyFlow expense={baseExpense()} currentUserId="emp-shameel" />);
 
-    expect(screen.getAllByText("Taken over")).toHaveLength(1);
+    expect(screen.getByText("Stage skipped")).toBeInTheDocument();
+    expect(screen.getByText("Skipped: delegated to Rishikesh")).toBeInTheDocument();
   });
 });
