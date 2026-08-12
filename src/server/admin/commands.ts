@@ -183,14 +183,6 @@ export type AdminCommands = {
   listRoles(actorId: string): Promise<AdminRole[]>;
   createRole(actorId: string, input: RoleInput): Promise<AdminRole>;
   deactivateRole(actorId: string, roleId: string): Promise<void>;
-  // The pending-claim impact of a capability change before it is applied:
-  // the action privileges the new set removes, plus the claims currently
-  // pending at the role's steps (ADR-0015).
-  getRoleCapabilityImpact(
-    actorId: string,
-    roleId: string,
-    capabilities: RoleCapabilities,
-  ): Promise<RoleCapabilityImpact>;
   // Applies a new capability set to a role. Removing an action privilege
   // (approve / finance access / hold) while claims are pending at the
   // role's steps requires the caller's confirmation; unconfirmed, the
@@ -842,29 +834,6 @@ export function createAdminCommands({
       });
       await audit(actor, "create-role", `Created the "${displayName}" role.`);
       return role;
-    },
-
-    // The pending-claim impact of a capability change, before it is
-    // applied: which action privileges the new set removes and the claims
-    // pending at the role's steps (ADR-0015). The console fetches this when
-    // an action privilege is toggled off, so the warning dialog lists the
-    // affected claims before any confirm.
-    async getRoleCapabilityImpact(actorId, roleId, capabilities) {
-      const actor = await requireAdmin(actorId);
-      const parsed = parseRoleCapabilities(capabilities);
-      if (!parsed) {
-        throw new AdminError("validation", "A capability set must be six booleans.");
-      }
-      const role = await requireActiveRole(actor.organizationId, roleId);
-      const before = resolveRoleCapabilities(role);
-      const removed = removedActionPrivileges(before, parsed);
-      return {
-        removedActionPrivileges: removed,
-        pendingClaims:
-          removed.length > 0
-            ? await pendingClaimsAtRoleSteps(actor.organizationId, roleId, role.displayName)
-            : [],
-      };
     },
 
     // Changes a role's capability set. Removing an action privilege

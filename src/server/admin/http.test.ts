@@ -13,7 +13,6 @@ import {
   handleDeactivateEmployeeRequest,
   handleDeactivateRoleRequest,
   handleGetAbsenceTimeoutRequest,
-  handleGetRoleCapabilityImpactRequest,
   handleListAuditRequest,
   handlePublishFlowRequest,
   handleReactivateEmployeeRequest,
@@ -91,7 +90,6 @@ function buildCommands(overrides: Partial<AdminCommands> = {}): AdminCommands {
     }),
     deleteFlow: async () => {},
     listAuditEvents: async () => ({ events: [], total: 0 }),
-    getRoleCapabilityImpact: async () => ({ removedActionPrivileges: [], pendingClaims: [] }),
     updateRoleCapabilities: async () => ({
       role: {
         id: "role-1",
@@ -566,59 +564,6 @@ describe("handleCreateRoleRequest", () => {
     );
 
     expect(response.status).toBe(422);
-  });
-});
-
-describe("handleGetRoleCapabilityImpactRequest", () => {
-  const CAPABILITIES = {
-    canSubmit: true,
-    canApprove: false,
-    canAccessFinance: false,
-    canHold: false,
-    canViewOrganizationActivity: false,
-    canAccessAdminConsole: false,
-  };
-
-  it("returns the removed privileges and pending claims", async () => {
-    const getRoleCapabilityImpact = vi.fn().mockResolvedValue({
-      removedActionPrivileges: ["canApprove"],
-      pendingClaims: [{ ref: "EXP-2026-0001", title: "Reviewer claim", requesterId: "emp-1", requesterName: "Ada", stage: "Reviewer" }],
-    });
-    const response = await handleGetRoleCapabilityImpactRequest(
-      new Request("http://localhost/api/admin/org-roles/impact", {
-        method: "POST",
-        body: JSON.stringify({ roleId: "role-1", capabilities: CAPABILITIES }),
-      }),
-      buildCommands({ getRoleCapabilityImpact }),
-      "emp-superadmin",
-    );
-
-    expect(response.status).toBe(200);
-    await expect(json(response)).resolves.toMatchObject({
-      ok: true,
-      removedActionPrivileges: ["canApprove"],
-      pendingClaims: [{ title: "Reviewer claim" }],
-    });
-    expect(getRoleCapabilityImpact).toHaveBeenCalledWith("emp-superadmin", "role-1", CAPABILITIES);
-  });
-
-  it("rejects a body without a string roleId or a full capability set", async () => {
-    for (const body of [
-      { capabilities: CAPABILITIES },
-      { roleId: "role-1" },
-      { roleId: "role-1", capabilities: { canSubmit: true } },
-    ]) {
-      const response = await handleGetRoleCapabilityImpactRequest(
-        new Request("http://localhost/api/admin/org-roles/impact", {
-          method: "POST",
-          body: JSON.stringify(body),
-        }),
-        buildCommands(),
-        "emp-superadmin",
-      );
-
-      expect(response.status).toBe(422);
-    }
   });
 });
 

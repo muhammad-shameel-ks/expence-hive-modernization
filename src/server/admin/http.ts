@@ -411,31 +411,6 @@ export async function handleCreateRoleRequest(
   );
 }
 
-export async function handleGetRoleCapabilityImpactRequest(
-  request: Request,
-  commands: AdminCommands,
-  actorId: string,
-): Promise<Response> {
-  return handle(
-    request,
-    (body) => {
-      const { roleId, capabilities } = body as { roleId?: unknown; capabilities?: unknown };
-      if (typeof roleId !== "string") return null;
-      const parsedCapabilities = parseRoleCapabilities(capabilities);
-      if (!parsedCapabilities) return null;
-      return { roleId, capabilities: parsedCapabilities };
-    },
-    async (input) => {
-      const impact = await commands.getRoleCapabilityImpact(
-        actorId,
-        input.roleId,
-        input.capabilities,
-      );
-      return Response.json({ ok: true, ...impact });
-    },
-  );
-}
-
 export async function handleUpdateRoleCapabilitiesRequest(
   request: Request,
   commands: AdminCommands,
