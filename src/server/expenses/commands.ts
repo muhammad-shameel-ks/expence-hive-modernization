@@ -1111,11 +1111,9 @@ export function createExpenseCommands({
         }
         if (claim.status === "in-finance") {
           const terminal = claim.steps[claim.steps.length - 1];
-          if (!terminal || !actor.role) return false;
-          return (
-            terminal.status === "pending" &&
-            terminal.roleId === actor.role.id
-          );
+          const requester = requesterById.get(claim.requesterId);
+          if (!terminal || !requester || terminal.status !== "pending") return false;
+          return canActOnStep(requester, actor, terminal);
         }
         return false;
       });

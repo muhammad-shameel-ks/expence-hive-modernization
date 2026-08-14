@@ -3319,6 +3319,23 @@ describe("bulk approvals (ADR-0029)", () => {
       expect(financeQueue.map((c) => c.id)).toContain(submitted.id);
     });
 
+    it("includes an in-finance claim delegated cross-role to a person the terminal step's own role would exclude (ADR-0017)", async () => {
+      const superadmin = emp("emp-super", "Super Boss", ROLE_SUPERADMIN);
+      const { commands } = buildCommands({ employees: [...BASE_EMPLOYEES, superadmin] });
+      const submitted = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", submitted.id);
+      await commands.approveStage("emp-pramod", submitted.id); // now at Finance Executive (in-finance)
+
+      // emp-pramod (Finance Head) is delegated the terminal step normally
+      // assigned to emp-finance (Finance Executive): a different role.
+      // Delegation adds the delegatee to the eligible pool; it does not
+      // remove the role's existing pool members (ADR-0017).
+      await commands.delegateClaim(superadmin.id, submitted.id, "emp-pramod", "Rishikesh is out");
+
+      const delegateQueue = await commands.listApprovalsQueue("emp-pramod");
+      expect(delegateQueue.map((c) => c.id)).toContain(submitted.id);
+    });
+
     it("does not include already-verified in-finance claims in the approvals queue", async () => {
       const { commands } = buildCommands();
       const submitted = await submitStandardDraft(commands, employee.id);

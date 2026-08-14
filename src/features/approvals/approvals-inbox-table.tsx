@@ -331,8 +331,8 @@ export function ApprovalsInboxTable({
         setActionError(
           totalProcessed > 0
             ? `${legError} ${totalProcessed} expense ${
-                totalProcessed === 1 ? "claim" : "claims"
-              } were already processed before this failure and have been removed from your selection.`
+                totalProcessed === 1 ? "claim was" : "claims were"
+              } already processed before this failure and have been removed from your selection.`
             : legError,
         );
       }

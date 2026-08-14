@@ -423,7 +423,7 @@ describe("ApprovalsInboxTable", () => {
     await waitFor(() => {
       expect(
         screen.getByText(
-          /The bulk approval could not be completed\. Please try again\. 1 expense claim were already processed before this failure/,
+          /The bulk approval could not be completed\. Please try again\. 1 expense claim was already processed before this failure/,
         ),
       ).toBeInTheDocument();
     });
