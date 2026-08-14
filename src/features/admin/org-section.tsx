@@ -23,16 +23,19 @@ import {
 } from "@/server/shared/authorization";
 import { SectionHeading } from "./section-heading";
 
-// The fixed six-privilege catalog (ADR-0015). Delegation and company
-// auto-skip configuration are Superadmin-only built-ins and never appear as
-// toggles. An action privilege (approve / finance verify-pay) may not be
-// removed while claims are pending at the role's steps without the
-// administrator confirming the removal and its impact.
+// The fixed six-privilege catalog (ADR-0015, amended by ADR-0024 and
+// ADR-0026): submit claims, approve/reject, finance verify/pay, approve
+// bank detail changes, view org-wide activity, access the admin console.
+// Delegation and company auto-skip configuration are Superadmin-only
+// built-ins and never appear as toggles. An action privilege (approve /
+// finance verify-pay) may not be removed while claims are pending at the
+// role's steps without the administrator confirming the removal and its
+// impact.
 const CAPABILITY_LABELS: { key: keyof RoleCapabilities; label: string }[] = [
   { key: "canSubmit", label: "Submit claims" },
   { key: "canApprove", label: "Approve and reject" },
   { key: "canAccessFinance", label: "Finance verify and pay" },
-  { key: "canHold", label: "Hold claims" },
+  { key: "approveBankDetails", label: "Approve bank detail changes" },
   { key: "canViewOrganizationActivity", label: "View org-wide activity" },
   { key: "canAccessAdminConsole", label: "Access the admin console" },
 ];

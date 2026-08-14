@@ -22,8 +22,6 @@ export type HistoryKind =
   | "paid"
   | "comment"
   | "note"
-  | "held"
-  | "resumed"
   | "delegated";
 
 export interface HistoryEvent {
@@ -75,12 +73,6 @@ export interface Expense {
   history: HistoryEvent[];
   steps?: ExpenseStepView[];
   primaryAction?: "approve" | "verify" | "pay";
-  /** Hold state (ADR-0016): when set, the claim is paused at its current stage - the status is kept but no terminal action is offered. */
-  held?: {
-    by?: string;
-    at?: string;
-    reason?: string;
-  };
 }
 
 export const ME = "Muhammad Shameel";

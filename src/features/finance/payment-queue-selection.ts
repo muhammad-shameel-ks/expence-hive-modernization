@@ -30,3 +30,49 @@ export function stepSelection(rows: ExpenseClaim[], currentId: string | null, di
   const next = Math.min(rows.length - 1, Math.max(0, index + direction));
   return rows[next].id;
 }
+
+/**
+ * The batch multi-select (ADR-0023): finance cherry-picks verified claims
+ * for the payment register export and bulk pay. The selection is a set of
+ * claim ids that survives filtering - a row hidden by a filter stays part
+ * of the batch - so every helper returns a new Set and never mutates the
+ * caller's state.
+ */
+
+export function toggleClaimSelection(
+  selected: ReadonlySet<string>,
+  claimId: string,
+): Set<string> {
+  const next = new Set(selected);
+  if (next.has(claimId)) {
+    next.delete(claimId);
+  } else {
+    next.add(claimId);
+  }
+  return next;
+}
+
+/**
+ * The select-all toggle over the given row ids: selecting all of them
+ * clears the whole batch, any other state selects exactly those ids.
+ */
+export function toggleAllSelection(
+  selected: ReadonlySet<string>,
+  claimIds: readonly string[],
+): Set<string> {
+  const next = new Set(selected);
+  if (isSelectionAllSelected(selected, claimIds)) {
+    for (const claimId of claimIds) next.delete(claimId);
+  } else {
+    for (const claimId of claimIds) next.add(claimId);
+  }
+  return next;
+}
+
+/** True when every given row id is selected (and at least one exists). */
+export function isSelectionAllSelected(
+  selected: ReadonlySet<string>,
+  claimIds: readonly string[],
+): boolean {
+  return claimIds.length > 0 && claimIds.every((claimId) => selected.has(claimId));
+}

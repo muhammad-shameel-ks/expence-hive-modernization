@@ -140,28 +140,22 @@ describe("groupAttentionItems", () => {
     expect(groupAttentionItems([], ME, ME_ID)).toEqual({ pending: [] });
   });
 
-  it("excludes held claims even when I am the assigned actor (ADR-0016)", () => {
+  it("includes every claim assigned to me, with no pause state exempting any", () => {
     const list = [
-      expense({
-        id: "a",
-        status: "in-approval",
-        nextActorId: ME_ID,
-        held: { by: "Muhammad Shameel", at: "2026-08-05T10:00:00Z", reason: "Awaiting docs" },
-      }),
+      expense({ id: "a", status: "in-approval", nextActorId: ME_ID }),
       expense({ id: "b", status: "in-approval", nextActorId: ME_ID }),
     ];
     const { pending } = groupAttentionItems(list, ME, ME_ID);
-    expect(pending.map((e) => e.id)).toEqual(["b"]);
+    expect(pending.map((e) => e.id)).toEqual(["a", "b"]);
   });
 
-  it("excludes held in-finance claims even from a terminal pool member", () => {
+  it("surfaces an in-finance claim to a terminal pool member with no pause exemption", () => {
     const list = [
       expense({
         id: "a",
         status: "in-finance",
         requesterId: "emp-requester",
         nextActorId: "emp-finance-1",
-        held: { by: "Rishikesh", at: "2026-08-05T10:00:00Z", reason: "Payment block" },
         steps: [
           {
             id: "s-1",
@@ -173,6 +167,6 @@ describe("groupAttentionItems", () => {
       }),
     ];
     const { pending } = groupAttentionItems(list, "Rishikesh 2", "emp-finance-2", "role-finance-executive");
-    expect(pending).toEqual([]);
+    expect(pending.map((e) => e.id)).toEqual(["a"]);
   });
 });

@@ -44,18 +44,19 @@ const employeeRoleJoin = `
   LEFT JOIN roles r ON r.id = er.role_id
 `;
 
-// The six role capability columns (ADR-0015) as a role record's privilege
-// set. Reads the row's aliased capability fields (role_can_* for employee
-// joins, can_* for role rows). Legacy mock rows without the columns yield
-// undefined, which resolution treats as the submit-only default; real
-// roles rows always carry them after migration 0025.
+// The six role capability columns (ADR-0015, amended by ADR-0024 and
+// ADR-0026) as a role record's privilege set. Reads the row's aliased
+// capability fields (role_can_* for employee joins, can_* for role rows).
+// Legacy mock rows without the columns yield undefined, which resolution
+// treats as the submit-only default; real roles rows always carry them
+// after migration 0025.
 function roleCapabilitiesFromRow(row: Row): RoleCapabilities | undefined {
   if (row.can_submit === null || row.can_submit === undefined) return undefined;
   return {
     canSubmit: Boolean(row.can_submit),
     canApprove: Boolean(row.can_approve),
     canAccessFinance: Boolean(row.can_access_finance),
-    canHold: Boolean(row.can_hold),
+    approveBankDetails: Boolean(row.can_approve_bank_details),
     canViewOrganizationActivity: Boolean(row.can_view_org_activity),
     canAccessAdminConsole: Boolean(row.can_access_admin_console),
   };
@@ -68,7 +69,7 @@ function roleCapabilitiesFromEmployeeRow(row: Row): RoleCapabilities | undefined
     can_submit: row.role_can_submit,
     can_approve: row.role_can_approve,
     can_access_finance: row.role_can_access_finance,
-    can_hold: row.role_can_hold,
+    can_approve_bank_details: row.role_can_approve_bank_details,
     can_view_org_activity: row.role_can_view_org_activity,
     can_access_admin_console: row.role_can_access_admin_console,
   });
@@ -77,7 +78,8 @@ function roleCapabilitiesFromEmployeeRow(row: Row): RoleCapabilities | undefined
 
 const roleCapabilityColumns = `
   r.can_submit AS role_can_submit, r.can_approve AS role_can_approve,
-  r.can_access_finance AS role_can_access_finance, r.can_hold AS role_can_hold,
+  r.can_access_finance AS role_can_access_finance,
+  r.can_approve_bank_details AS role_can_approve_bank_details,
   r.can_view_org_activity AS role_can_view_org_activity,
   r.can_access_admin_console AS role_can_access_admin_console
 `;
@@ -129,7 +131,7 @@ function employeeFromRow(row: Row): AdminEmployee {
 
 const roleSelectColumns = `
   id, organization_id, code, display_name, department_id, active, locked,
-  can_submit, can_approve, can_access_finance, can_hold,
+  can_submit, can_approve, can_access_finance, can_approve_bank_details,
   can_view_org_activity, can_access_admin_console
 `;
 
@@ -424,7 +426,7 @@ export class PostgresAdminStore implements AdminStore {
       await this.pool.query(
         `INSERT INTO roles
            (id, organization_id, code, display_name, locked,
-            can_submit, can_approve, can_access_finance, can_hold,
+            can_submit, can_approve, can_access_finance, can_approve_bank_details,
             can_view_org_activity, can_access_admin_console)
          VALUES ($1, $2, $3, $4, false, $5, $6, $7, $8, $9, $10)`,
         [
@@ -435,7 +437,7 @@ export class PostgresAdminStore implements AdminStore {
           capabilities.canSubmit,
           capabilities.canApprove,
           capabilities.canAccessFinance,
-          capabilities.canHold,
+          capabilities.approveBankDetails,
           capabilities.canViewOrganizationActivity,
           capabilities.canAccessAdminConsole,
         ],
@@ -461,7 +463,8 @@ export class PostgresAdminStore implements AdminStore {
   async setRoleCapabilities(roleId: string, capabilities: RoleCapabilities): Promise<void> {
     await this.pool.query(
       `UPDATE roles SET
-         can_submit = $2, can_approve = $3, can_access_finance = $4, can_hold = $5,
+         can_submit = $2, can_approve = $3, can_access_finance = $4,
+         can_approve_bank_details = $5,
          can_view_org_activity = $6, can_access_admin_console = $7
        WHERE id = $1`,
       [
@@ -469,7 +472,7 @@ export class PostgresAdminStore implements AdminStore {
         capabilities.canSubmit,
         capabilities.canApprove,
         capabilities.canAccessFinance,
-        capabilities.canHold,
+        capabilities.approveBankDetails,
         capabilities.canViewOrganizationActivity,
         capabilities.canAccessAdminConsole,
       ],

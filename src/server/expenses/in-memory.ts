@@ -1,17 +1,37 @@
 import { ExpenseError } from "./commands";
-import type { ActivityEntry, ExpenseClaim, ExpenseEmployee, ExpenseFlow, ExpenseHistoryEvent, ExpenseStore } from "./ports";
+import type {
+  ActivityEntry,
+  BankDetailChangeRequest,
+  BankDetails,
+  ExpenseClaim,
+  ExpenseEmployee,
+  ExpenseFlow,
+  ExpenseHistoryEvent,
+  ExpenseStore,
+} from "./ports";
 
 export class InMemoryExpenseStore implements ExpenseStore {
   private readonly employees: ExpenseEmployee[];
   private readonly flows: ExpenseFlow[];
   private readonly claims = new Map<string, ExpenseClaim>();
+  private readonly bankRequests = new Map<string, BankDetailChangeRequest>();
+  // The approved account per employee, kept in sync with approvals: the
+  // active bank details are the last approved request's details.
+  private readonly approvedBankDetails = new Map<string, BankDetails>();
 
-  constructor(input: { employees: ExpenseEmployee[]; flows?: ExpenseFlow[] }) {
+  constructor(input: {
+    employees: ExpenseEmployee[];
+    flows?: ExpenseFlow[];
+    approvedBankDetails?: Record<string, BankDetails>;
+  }) {
     this.employees = input.employees.map((employee) => ({
       ...employee,
       role: employee.role ? { ...employee.role } : null,
     }));
     this.flows = (input.flows ?? []).map((flow) => ({ ...flow, steps: [...flow.steps] }));
+    for (const [employeeId, details] of Object.entries(input.approvedBankDetails ?? {})) {
+      this.approvedBankDetails.set(employeeId, { ...details });
+    }
   }
 
   async getEmployee(id: string): Promise<ExpenseEmployee | null> {
@@ -120,6 +140,67 @@ export class InMemoryExpenseStore implements ExpenseStore {
     kinds: readonly ExpenseHistoryEvent["kind"][],
   ): Promise<ActivityEntry[]> {
     return this.collectActivity(organizationId, kinds, () => true);
+  }
+
+  async getApprovedBankDetails(employeeId: string): Promise<BankDetails | null> {
+    const details = this.approvedBankDetails.get(employeeId);
+    return details ? { ...details } : null;
+  }
+
+  async listApprovedBankDetails(organizationId: string): Promise<
+    Array<{ employeeId: string; details: BankDetails }>
+  > {
+    const employees = this.employees.filter(
+      (employee) => employee.organizationId === organizationId,
+    );
+    return employees.flatMap((employee) => {
+      const details = this.approvedBankDetails.get(employee.id);
+      return details ? [{ employeeId: employee.id, details: { ...details } }] : [];
+    });
+  }
+
+  async listBankDetailChangeRequests(employeeId: string): Promise<BankDetailChangeRequest[]> {
+    return [...this.bankRequests.values()]
+      .filter((request) => request.employeeId === employeeId)
+      .sort((a, b) => (a.requestedAt < b.requestedAt ? 1 : a.requestedAt > b.requestedAt ? -1 : 0))
+      .map((request) => structuredClone(request));
+  }
+
+  async listPendingBankDetailChangeRequests(
+    organizationId: string,
+  ): Promise<BankDetailChangeRequest[]> {
+    return [...this.bankRequests.values()]
+      .filter(
+        (request) => request.organizationId === organizationId && request.status === "pending",
+      )
+      .sort((a, b) => (a.requestedAt > b.requestedAt ? 1 : a.requestedAt < b.requestedAt ? -1 : 0))
+      .map((request) => structuredClone(request));
+  }
+
+  async getBankDetailChangeRequest(id: string): Promise<BankDetailChangeRequest | null> {
+    const request = this.bankRequests.get(id);
+    return request ? structuredClone(request) : null;
+  }
+
+  async createBankDetailChangeRequest(request: BankDetailChangeRequest): Promise<void> {
+    this.bankRequests.set(request.id, structuredClone(request));
+  }
+
+  async updateBankDetailChangeRequest(request: BankDetailChangeRequest): Promise<void> {
+    this.bankRequests.set(request.id, structuredClone(request));
+    // The active account follows the request lifecycle: an approval
+    // activates the requested details, a rejection leaves the previous
+    // approved account untouched (or none when this was the first request).
+    if (request.status === "approved") {
+      this.approvedBankDetails.set(request.employeeId, { ...request.requested });
+    }
+  }
+
+  async updatePersonalDetails(employeeId: string, input: { phone?: string }): Promise<void> {
+    const employee = this.employees.find((candidate) => candidate.id === employeeId);
+    if (employee) {
+      employee.phone = input.phone?.trim() ? input.phone.trim() : undefined;
+    }
   }
 
   private async collectActivity(

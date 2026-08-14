@@ -3,27 +3,28 @@ import { describe, expect, it, vi } from "vitest";
 import { InMemoryBlobStore } from "../blob/fakes";
 import type { BlobStore } from "../blob/ports";
 import type { AmountGuard } from "../admin/ports";
-import { createExpenseCommands } from "./commands";
+import { createExpenseCommands, ExpenseError } from "./commands";
 import { InMemoryExpenseStore } from "./in-memory";
-import type { ExpenseEmployee, ExpenseFlow, FlowStepTarget } from "./ports";
+import type { BankDetails, ExpenseEmployee, ExpenseFlow, FlowStepTarget } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES } from "./receipt-validation";
 
-// The default privilege catalog (ADR-0015) the migration and seeds backfill:
-// submit-only except Manager +approve, Finance Head +finance +org activity,
-// Finance Executive +finance. The fixtures carry it so the sweep's
-// privilege check behaves like production data.
+// The default privilege catalog (ADR-0015, amended by ADR-0024/0026) the
+// migration and seeds backfill: submit-only except Manager +approve,
+// Finance Head +finance +org activity +approve bank details, Finance
+// Executive +finance. The fixtures carry it so the sweep's privilege check
+// behaves like production data.
 const SUBMIT_ONLY = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: false,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
 
 const ROLE_EXECUTIVE = { id: "role-executive", code: "executive", displayName: "Executive", capabilities: { ...SUBMIT_ONLY } };
 const ROLE_MANAGER = { id: "role-manager", code: "manager", displayName: "Manager", capabilities: { ...SUBMIT_ONLY, canApprove: true } };
-const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true, canViewOrganizationActivity: true } };
+const ROLE_FINANCE_HEAD = { id: "role-finance-head", code: "finance-head", displayName: "Finance Head", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true, canViewOrganizationActivity: true, approveBankDetails: true } };
 const ROLE_FINANCE_EXECUTIVE = { id: "role-finance-executive", code: "finance-executive", displayName: "Finance Executive", capabilities: { ...SUBMIT_ONLY, canAccessFinance: true } };
 const ROLE_TEAM_LEAD = { id: "role-team-lead", code: "team-lead", displayName: "Team Lead", capabilities: { ...SUBMIT_ONLY } };
 const ROLE_INTERN = { id: "role-intern", code: "intern", displayName: "Intern", capabilities: { ...SUBMIT_ONLY } };
@@ -59,6 +60,12 @@ const STANDARD_FLOW: ExpenseFlow = {
   steps: [roleStep(ROLE_MANAGER.id), roleStep(ROLE_FINANCE_HEAD.id), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
 };
 
+const MANAGER_FLOW: ExpenseFlow = {
+  id: "flow-manager",
+  roleId: ROLE_MANAGER.id,
+  steps: [roleStep(ROLE_FINANCE_HEAD.id), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+};
+
 function emp(
   id: string,
   name: string,
@@ -90,7 +97,13 @@ class FlowEditingStore extends InMemoryExpenseStore {
   private publishedFlow: ExpenseFlow | null;
 
   constructor(flow: ExpenseFlow | null, employees: ExpenseEmployee[]) {
-    super({ employees, flows: flow ? [flow] : [] });
+    super({
+      employees,
+      flows: flow ? [flow] : [],
+      approvedBankDetails: Object.fromEntries(
+        employees.map((candidate) => [candidate.id, APPROVED_BANK_DETAILS]),
+      ),
+    });
     this.publishedFlow = flow;
   }
 
@@ -103,10 +116,25 @@ class FlowEditingStore extends InMemoryExpenseStore {
   }
 }
 
+// An approved account every fixture employee carries by default, so the
+// existing submit tests behave like a fully set-up organization. The
+// submission-gate tests build a store without it for the blocked cases.
+const APPROVED_BANK_DETAILS: BankDetails = {
+  holderName: "Muhammad Shameel",
+  accountNumber: "90123456789012",
+  ifsc: "ICIC0004567",
+  bankName: "ICICI Bank",
+  branch: "Koramangala",
+};
+
 function buildCommands(overrides: { employees?: ExpenseEmployee[]; flows?: ExpenseFlow[]; now?: () => Date; blobStore?: BlobStore; store?: InMemoryExpenseStore; absenceTimeout?: { getAbsenceTimeoutDays: (organizationId: string) => Promise<number> } } = {}) {
+  const employees = overrides.employees ?? BASE_EMPLOYEES;
   const store = overrides.store ?? new InMemoryExpenseStore({
-    employees: overrides.employees ?? BASE_EMPLOYEES,
-    flows: overrides.flows ?? [STANDARD_FLOW],
+    employees,
+    flows: overrides.flows ?? [STANDARD_FLOW, MANAGER_FLOW],
+    approvedBankDetails: Object.fromEntries(
+      employees.map((employee) => [employee.id, APPROVED_BANK_DETAILS]),
+    ),
   });
   const blobStore = overrides.blobStore ?? new InMemoryBlobStore();
   return {
@@ -800,6 +828,68 @@ describe("expense commands", () => {
     });
   });
 
+  it("blocks submission without an approved bank detail record, pointing at the profile page, while drafts still save", async () => {
+    // The employee has a receipt but no approved bank details: the gate
+    // (ADR-0024) must refuse submission server-side with a pointer to the
+    // profiles page.
+    const store = new InMemoryExpenseStore({
+      employees: BASE_EMPLOYEES,
+      flows: [STANDARD_FLOW],
+      approvedBankDetails: {
+        "emp-katherine": APPROVED_BANK_DETAILS,
+        "emp-ada": APPROVED_BANK_DETAILS,
+        "emp-pramod": APPROVED_BANK_DETAILS,
+        "emp-finance": APPROVED_BANK_DETAILS,
+      },
+    });
+    const { commands } = buildCommands({ store });
+
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+
+    await expect(commands.submitClaim(employee.id, draft.id)).rejects.toMatchObject({
+      code: "validation",
+      message:
+        "Approved bank details are required before submitting a claim. Add them on your profile page.",
+    });
+
+    // The draft remains editable: the gate never touches draft creation or
+    // the draft's stored state.
+    await expect(commands.getClaim(employee.id, draft.id)).resolves.toMatchObject({
+      id: draft.id,
+      status: "draft",
+    });
+  });
+
+  it("lets the employee submit once an approved bank detail record exists", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: BASE_EMPLOYEES,
+      flows: [STANDARD_FLOW],
+      approvedBankDetails: Object.fromEntries(
+        BASE_EMPLOYEES.map((candidate) => [candidate.id, APPROVED_BANK_DETAILS]),
+      ),
+    });
+    const { commands } = buildCommands({ store });
+    const draft = await commands.createDraft(employee.id, {
+      title: "Client dinner",
+      category: "Meals",
+      amountMinor: 240000,
+      currency: "INR",
+      expenseDate: "2026-08-04",
+      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+    });
+
+    await expect(commands.submitClaim(employee.id, draft.id)).resolves.toMatchObject({
+      status: "in-approval",
+    });
+  });
+
   it("moves one claim through approval, Finance verification, and payment", async () => {
     const { commands } = buildCommands();
     const submitted = await submitStandardDraft(commands);
@@ -1014,7 +1104,7 @@ describe("expense commands", () => {
     });
   });
 
-  it("lists claims at or past the finance stage for Finance, and rejects everyone else", async () => {
+  it("lists only verified claims in the finance payment queue, and rejects everyone else", async () => {
     const { commands } = buildCommands();
     const draft = await commands.createDraft(employee.id, {
       title: "Bengaluru client flight",
@@ -1028,15 +1118,61 @@ describe("expense commands", () => {
     await commands.approveStage("emp-ada", draft.id);
     await commands.approveStage("emp-pramod", draft.id);
 
-    const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
-    expect(financeQueue.find((claim) => claim.id === draft.id)).toBeDefined();
+    // At the finance stage but not yet verified: not in the queue (ADR-0023).
+    let financeQueue = await commands.listFinancePaymentQueue("emp-finance");
+    expect(financeQueue.find((claim) => claim.id === draft.id)).toBeUndefined();
+
+    await commands.verifyClaim("emp-finance", draft.id);
+
+    financeQueue = await commands.listFinancePaymentQueue("emp-finance");
+    expect(financeQueue.find((claim) => claim.id === draft.id)).toMatchObject({ status: "in-finance" });
 
     await expect(commands.listFinancePaymentQueue(employee.id)).rejects.toMatchObject({ code: "unauthorized" });
     await expect(commands.listFinancePaymentQueue("emp-ada")).rejects.toMatchObject({ code: "unauthorized" });
     await expect(commands.listFinancePaymentQueue("emp-katherine")).rejects.toMatchObject({ code: "unauthorized" });
   });
 
-  it("includes rejected claims in the finance payment queue, and still denies inactive and non-Finance employees", async () => {
+  it("lists every employee's approved bank details under the finance gate, for the register export", async () => {
+    const { commands } = buildCommands();
+
+    const details = await commands.listFinanceApprovedBankDetails("emp-finance");
+    expect(details).toEqual(
+      BASE_EMPLOYEES.map((candidate) => ({
+        employeeId: candidate.id,
+        details: APPROVED_BANK_DETAILS,
+      })),
+    );
+
+    await expect(commands.listFinanceApprovedBankDetails(employee.id)).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    await expect(commands.listFinanceApprovedBankDetails("emp-ada")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+    await expect(commands.listFinanceApprovedBankDetails("emp-katherine")).rejects.toMatchObject({
+      code: "unauthorized",
+    });
+  });
+
+  it("returns only employees whose bank details are approved, and rejects inactive Finance staff", async () => {
+    const store = new InMemoryExpenseStore({
+      employees: BASE_EMPLOYEES,
+      flows: [STANDARD_FLOW],
+      approvedBankDetails: { "emp-ada": APPROVED_BANK_DETAILS },
+    });
+    const { commands } = buildCommands({ store });
+
+    const details = await commands.listFinanceApprovedBankDetails("emp-finance");
+    expect(details).toEqual([{ employeeId: "emp-ada", details: APPROVED_BANK_DETAILS }]);
+
+    const inactive = emp("emp-gone", "Gone Person", ROLE_EXECUTIVE, { active: false });
+    const withInactive = buildCommands({ employees: [inactive, ...BASE_EMPLOYEES.slice(1)] });
+    await expect(
+      withInactive.commands.listFinanceApprovedBankDetails(inactive.id),
+    ).rejects.toMatchObject({ code: "unauthorized" });
+  });
+
+  it("keeps rejected claims out of the finance payment queue, and still denies inactive and non-Finance employees", async () => {
     const { commands } = buildCommands();
     const draft = await commands.createDraft(employee.id, {
       title: "Bengaluru client flight",
@@ -1051,8 +1187,10 @@ describe("expense commands", () => {
     await commands.approveStage("emp-pramod", draft.id);
     await commands.rejectClaim("emp-finance", draft.id, "Payout details missing IFSC code");
 
+    // Rejected claims are terminal and no longer part of the queue
+    // (ADR-0023): the org-wide finance list carries the overview instead.
     const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
-    expect(financeQueue.find((claim) => claim.id === draft.id)).toMatchObject({ status: "rejected" });
+    expect(financeQueue.find((claim) => claim.id === draft.id)).toBeUndefined();
 
     const inactive = emp("emp-gone", "Gone Person", ROLE_EXECUTIVE, { active: false });
     const withInactive = buildCommands({ employees: [inactive, ...BASE_EMPLOYEES.slice(1)] });
@@ -1080,6 +1218,7 @@ describe("expense commands", () => {
     await commands.submitClaim(employee.id, draft.id);
     await commands.approveStage("emp-ada", draft.id);
     await commands.approveStage("emp-pramod", draft.id);
+    await commands.verifyClaim("emp-finance", draft.id);
 
     const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
     expect(financeQueue.find((claim) => claim.id === draft.id)).toMatchObject({
@@ -2047,28 +2186,6 @@ describe("expense commands", () => {
       expect(delegated.history.find((event) => event.kind === "delegated")?.detail).toContain("Finance Two");
     });
 
-    it("keeps a held claim held after delegation: the new actor resumes it", async () => {
-      const { commands } = buildCommands({
-        employees: [
-          ...BASE_EMPLOYEES.map((candidate) =>
-            candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-          ),
-          superadmin,
-          emp("emp-ada-2", "Another Manager", ROLE_MANAGER, { departmentId: "dept-eng" }),
-        ],
-      });
-      const submitted = await submitStandardDraft(commands);
-      await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
-
-      const delegated = await commands.delegateClaim(superadmin.id, submitted.id, "emp-ada-2", "Ada is unreachable");
-
-      expect(delegated.heldAt).toBe("2026-08-04T10:00:00.000Z");
-      expect(delegated.heldBy).toBe("emp-ada");
-      expect(delegated.heldReason).toBe("Awaiting the missing invoice");
-      expect(delegated).toMatchObject({ currentActorId: "emp-ada-2", status: "in-approval" });
-      expect(delegated.steps[0].assignedActorId).toBe("emp-ada-2");
-    });
-
     it("refuses an inactive delegatee", async () => {
       const { commands } = buildCommands({
         employees: [
@@ -2354,6 +2471,103 @@ describe("expense commands", () => {
     });
   });
 
+  describe("approval comments (ADR-0028)", () => {
+    it("records the optional comment on the approved history event with actor and timestamp", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+
+      const approved = await commands.approveStage("emp-ada", submitted.id, "Within software budget");
+
+      expect(approved.status).toBe("in-approval");
+      expect(approved.history.at(-1)).toMatchObject({
+        kind: "approved",
+        actorId: "emp-ada",
+        detail: "Within software budget",
+        createdAt: "2026-08-04T10:00:00.000Z",
+      });
+    });
+
+    it("trims surrounding whitespace from the comment before recording it", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+
+      const approved = await commands.approveStage("emp-ada", submitted.id, "  Within software budget  ");
+
+      expect(approved.history.at(-1)).toMatchObject({ kind: "approved", detail: "Within software budget" });
+    });
+
+    it("approves without a comment and records no detail on the event", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+
+      const approved = await commands.approveStage("emp-ada", submitted.id);
+
+      expect(approved.status).toBe("in-approval");
+      expect(approved.history.at(-1)).toMatchObject({ kind: "approved", actorId: "emp-ada" });
+      expect(approved.history.at(-1)?.detail).toBeUndefined();
+    });
+
+    it("treats a whitespace-only comment as absent", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+
+      const approved = await commands.approveStage("emp-ada", submitted.id, "   ");
+
+      expect(approved.history.at(-1)?.detail).toBeUndefined();
+    });
+
+    it("rejects a comment longer than 200 characters", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+
+      await expect(
+        commands.approveStage("emp-ada", submitted.id, `A very long comment. ${"x".repeat(200)}`),
+      ).rejects.toMatchObject({ code: "validation", message: "Comment is too long." });
+    });
+
+    it("accepts a comment of exactly 200 characters", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+      const exact = "x".repeat(200);
+
+      const approved = await commands.approveStage("emp-ada", submitted.id, exact);
+
+      expect(approved.history.at(-1)).toMatchObject({ kind: "approved", detail: exact });
+    });
+
+    it("never writes the comment into the claim-level comments field", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+
+      const approved = await commands.approveStage("emp-ada", submitted.id, "Within software budget");
+
+      expect(approved.comments).toBeUndefined();
+    });
+
+    it("keeps each approval's comment on its own history event", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+      await commands.approveStage("emp-ada", submitted.id, "Manager stage passed");
+      const approved = await commands.approveStage("emp-pramod", submitted.id, "Finance Head agrees");
+
+      const approvalEvents = approved.history.filter((event) => event.kind === "approved");
+      expect(approvalEvents.map((event) => event.detail)).toEqual([
+        "Manager stage passed",
+        "Finance Head agrees",
+      ]);
+    });
+
+    it("surfaces the comment in the approver's activity feed", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands);
+      await commands.approveStage("emp-ada", submitted.id, "Within software budget");
+
+      const activity = await commands.listActivity("emp-ada");
+
+      expect(activity.at(-1)).toMatchObject({ kind: "approved", detail: "Within software budget" });
+    });
+  });
+
   describe("claim visibility for getClaim", () => {
     it("lets an approver view a claim's detail after it has moved past their stage", async () => {
       const { commands } = buildCommands();
@@ -2505,6 +2719,88 @@ describe("expense commands", () => {
       await expect(commands.listActivity("emp-pramod", "emp-ada")).resolves.toEqual([
         expect.objectContaining({ claimId: draft.id, kind: "rejected" }),
       ]);
+    });
+  });
+
+  describe("org-wide expense list (ADR-0023)", () => {
+    function buildWithFinanceHead() {
+      return buildCommands({
+        employees: [
+          employee,
+          emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
+          emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+          emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
+        ],
+      });
+    }
+
+    it("returns every claim in the organization at every stage for a viewer with the view-org-wide-activity privilege", async () => {
+      const { commands } = buildWithFinanceHead();
+      const draft = await commands.createDraft(employee.id, {
+        title: "Draft hotel booking",
+        category: "Lodging",
+        amountMinor: 620000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      const paid = await commands.createDraft(employee.id, {
+        title: "Bengaluru client flight",
+        category: "Travel",
+        amountMinor: 1250000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      await commands.submitClaim(employee.id, paid.id);
+      await commands.approveStage("emp-ada", paid.id);
+      await commands.approveStage("emp-pramod", paid.id);
+      await commands.verifyClaim("emp-finance", paid.id);
+      await commands.markPaid("emp-finance", paid.id);
+      const rejected = await commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      await commands.submitClaim(employee.id, rejected.id);
+      await commands.rejectClaim("emp-ada", rejected.id, "Missing itemized receipt");
+
+      const claims = await commands.listOrganizationClaims("emp-pramod");
+      const byId = new Map(claims.map((claim) => [claim.id, claim]));
+      expect(byId.get(draft.id)).toMatchObject({ status: "draft" });
+      expect(byId.get(paid.id)).toMatchObject({ status: "paid" });
+      expect(byId.get(rejected.id)).toMatchObject({ status: "rejected" });
+    });
+
+    it("denies the org-wide list to Finance Executive and ordinary employees", async () => {
+      const { commands } = buildWithFinanceHead();
+
+      await expect(commands.listOrganizationClaims("emp-finance")).rejects.toMatchObject({ code: "unauthorized" });
+      await expect(commands.listOrganizationClaims(employee.id)).rejects.toMatchObject({ code: "unauthorized" });
+      await expect(commands.listOrganizationClaims("emp-ada")).rejects.toMatchObject({ code: "unauthorized" });
+    });
+
+    it("includes an in-flight claim in the org-wide list even though the payment queue waits for verification", async () => {
+      const { commands } = buildWithFinanceHead();
+      const draft = await commands.createDraft(employee.id, {
+        title: "Client dinner",
+        category: "Meals",
+        amountMinor: 240000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      await commands.submitClaim(employee.id, draft.id);
+      await commands.approveStage("emp-ada", draft.id);
+      await commands.approveStage("emp-pramod", draft.id);
+
+      const claims = await commands.listOrganizationClaims("emp-pramod");
+      expect(claims.find((claim) => claim.id === draft.id)).toMatchObject({ status: "in-finance" });
+
+      const financeQueue = await commands.listFinancePaymentQueue("emp-finance");
+      expect(financeQueue.find((claim) => claim.id === draft.id)).toBeUndefined();
     });
   });
 
@@ -2911,407 +3207,241 @@ describe("deleteDraft", () => {
   });
 });
 
-// Hold state (ADR-0016): a claim pauses at its current stage when the
-// current actor's role carries the hold privilege and a reason is given.
-// Roles below mirror the manager/finance-executive ids so the STANDARD_FLOW
-// eligibility checks pass while carrying the can_hold capability.
-const ROLE_HOLD_MANAGER = {
-  id: ROLE_MANAGER.id,
-  code: "manager",
-  displayName: "Manager",
-  capabilities: { ...SUBMIT_ONLY, canApprove: true, canHold: true },
-};
-const ROLE_HOLD_FINANCE = {
-  id: ROLE_FINANCE_EXECUTIVE.id,
-  code: "finance-executive",
-  displayName: "Finance Executive",
-  capabilities: { ...SUBMIT_ONLY, canAccessFinance: true, canHold: true },
-};
 
-describe("hold and resume", () => {
-  it("lets the current stage actor with the hold privilege pause a claim, recording a held event with the reason", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
+// Hold removal (ADR-0026): the hold feature is gone entirely. No command can
+// pause or resume a claim, the sweep applies to every pending claim with no
+// exemption, and previously-held claims are plain in-flight claims.
+describe("hold removal", () => {
+  it("exposes no hold or resume commands at all", () => {
+    const { commands } = buildCommands();
+    const surface = commands as unknown as Record<string, unknown>;
+    expect(surface.holdClaim).toBeUndefined();
+    expect(surface.resumeClaim).toBeUndefined();
+    expect(surface.listHeldClaims).toBeUndefined();
+  });
+
+  it("sweeps every idle pending claim, including one that was previously held", async () => {
+    let clock = new Date("2026-08-04T10:00:00.000Z");
+    const { commands } = buildCommands({ now: () => clock });
     const submitted = await submitStandardDraft(commands);
 
-    const held = await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
+    // The stage waits past the configured absence timeout with no hold
+    // exemption in the way.
+    clock = new Date("2026-09-30T10:00:00.000Z");
+    const advanced = await commands.sweepAbsentClaims("org-1");
 
-    expect(held).toMatchObject({
+    expect(advanced.map((claim) => claim.id)).toContain(submitted.id);
+    await expect(commands.getClaim(employee.id, submitted.id)).resolves.toMatchObject({
       status: "in-approval",
-      currentStage: ROLE_MANAGER.id,
-      currentActorId: "emp-ada",
-      heldAt: "2026-08-04T10:00:00.000Z",
-      heldBy: "emp-ada",
-      heldReason: "Awaiting the missing invoice",
-      version: submitted.version + 1,
-    });
-    expect(held.history.map((event) => event.kind)).toEqual(["draft", "submitted", "held"]);
-    expect(held.history[2]).toMatchObject({
-      kind: "held",
-      actorId: "emp-ada",
-      detail: "Awaiting the missing invoice",
-    });
-  });
-
-  it("rejects a hold from an actor who is not the current stage actor", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-
-    await expect(
-      commands.holdClaim("emp-katherine", submitted.id, "Let me look at this"),
-    ).rejects.toMatchObject({
-      code: "unauthorized",
-      message: "This expense claim is not assigned to you.",
-    });
-  });
-
-  it("rejects a hold from the claim's requester", async () => {
-    const { commands } = buildCommands();
-    const submitted = await submitStandardDraft(commands);
-
-    await expect(commands.holdClaim(employee.id, submitted.id, "My own claim")).rejects.toMatchObject({
-      code: "unauthorized",
-      message: "You cannot hold your own expense claim.",
-    });
-  });
-
-  it("rejects a hold when the actor's role lacks the can_hold capability", async () => {
-    const { commands } = buildCommands();
-    const submitted = await submitStandardDraft(commands);
-
-    await expect(commands.holdClaim("emp-ada", submitted.id, "Awaiting docs")).rejects.toMatchObject({
-      code: "unauthorized",
-      message: "Your role does not have the hold privilege.",
-    });
-  });
-
-  it("requires a non-empty reason to hold", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-
-    await expect(commands.holdClaim("emp-ada", submitted.id, "   ")).rejects.toMatchObject({
-      code: "validation",
-      message: "A reason is required to hold a claim.",
-    });
-  });
-
-  it("rejects holding an already-held claim", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "First hold");
-
-    await expect(commands.holdClaim("emp-ada", submitted.id, "Second hold")).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is already held.",
-    });
-  });
-
-  it("only holds an in-flight claim, never a draft or a terminal one", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const draft = await commands.createDraft(employee.id, {
-      title: "Client dinner",
-      category: "Meals",
-      amountMinor: 240000,
-      currency: "INR",
-      expenseDate: "2026-08-04",
-    });
-
-    await expect(commands.holdClaim("emp-ada", draft.id, "Pause the draft")).rejects.toMatchObject({
-      code: "conflict",
-      message: "Only an in-flight claim can be held.",
-    });
-  });
-
-  it("freezes approve and reject while the claim is held", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Holding for review");
-
-    await expect(commands.approveStage("emp-ada", submitted.id)).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is held and cannot be acted on until it is resumed.",
-    });
-    await expect(commands.rejectClaim("emp-ada", submitted.id, "Too expensive")).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is held and cannot be acted on until it is resumed.",
-    });
-  });
-
-  it("freezes verify and pay while a terminal-stage claim is held", async () => {
-    const { commands } = buildCommands({
-      employees: [
-        ...BASE_EMPLOYEES.map((candidate) =>
-          candidate.id === "emp-finance" ? { ...candidate, role: ROLE_HOLD_FINANCE } : candidate,
-        ),
-        emp("emp-rishikesh", "Rishikesh 2", ROLE_HOLD_FINANCE, { departmentId: "dept-finance" }),
-      ],
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.approveStage("emp-ada", submitted.id);
-    await commands.approveStage("emp-pramod", submitted.id);
-    const inFinance = await commands.getClaim(employee.id, submitted.id);
-    expect(inFinance).toMatchObject({ status: "in-finance", currentActorId: "emp-finance" });
-
-    const held = await commands.holdClaim("emp-finance", submitted.id, "Receipt is being rechecked");
-
-    await expect(commands.verifyClaim("emp-finance", held.id)).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is held and cannot be acted on until it is resumed.",
-    });
-    // A pool member who is not the assigned actor is also frozen.
-    await expect(commands.verifyClaim("emp-rishikesh", held.id)).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is held and cannot be acted on until it is resumed.",
-    });
-
-    // A claim verified before the hold is equally frozen against payment.
-    const verifiedThenHeld = await submitStandardDraft(commands);
-    await commands.approveStage("emp-ada", verifiedThenHeld.id);
-    await commands.approveStage("emp-pramod", verifiedThenHeld.id);
-    await commands.verifyClaim("emp-finance", verifiedThenHeld.id);
-    await commands.holdClaim("emp-finance", verifiedThenHeld.id, "Payment block under review");
-
-    await expect(commands.markPaid("emp-finance", verifiedThenHeld.id)).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is held and cannot be acted on until it is resumed.",
-    });
-  });
-
-  it("resumes a held claim as its current stage actor, recording a resumed event and clearing the hold", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
-
-    const resumed = await commands.resumeClaim("emp-ada", submitted.id);
-
-    expect(resumed).toMatchObject({
-      status: "in-approval",
-      currentStage: ROLE_MANAGER.id,
-      currentActorId: "emp-ada",
-      heldAt: undefined,
-      heldBy: undefined,
-      heldReason: undefined,
-    });
-    expect(resumed.history.map((event) => event.kind)).toEqual(["draft", "submitted", "held", "resumed"]);
-    expect(resumed.history[3]).toMatchObject({ kind: "resumed", actorId: "emp-ada" });
-    // The hold pauses the absence clock: resume starts a fresh window.
-    expect(resumed.currentStageSince).toBe("2026-08-04T10:00:00.000Z");
-  });
-
-  it("rejects a resume from an actor who is not the current stage actor", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Awaiting docs");
-
-    await expect(commands.resumeClaim("emp-katherine", submitted.id)).rejects.toMatchObject({
-      code: "unauthorized",
-      message: "This expense claim is not assigned to you.",
-    });
-  });
-
-  it("rejects resuming a claim that is not held", async () => {
-    const { commands } = buildCommands();
-    const submitted = await submitStandardDraft(commands);
-
-    await expect(commands.resumeClaim("emp-ada", submitted.id)).rejects.toMatchObject({
-      code: "conflict",
-      message: "This claim is not held.",
-    });
-  });
-
-  it("rejects resuming a claim that left the flow", async () => {
-    const { commands } = buildCommands();
-    const submitted = await submitStandardDraft(commands);
-    await commands.approveStage("emp-ada", submitted.id);
-    await commands.approveStage("emp-pramod", submitted.id);
-    await commands.verifyClaim("emp-finance", submitted.id);
-    const paid = await commands.markPaid("emp-finance", submitted.id);
-
-    await expect(commands.resumeClaim("emp-finance", paid.id)).rejects.toMatchObject({
-      code: "conflict",
-      message: "Only an in-flight claim can be resumed.",
-    });
-  });
-
-  it("unfreezes the claim after resume: the same actor can then decide", async () => {
-    const { commands } = buildCommands({
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Held for review");
-    await commands.resumeClaim("emp-ada", submitted.id);
-
-    await expect(commands.approveStage("emp-ada", submitted.id)).resolves.toMatchObject({
       currentStage: ROLE_FINANCE_HEAD.id,
       currentActorId: "emp-pramod",
     });
   });
+});
 
-  it("never auto-skips a held claim in the absence sweep, even far past the timeout", async () => {
-    let clock = new Date("2026-08-04T10:00:00.000Z");
-    const { commands } = buildCommands({
-      now: () => clock,
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
-
-    clock = new Date("2026-09-30T10:00:00.000Z");
-    const advanced = await commands.sweepAbsentClaims("org-1");
-
-    expect(advanced).toEqual([]);
-    await expect(commands.getClaim(employee.id, submitted.id)).resolves.toMatchObject({
-      status: "in-approval",
-      currentStage: ROLE_MANAGER.id,
-      currentActorId: "emp-ada",
-      heldAt: "2026-08-04T10:00:00.000Z",
-    });
-  });
-
-  it("gives the resumed stage a fresh absence window, so a long hold never sweeps it on resume", async () => {
-    let clock = new Date("2026-08-04T10:00:00.000Z");
-    const { commands } = buildCommands({
-      now: () => clock,
-      employees: BASE_EMPLOYEES.map((candidate) =>
-        candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-      ),
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
-
-    // The hold runs for two months; the stage times out long ago, but the
-    // claim is exempt while held.
-    clock = new Date("2026-10-04T10:00:00.000Z");
-    const resumed = await commands.resumeClaim("emp-ada", submitted.id);
-    expect(resumed.currentStageSince).toBe("2026-10-04T10:00:00.000Z");
-
-    // Two days after resume: inside the fresh 3-day window, no sweep.
-    clock = new Date("2026-10-06T10:00:00.000Z");
-    const advanced = await commands.sweepAbsentClaims("org-1");
-    expect(advanced).toEqual([]);
-  });
-
-  it("lists every held claim with resolved names for the admin console", async () => {
-    const { commands } = buildCommands({
-      employees: [
-        ...BASE_EMPLOYEES.map((candidate) =>
-          candidate.id === "emp-ada" ? { ...candidate, role: ROLE_HOLD_MANAGER } : candidate,
-        ),
-        emp("emp-super", "Super Boss", ROLE_SUPERADMIN),
-      ],
-    });
-    const submitted = await submitStandardDraft(commands);
-    await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
-
-    await expect(commands.listHeldClaims("emp-super")).resolves.toEqual([
-      {
-        claimId: submitted.id,
-        ref: submitted.ref,
-        title: "Client dinner",
-        heldBy: "Ada Lovelace",
-        heldReason: "Awaiting the missing invoice",
-        heldAt: "2026-08-04T10:00:00.000Z",
-        stage: "Manager",
-      },
-    ]);
-  });
-
-  it("rejects the held-claims list even for a console-capable non-Superadmin role", async () => {
-    const consoleRole = {
-      id: "role-console",
-      code: "admin-console",
-      displayName: "Console Admin",
-      capabilities: { ...SUBMIT_ONLY, canAccessAdminConsole: true },
-    };
-    const consoleAdmin = emp("emp-console", "Console Admin", consoleRole, { departmentId: "dept-eng" });
-    const { commands } = buildCommands({
-      employees: [...BASE_EMPLOYEES, consoleAdmin],
+describe("bulk approvals (ADR-0029)", () => {
+  describe("listApprovalsQueue", () => {
+    it("rejects an actor whose role lacks the canApprove privilege", async () => {
+      const { commands } = buildCommands();
+      await expect(commands.listApprovalsQueue(employee.id)).rejects.toMatchObject({
+        code: "unauthorized",
+        message: "Only approvers can access the approvals inbox.",
+      });
     });
 
-    await expect(commands.listHeldClaims("emp-console")).rejects.toMatchObject({
-      code: "unauthorized",
-      message: "Only Superadmin can view held claims.",
+    it("returns claims awaiting the manager's approval in their department", async () => {
+      const { commands } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      const claim2 = await submitStandardDraft(commands, "emp-katherine");
+
+      const queue = await commands.listApprovalsQueue("emp-ada");
+      expect(queue.map((c) => c.id).sort()).toEqual([claim1.id, claim2.id].sort());
+    });
+
+    it("does not include claims raised by the approver themselves", async () => {
+      const { commands } = buildCommands();
+      const managerDraft = await commands.createDraft("emp-ada", {
+        title: "Manager travel",
+        category: "Travel",
+        amountMinor: 500000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      await commands.submitClaim("emp-ada", managerDraft.id);
+
+      const queue = await commands.listApprovalsQueue("emp-ada");
+      expect(queue.find((c) => c.id === managerDraft.id)).toBeUndefined();
+    });
+
+    it("does not include drafts, paid, rejected claims, or other roles' claims in manager queue", async () => {
+      const { commands } = buildCommands();
+      const draft = await commands.createDraft(employee.id, {
+        title: "Working draft",
+        category: "Meals",
+        amountMinor: 100000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      const rejectedClaim = await submitStandardDraft(commands, employee.id);
+      await commands.rejectClaim("emp-ada", rejectedClaim.id, "Rejected");
+
+      const submitted = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", submitted.id); // now at Finance Head
+
+      const managerQueue = await commands.listApprovalsQueue("emp-ada");
+      expect(managerQueue.find((c) => c.id === draft.id)).toBeUndefined();
+      expect(managerQueue.find((c) => c.id === rejectedClaim.id)).toBeUndefined();
+      expect(managerQueue.find((c) => c.id === submitted.id)).toBeUndefined();
+    });
+
+    it("returns claims awaiting the finance head's approval once manager stage has passed", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", submitted.id);
+
+      const financeHeadQueue = await commands.listApprovalsQueue("emp-pramod");
+      expect(financeHeadQueue.map((c) => c.id)).toContain(submitted.id);
+    });
+
+    it("returns in-finance claims for a finance executive based on role eligibility", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", submitted.id);
+      await commands.approveStage("emp-pramod", submitted.id); // now at Finance Executive (in-finance)
+
+      const financeQueue = await commands.listApprovalsQueue("emp-finance");
+      expect(financeQueue.map((c) => c.id)).toContain(submitted.id);
     });
   });
 
-  it("resolves a team-lead stage label for a held claim without a role id", async () => {
-    const teamLeadRequester = emp("emp-team-requester", "Team Requester", ROLE_EXECUTIVE, {
-      managerId: "emp-abilash",
-    });
-    const teamLeadAssignee = emp("emp-abilash", "Abilash", {
-      id: "role-team-lead",
-      code: "team-lead",
-      displayName: "Team Lead",
-      capabilities: { ...SUBMIT_ONLY, canHold: true },
-    });
-    const financeExec = emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
-    const superadmin = emp("emp-super", "Super Boss", ROLE_SUPERADMIN);
-    const { commands } = buildCommands({
-      employees: [teamLeadRequester, teamLeadAssignee, financeExec, superadmin],
-      flows: [
-        {
-          id: "flow-team-lead",
-          roleId: ROLE_EXECUTIVE.id,
-          steps: [TEAM_LEAD_STEP, roleStep(ROLE_FINANCE_EXECUTIVE.id)],
-        },
-      ],
-    });
-    const draft = await commands.createDraft(teamLeadRequester.id, {
-      title: "Team lead claim",
-      category: "Meals",
-      amountMinor: 10000,
-      currency: "INR",
-      expenseDate: "2026-08-04",
-      attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
-    });
-    const submitted = await commands.submitClaim(teamLeadRequester.id, draft.id);
-    await commands.holdClaim("emp-abilash", submitted.id, "Need more detail");
+  describe("approveClaims", () => {
+    it("rejects an actor without the canApprove privilege", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands, employee.id);
 
-    await expect(commands.listHeldClaims("emp-super")).resolves.toEqual([
-      {
-        claimId: submitted.id,
-        ref: submitted.ref,
-        title: "Team lead claim",
-        heldBy: "Abilash",
-        heldReason: "Need more detail",
-        heldAt: "2026-08-04T10:00:00.000Z",
-        stage: "Team lead",
-      },
-    ]);
+      await expect(commands.approveClaims(employee.id, [submitted.id])).rejects.toMatchObject({
+        code: "unauthorized",
+        message: "Only approvers can approve claims.",
+      });
+    });
+
+    it("rejects an oversized approval comment before processing any claims", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands, employee.id);
+
+      await expect(
+        commands.approveClaims("emp-ada", [submitted.id], "x".repeat(201)),
+      ).rejects.toMatchObject({
+        code: "validation",
+        message: "Comment is too long.",
+      });
+    });
+
+    it("approves multiple eligible claims in bulk and applies the optional comment", async () => {
+      const { commands } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      const claim2 = await submitStandardDraft(commands, "emp-katherine");
+
+      const report = await commands.approveClaims(
+        "emp-ada",
+        [claim1.id, claim2.id],
+        "Bulk approved by manager",
+      );
+
+      expect(report.skipped).toEqual([]);
+      expect(report.approved.map((c) => c.id).sort()).toEqual([claim1.id, claim2.id].sort());
+
+      const c1 = await commands.getClaim(employee.id, claim1.id);
+      expect(c1.status).toBe("in-approval");
+      expect(c1.currentStage).toBe(ROLE_FINANCE_HEAD.id);
+      expect(c1.history.at(-1)).toMatchObject({
+        kind: "approved",
+        actorId: "emp-ada",
+        detail: "Bulk approved by manager",
+      });
+    });
+
+    it("verifies in-finance claims in bulk when executed by a finance executive", async () => {
+      const { commands } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", claim1.id);
+      await commands.approveStage("emp-pramod", claim1.id); // in-finance
+
+      const report = await commands.approveClaims("emp-finance", [claim1.id], "Finance bulk verified");
+      expect(report.skipped).toEqual([]);
+      expect(report.approved.map((c) => c.id)).toEqual([claim1.id]);
+
+      const c1 = await commands.getClaim(employee.id, claim1.id);
+      expect(c1.status).toBe("in-finance");
+      expect(c1.history.at(-1)).toMatchObject({
+        kind: "verified",
+        actorId: "emp-finance",
+        detail: "Finance bulk verified",
+      });
+    });
+
+    it("deduplicates claim ids so duplicate ids are approved once", async () => {
+      const { commands } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+
+      const report = await commands.approveClaims("emp-ada", [claim1.id, claim1.id]);
+      expect(report.approved).toHaveLength(1);
+      expect(report.skipped).toHaveLength(0);
+    });
+
+    it("skips and reports ineligible claims with specific reasons", async () => {
+      const { commands } = buildCommands();
+      const validClaim = await submitStandardDraft(commands, employee.id);
+      const draft = await commands.createDraft(employee.id, {
+        title: "Draft claim",
+        category: "Meals",
+        amountMinor: 50000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+      });
+      const ownClaim = await commands.createDraft("emp-ada", {
+        title: "Manager claim",
+        category: "Meals",
+        amountMinor: 50000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      await commands.submitClaim("emp-ada", ownClaim.id);
+
+      const report = await commands.approveClaims("emp-ada", [
+        validClaim.id,
+        "non-existent-id",
+        draft.id,
+        ownClaim.id,
+      ]);
+
+      expect(report.approved.map((c) => c.id)).toEqual([validClaim.id]);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: "non-existent-id", reason: "not-found" }),
+      );
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: draft.id, reason: "not-in-approval" }),
+      );
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: ownClaim.id, reason: "self-claim" }),
+      );
+    });
+
+    it("handles optimistic concurrency store conflict gracefully as a skipped claim", async () => {
+      const { commands, store } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+
+      vi.spyOn(store, "updateClaim").mockRejectedValueOnce(
+        new ExpenseError("conflict", "Claim was modified"),
+      );
+
+      const report = await commands.approveClaims("emp-ada", [claim1.id]);
+      expect(report.approved).toHaveLength(0);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: claim1.id, reason: "conflict" }),
+      );
+    });
   });
 });

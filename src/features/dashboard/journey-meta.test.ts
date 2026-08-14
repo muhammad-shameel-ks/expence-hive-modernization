@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { Clock, PauseCircle, PlayCircle } from "lucide-react";
-import { formatMoney, HELD_META, simplifyAutoSkipDetail, submittedLabel, KIND_META, getKindMeta } from "./journey-meta";
+import { Clock } from "lucide-react";
+import { formatMoney, simplifyAutoSkipDetail, submittedLabel, KIND_META, getKindMeta } from "./journey-meta";
 import { getJourneyFlowItems } from "./journey-flow";
 import { claimToExpense } from "./expense-read-model";
+import type { Expense } from "./mock-data";
 
 describe("getKindMeta", () => {
   it("returns KIND_META for known history kinds", () => {
@@ -52,41 +53,36 @@ describe("simplifyAutoSkipDetail", () => {
   });
 });
 
-describe("hold journey meta", () => {
-  it("maps held and resumed history kinds to their timeline entries", () => {
-    expect(KIND_META.held).toMatchObject({ label: "Held", tone: "warning", icon: PauseCircle });
-    expect(KIND_META.resumed).toMatchObject({ label: "Resumed", tone: "primary", icon: PlayCircle });
+describe("hold removal journey meta", () => {
+  it("has no held or resumed entries in the timeline meta (ADR-0026)", () => {
+    expect("held" in KIND_META).toBe(false);
+    expect("resumed" in KIND_META).toBe(false);
+    // A legacy held event falls back to the generic activity meta instead
+    // of rendering a Held entry.
+    expect(getKindMeta("held")).toMatchObject({ label: "Held", tone: "muted", icon: Clock });
   });
 
-  it("exposes the held badge meta with a warning tone", () => {
-    expect(HELD_META).toEqual({ label: "Held", tone: "warning" });
-  });
-
-  it("renders held and resumed events on the timeline in order", () => {
-    const expense = {
+  it("renders legacy held/resumed history events as plain timeline entries without freezing the claim", () => {
+    const legacyHeldKind = "held" as unknown as Expense["history"][number]["kind"];
+    const expense: Expense = {
       id: "ex-held",
       ref: "EXP-HELD",
-      title: "Held claim",
+      title: "Legacy claim",
       category: "Travel",
       amount: 300,
       currency: "INR",
       date: "Aug 5",
       submittedAt: "2026-08-05T10:00:00Z",
-      status: "in-approval" as const,
-      held: {
-        by: "Sanil Davis",
-        at: "2026-08-06T10:00:00Z",
-        reason: "Awaiting the missing invoice",
-      },
+      status: "in-approval",
       attachments: [],
       history: [
-        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
+        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" },
         {
           id: "h2",
           date: "Aug 6",
           actor: "Sanil Davis",
           actorId: "emp-sanil",
-          kind: "held" as const,
+          kind: legacyHeldKind,
           detail: "Awaiting the missing invoice",
         },
       ],
@@ -96,60 +92,18 @@ describe("hold journey meta", () => {
           roleId: "r1",
           roleName: "Manager",
           assignedActorName: "Sanil Davis",
-          status: "pending" as const,
+          status: "pending",
         },
       ],
     };
 
     const steps = getJourneyFlowItems(expense);
     expect(steps[0]).toMatchObject({ label: "Submitted", pending: false });
-    expect(steps[1]).toMatchObject({ label: "Held", pending: false, icon: PauseCircle });
-    // A held claim pulses nothing as next: the hold outranks the pending
-    // stage, and the stage reads as on hold.
-    const heldStage = steps[2];
-    expect(heldStage).toMatchObject({ label: "Manager", pending: true, detail: "On hold - awaiting resume" });
-    expect(heldStage.isNext).toBe(false);
-    expect(steps.filter((step) => step.isNext)).toHaveLength(0);
-  });
-
-  it("marks the held event as the current point of the journey", () => {
-    const expense = {
-      id: "ex-held-2",
-      ref: "EXP-HELD-2",
-      title: "Held claim",
-      category: "Travel",
-      amount: 300,
-      currency: "INR",
-      date: "Aug 5",
-      submittedAt: "2026-08-05T10:00:00Z",
-      status: "in-approval" as const,
-      held: { by: "Sanil Davis", at: "2026-08-06T10:00:00Z", reason: "Awaiting docs" },
-      attachments: [],
-      history: [
-        { id: "h1", date: "Aug 5", actor: "Shameel", kind: "submitted" as const },
-        { id: "h2", date: "Aug 5", actor: "Sanil Davis", kind: "approved" as const },
-        {
-          id: "h3",
-          date: "Aug 6",
-          actor: "Sanil Davis",
-          kind: "held" as const,
-          detail: "Awaiting docs",
-        },
-      ],
-      steps: [
-        {
-          id: "s1",
-          roleId: "r1",
-          roleName: "Manager",
-          assignedActorName: "Sanil Davis",
-          status: "pending" as const,
-        },
-      ],
-    };
-
-    const steps = getJourneyFlowItems(expense);
-    const heldEvent = steps.find((step) => step.label === "Held");
-    expect(heldEvent?.isCurrent).toBe(true);
+    // The legacy held event renders as a generic entry, never as a Held
+    // pause, and the pending stage pulses as next again.
+    expect(steps[1]).toMatchObject({ label: "Held", pending: false, icon: Clock });
+    expect(steps[2]).toMatchObject({ label: "Manager", pending: true, detail: "Pending Manager decision" });
+    expect(steps[2].isNext).toBe(true);
   });
 });
 
@@ -670,7 +624,7 @@ describe("payment queue claim journey integration", () => {
       subCategory: "",
       remark: "",
       amountMinor: 40000,
-      currency: "INR",
+      currency: "INR" as const,
       expenseDate: "2026-08-05",
       status: "in-finance" as const,
       createdAt: "2026-08-05T10:00:00.000Z",
@@ -682,7 +636,7 @@ describe("payment queue claim journey integration", () => {
         {
           id: "h3",
           kind: "auto-skipped" as const,
-          actorId: null,
+          actorId: undefined,
           detail: "Total ₹400 under ₹5000 guard on Finance Head step",
           createdAt: "2026-08-05T11:00:00.000Z",
         },
@@ -741,7 +695,7 @@ describe("payment queue claim journey integration", () => {
       subCategory: "",
       remark: "",
       amountMinor: 150000,
-      currency: "INR",
+      currency: "INR" as const,
       expenseDate: "2026-08-01",
       status: "rejected" as const,
       createdAt: "2026-08-01T10:00:00.000Z",

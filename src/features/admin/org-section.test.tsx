@@ -61,7 +61,7 @@ const MANAGER_ROLE: AdminRole = {
     canSubmit: true,
     canApprove: true,
     canAccessFinance: false,
-    canHold: false,
+    approveBankDetails: false,
     canViewOrganizationActivity: false,
     canAccessAdminConsole: false,
   },
@@ -280,7 +280,7 @@ describe("OrgSection role creation", () => {
         canSubmit: true,
         canApprove: false,
         canAccessFinance: true,
-        canHold: false,
+        approveBankDetails: false,
         canViewOrganizationActivity: false,
         canAccessAdminConsole: false,
       },
@@ -315,6 +315,22 @@ describe("OrgSection role creation", () => {
 });
 
 describe("OrgSection privilege toggles", () => {
+  it("renders the fixed six-toggle catalog, including approve bank detail changes (ADR-0024)", () => {
+    renderOrg([], [MANAGER_ROLE]);
+
+    expect(screen.getByRole("switch", { name: "Manager Submit claims" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Manager Approve and reject" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Manager Finance verify and pay" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Manager Approve bank detail changes" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Manager View org-wide activity" })).toBeInTheDocument();
+    expect(screen.getByRole("switch", { name: "Manager Access the admin console" })).toBeInTheDocument();
+    // Exactly six toggles: the hold toggle is gone (ADR-0026) and the
+    // bank-approval toggle is added (ADR-0024).
+    expect(
+      screen.getAllByRole("switch", { name: /^Manager / }),
+    ).toHaveLength(6);
+  });
+
   it("saves a granted privilege toggle", async () => {
     const { onMessage, onRolesChange } = renderOrg([], [MANAGER_ROLE]);
     const updated: AdminRole = {

@@ -39,9 +39,19 @@ It materializes only when a receipt exists (picked file or stored receipt); it i
 _Avoid_: Preview panel, receipt pane
 
 **Payment queue**:
-The Finance-only list of claims in the payment lifecycle: awaiting payment, paid, and rejected.
-Rejected claims appear so Finance keeps the full record visible, but they are frozen - no comment editing and no terminal actions (ADR-0008).
+The Finance-only list of claims in the verified state, waiting to be paid.
+The queue renders only verified claims: rejected claims no longer appear here, and every-stage visibility lives in the org-wide finance list view (ADR-0023).
 _Avoid_: Finance tab, payout list
+
+**Payment register**:
+The Excel export of a finance selection of verified claims - employee, amount, bank details, and the internal expense ID - handed to the external financial processing step.
+Dragging the same file back onto the payments tab auto-selects the matching claims by expense ID; the file is parsed server-side, never in the browser (ADR-0023).
+_Avoid_: Payout file, bank sheet, payment batch
+
+**Org-wide finance list view**:
+A Finance expense table showing every claim in the organization at every stage, reusing the unified one-per-status filter component (ADR-0021).
+Distinct from `/expenses/all`, which is viewer-scoped to the user's own claims.
+_Avoid_: All expenses, company expense table
 
 **Export current view**:
 The Excel export option that mirrors the queue exactly as filtered: the search text, status/category/amount/date filters, and the sort all apply.
@@ -79,7 +89,7 @@ _Avoid_: Policy skip, automatic waiver
 **Absence auto-skip**:
 A pending stage skipped because its assigned actor has not decided within the company's configured absence timeout, or because the stage is vacant (no active employee holds it).
 The timeout is a single company-wide setting, defaulting to 3 days, configurable by Superadmin in the admin panel and enforced by a scheduled sweep job plus the lazy read-path backstop (ADR-0018).
-Held claims are exempt: a hold outranks the timeout (ADR-0016).
+Delegation is the explicit rescue when an assignee is unavailable; there is no hold exemption (ADR-0026).
 _Avoid_: Timeout skip, stale-stage skip, no-response skip
 
 **Amount overrun approval**:
@@ -106,22 +116,35 @@ _Avoid_: Skip-ahead, jump approval
 The Superadmin-only action of re-pointing an in-flight claim's current task to another specific person, without acting on the claim.
 Delegating to someone whose role sits later in the claim's frozen steps auto-skips the intermediate pending steps and lands the claim at that step; any other target (same stage, or a role absent from the flow) acts at the current stage - only the person changes.
 A required reason is recorded as a `delegated` history event plus one `skipped` event per intermediate step (ADR-0017).
-Delegating a held claim does not clear the hold; the new actor resumes it (ADR-0016).
 _Avoid_: Hand off, reassign, takeover, reassign task
 
 **Hold**:
-A claim paused at any stage by its current actor (a role with the hold privilege), recorded as a `held` history event with a required reason.
-Held claims keep their flow position, show a Held badge everywhere, and are frozen against terminal actions.
-The current stage actor resumes (a `resumed` event); Superadmin keeps a held-claims oversight view, and holds are exempt from the absence sweep (ADR-0016).
+Retired concept (ADR-0026): a claim paused at any stage by its current actor, recorded as a `held` history event with a required reason, resumable by the current stage actor.
+Hold is removed entirely; the only correction path is an outright rejection followed by a new claim.
 _Avoid_: Freeze, pause, on-hold claim
 
+**Bank details**:
+The employee's approved payment account on the profiles page: holder name, account number, IFSC, bank name, and branch.
+A bank-details change enters a pending state and takes effect only after a role with the `approve bank detail changes` privilege approves it; nobody approves their own change.
+Submission is blocked server-side until an approved bank detail record exists, and payments read the currently-approved details at payment time (ADR-0024).
+_Avoid_: Payment info, account details, payout profile
+
+**Approval comment**:
+The optional free-text note an approver can attach to an approval, stored on the `approved` history event and rendered wherever the rejection reason renders: timeline, drawer, activity feed, and expense summary PDF (ADR-0028).
+_Avoid_: Approval note, approver remark, decision comment
+
+**OCR extraction**:
+The server-side provider adapter that reads a PDF receipt and suggests amount, date, vendor, and a best-effort category into the draft form.
+Suggestions are never written silently; the employee confirms or edits each one (ADR-0025).
+_Avoid_: Receipt reading, auto-fill, document scanning
+
 **Privilege toggle**:
-One of the six fixed role capabilities stored per role record - submit claims, approve/reject, finance verify/pay, hold, view org-wide activity, access the admin console - editable for the five predefined roles and for custom roles.
-Delegation and company auto-skip configuration are Superadmin-only built-ins and are never toggles (ADR-0015).
+One of the six fixed role capabilities stored per role record - submit claims, approve/reject, finance verify/pay, approve bank detail changes, view org-wide activity, access the admin console - editable for the five predefined roles and for custom roles.
+Delegation and company auto-skip configuration are Superadmin-only built-ins and are never toggles (ADR-0015, amended by ADR-0024 and ADR-0026).
 _Avoid_: Permission flag, role grant, capability switch
 
 **Expense drawer**:
-The single right-side drawer component (`ExpenseDrawer`) that renders a claim's facts, journey timeline, and next actions (approve/reject, verify/pay, hold, download summary, and Superadmin-only delegation).
+The single right-side drawer component (`ExpenseDrawer`) that renders a claim's facts, journey timeline, and next actions (approve/reject with optional comment, verify/pay, download summary, and Superadmin-only delegation).
 Used from both the dashboard and the payment queue (ADR-0014) - one component, multiple call sites, no per-feature drawer variants.
 _Avoid_: Detail panel, claim modal, side sheet
 
@@ -134,3 +157,18 @@ _Avoid_: Department manager, dept lead, department owner
 The payment queue's left/inline panel that shows only the claim's receipt PDF (or a "no receipt attached" fallback) while the table shrinks beside it.
 Deliberately does not render the journey timeline - that lives only in the expense drawer (ADR-0014).
 _Avoid_: PDF viewer, cross-check panel, side panel
+
+**Bulk approval**:
+The action of advancing multiple in-flight claims at their pending approval stage in a single run.
+Every eligible claim receives its own approved history event with the optional comment, while ineligible rows are skipped with specific reasons recorded in the result report (ADR-0029).
+_Avoid_: Batch sign-off, mass approve, group verification
+
+**Approvals inbox**:
+The dedicated approver table surface showing every claim across the department or organization currently awaiting this viewer's decision.
+Distinct from the dashboard's "needs your attention" card, which is an action overview, and from the org-wide finance list, which is read-only (ADR-0029).
+_Avoid_: Approval queue, manager desk, review inbox
+
+**Bulk approval report**:
+The per-claim outcome of a bulk approval run: a list of successfully approved claims and a list of skipped claims with user-facing reasons.
+Partial success is expected and non-blocking, so valid claims advance even when some selected rows are no longer eligible (ADR-0029).
+_Avoid_: Batch log, approval results, processing report

@@ -13,7 +13,8 @@
 
 ## Current Work
 
-- What: approval workflow revamp - per-role privilege toggles with mid-flight removal confirmation, hold state on claims, delegation replacing takeover, role-adaptive dashboard with period switch, and the unified one-per-status filter section (ADRs 0015-0021).
-- Plan: `docs/specs/approval-revamp-hold-delegation-dashboard.md` (ADRs 0015-0021); tracked as PR #58, issues #51, #54-57.
-- Next: opencode reviews on PR #58 addressed (canSubmit enforcement, held-claims Superadmin gate, PDF hold trail, single-user manager lock, delegation eligibility). 1068+ vitest tests passing (52 files), lint/build green. Ready to merge.
+- What: bulk expense approvals (ADR-0029) - dedicated approvals inbox table (/expenses/approvals), batch selection with summary total, confirmation modal with optional approval comment, resilient server-side batch approval command with per-claim skip reporting, and active Approvals navigation link.
+- Plan: ADR-0029 (`docs/architecture/decisions/0029-bulk-expense-approvals.md`).
+- Next: 1283+ vitest tests passing (68 files), lint and build green. Bulk approvals ready for review.
+
 

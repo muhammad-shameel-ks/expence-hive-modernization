@@ -286,7 +286,8 @@ describe("PostgresExpenseStore", () => {
   it("maps the role's six privilege toggles onto the employee's role record", async () => {
     const poolQuery = vi.fn().mockImplementation((sql: string) => {
       expect(sql).toContain("r.can_approve AS role_can_approve");
-      expect(sql).toContain("r.can_hold AS role_can_hold");
+      expect(sql).toContain("r.can_approve_bank_details AS role_can_approve_bank_details");
+      expect(sql).not.toContain("can_hold");
       return Promise.resolve({
         rows: [
           {
@@ -302,7 +303,7 @@ describe("PostgresExpenseStore", () => {
             role_can_submit: true,
             role_can_approve: true,
             role_can_access_finance: false,
-            role_can_hold: false,
+            role_can_approve_bank_details: false,
             role_can_view_org_activity: false,
             role_can_access_admin_console: false,
             manager_id: null,
@@ -324,7 +325,7 @@ describe("PostgresExpenseStore", () => {
         canSubmit: true,
         canApprove: true,
         canAccessFinance: false,
-        canHold: false,
+        approveBankDetails: false,
         canViewOrganizationActivity: false,
         canAccessAdminConsole: false,
       },
@@ -736,68 +737,20 @@ describe("PostgresExpenseStore claim lifecycle", () => {
     );
   });
 
-  it("writes the hold shape columns in updateClaim", async () => {
+  it("never writes or reads the removed hold columns (ADR-0026)", async () => {
     const query = vi.fn().mockResolvedValue({ rowCount: 1 });
     const client = { query, release: vi.fn() };
     const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
     const store = new PostgresExpenseStore(pool);
-    const claim = buildClaim();
-    claim.heldAt = "2026-08-04T10:00:00.000Z";
-    claim.heldBy = "emp-ada";
-    claim.heldReason = "Awaiting the missing invoice";
 
-    await store.updateClaim(claim);
+    await store.updateClaim(buildClaim());
 
     const updateCall = query.mock.calls.find(
       ([sql]) => typeof sql === "string" && sql.includes("UPDATE reimbursement_claims"),
     );
-    expect(updateCall?.[0]).toContain("held_at");
-    expect(updateCall?.[0]).toContain("held_by");
-    expect(updateCall?.[0]).toContain("held_reason");
-    expect(updateCall?.[1]).toEqual(
-      expect.arrayContaining(["2026-08-04T10:00:00.000Z", "emp-ada", "Awaiting the missing invoice"]),
-    );
-  });
-
-  it("maps the hold shape columns back into the claim", async () => {
-    const poolQuery = vi.fn().mockImplementation((sql: string) => {
-      if (sql.includes("FROM reimbursement_claims")) {
-        return Promise.resolve({
-          rows: [
-            {
-              id: "claim-1",
-              organization_id: "org-1",
-              requester_id: "emp-shameel",
-              reference: "EXP-2026-0001",
-              title: "Bengaluru client flight",
-              category: "Travel",
-              amount_minor: "1250000",
-              expense_date: "2026-08-04",
-              status: "in-approval",
-              current_stage: "role-manager",
-              current_actor_id: "emp-ada",
-              version: "2",
-              created_at: "2026-08-04T10:00:00.000Z",
-              submitted_at: "2026-08-04T10:00:00.000Z",
-              held_at: "2026-08-05T09:00:00.000Z",
-              held_by: "emp-ada",
-              held_reason: "Awaiting the missing invoice",
-            },
-          ],
-        });
-      }
-      return Promise.resolve({ rows: [] });
-    });
-    const pool = { query: poolQuery } as unknown as Pool;
-    const store = new PostgresExpenseStore(pool);
-
-    const claim = await store.getClaim("claim-1");
-
-    expect(claim).toMatchObject({
-      heldAt: "2026-08-05T09:00:00.000Z",
-      heldBy: "emp-ada",
-      heldReason: "Awaiting the missing invoice",
-    });
+    expect(updateCall?.[0]).not.toContain("held_at");
+    expect(updateCall?.[0]).not.toContain("held_by");
+    expect(updateCall?.[0]).not.toContain("held_reason");
   });
 
   it("deletes a draft claim only when its version still matches", async () => {
@@ -858,5 +811,231 @@ describe("PostgresExpenseStore date normalization", () => {
     const claim = await store.getClaim("claim-1");
 
     expect(claim?.expenseDate).toBe("2026-08-06");
+  });
+});
+
+describe("PostgresExpenseStore bank details (ADR-0024)", () => {
+  const requestRow = {
+    id: "bank-change-1",
+    organization_id: "org-1",
+    employee_id: "emp-shameel",
+    status: "approved",
+    holder_name: "Muhammad Shameel",
+    account_number: "90123456789012",
+    ifsc: "ICIC0004567",
+    bank_name: "ICICI Bank",
+    branch: "Koramangala",
+    requester_id: "emp-shameel",
+    reviewer_id: "emp-pramod",
+    rejection_reason: null,
+    requested_at: "2026-08-04T10:00:00.000Z",
+    reviewed_at: "2026-08-05T10:00:00.000Z",
+  };
+
+  it("reads the approved account as the latest approved request's details", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      expect(sql).toContain("FROM bank_detail_change_requests");
+      expect(sql).toContain("status = 'approved'");
+      expect(sql).toContain("ORDER BY reviewed_at DESC");
+      expect(params).toEqual(["emp-shameel"]);
+      return Promise.resolve({ rows: [requestRow] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const details = await store.getApprovedBankDetails("emp-shameel");
+
+    expect(details).toEqual({
+      holderName: "Muhammad Shameel",
+      accountNumber: "90123456789012",
+      ifsc: "ICIC0004567",
+      bankName: "ICICI Bank",
+      branch: "Koramangala",
+    });
+  });
+
+  it("returns null when no approved request exists", async () => {
+    const poolQuery = vi.fn().mockResolvedValue({ rows: [] });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await expect(store.getApprovedBankDetails("emp-intern")).resolves.toBeNull();
+  });
+
+  it("lists the latest approved account per employee of an organization", async () => {
+    const poolQuery = vi.fn().mockImplementation((sql: string, params: unknown[]) => {
+      expect(sql).toContain("DISTINCT ON (employee_id)");
+      expect(params).toEqual(["org-1"]);
+      return Promise.resolve({
+        rows: [
+          requestRow,
+          { ...requestRow, employee_id: "emp-ada", holder_name: "Ada Lovelace", account_number: "60123456789013" },
+        ],
+      });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const approved = await store.listApprovedBankDetails("org-1");
+
+    expect(approved).toEqual([
+      {
+        employeeId: "emp-shameel",
+        details: {
+          holderName: "Muhammad Shameel",
+          accountNumber: "90123456789012",
+          ifsc: "ICIC0004567",
+          bankName: "ICICI Bank",
+          branch: "Koramangala",
+        },
+      },
+      {
+        employeeId: "emp-ada",
+        details: {
+          holderName: "Ada Lovelace",
+          accountNumber: "60123456789013",
+          ifsc: "ICIC0004567",
+          bankName: "ICICI Bank",
+          branch: "Koramangala",
+        },
+      },
+    ]);
+  });
+
+  it("hydrates change requests with their history events", async () => {
+    const poolQuery = vi.fn().mockImplementation(async (sql: string, params: unknown[]) => {
+      if (sql.includes("FROM bank_detail_request_events")) {
+        expect(params).toEqual([["bank-change-1"]]);
+        return Promise.resolve({
+          rows: [
+            { id: "history-1", request_id: "bank-change-1", kind: "submitted", actor_id: "emp-shameel", actor_name: null, detail: null, created_at: "2026-08-04T10:00:00.000Z" },
+            { id: "history-2", request_id: "bank-change-1", kind: "approved", actor_id: "emp-pramod", actor_name: "Pramod", detail: null, created_at: "2026-08-05T10:00:00.000Z" },
+          ],
+        });
+      }
+      expect(sql).toContain("FROM bank_detail_change_requests");
+      return Promise.resolve({ rows: [{ ...requestRow, status: "pending", reviewer_id: null, reviewed_at: null }] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const request = await store.getBankDetailChangeRequest("bank-change-1");
+
+    expect(request).toMatchObject({
+      id: "bank-change-1",
+      employeeId: "emp-shameel",
+      status: "pending",
+      reviewerId: undefined,
+      reviewedAt: undefined,
+      history: [
+        { kind: "submitted", actorId: "emp-shameel" },
+        { kind: "approved", actorId: "emp-pramod", actorName: "Pramod" },
+      ],
+    });
+  });
+
+  it("lists pending requests for an organization, oldest first", async () => {
+    const poolQuery = vi.fn().mockImplementation(async (sql: string, params: unknown[]) => {
+      if (sql.includes("bank_detail_request_events")) return { rows: [] };
+      expect(sql).toContain("status = 'pending'");
+      expect(sql).toContain("ORDER BY requested_at ASC");
+      expect(params).toEqual(["org-1"]);
+      return Promise.resolve({ rows: [requestRow] });
+    });
+    const pool = { query: poolQuery } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    const requests = await store.listPendingBankDetailChangeRequests("org-1");
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]?.history).toEqual([]);
+  });
+
+  it("creates a request and its events in one transaction", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const release = vi.fn();
+    const client = { query, release };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await store.createBankDetailChangeRequest({
+      id: "bank-change-1",
+      organizationId: "org-1",
+      employeeId: "emp-shameel",
+      status: "pending",
+      requested: {
+        holderName: "Muhammad Shameel",
+        accountNumber: "60123456789013",
+        ifsc: "SBIN0002345",
+        bankName: "State Bank of India",
+        branch: "Whitefield",
+      },
+      requesterId: "emp-shameel",
+      requestedAt: "2026-08-04T10:00:00.000Z",
+      history: [{ id: "history-1", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" }],
+    });
+
+    expect(query).toHaveBeenCalledWith("BEGIN");
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO bank_detail_change_requests"), expect.any(Array));
+    expect(query).toHaveBeenCalledWith(expect.stringContaining("INSERT INTO bank_detail_request_events"), expect.any(Array));
+    expect(query).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("updates the decision fields and appends events transactionally", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const release = vi.fn();
+    const client = { query, release };
+    const pool = { connect: vi.fn().mockResolvedValue(client) } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await store.updateBankDetailChangeRequest({
+      id: "bank-change-1",
+      organizationId: "org-1",
+      employeeId: "emp-shameel",
+      status: "approved",
+      requested: {
+        holderName: "Muhammad Shameel",
+        accountNumber: "60123456789013",
+        ifsc: "SBIN0002345",
+        bankName: "State Bank of India",
+        branch: "Whitefield",
+      },
+      requesterId: "emp-shameel",
+      reviewerId: "emp-pramod",
+      requestedAt: "2026-08-04T10:00:00.000Z",
+      reviewedAt: "2026-08-05T10:00:00.000Z",
+      history: [
+        { id: "history-1", kind: "submitted", actorId: "emp-shameel", createdAt: "2026-08-04T10:00:00.000Z" },
+        { id: "history-2", kind: "approved", actorId: "emp-pramod", createdAt: "2026-08-05T10:00:00.000Z" },
+      ],
+    });
+
+    const updateCall = query.mock.calls.find((call) => String(call[0]).includes("UPDATE bank_detail_change_requests"));
+    expect(updateCall).toBeDefined();
+    expect(updateCall?.[1]).toEqual(["bank-change-1", "approved", "emp-pramod", null, "2026-08-05T10:00:00.000Z"]);
+    expect(query).toHaveBeenCalledWith("COMMIT");
+  });
+
+  it("stores the phone personal field", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await store.updatePersonalDetails("emp-shameel", { phone: "+91 98765 43210" });
+
+    expect(query).toHaveBeenCalledWith(
+      expect.stringContaining("UPDATE employees SET phone = $1 WHERE id = $2"),
+      ["+91 98765 43210", "emp-shameel"],
+    );
+  });
+
+  it("clears the phone when the saved value is blank", async () => {
+    const query = vi.fn().mockResolvedValue({ rowCount: 1 });
+    const pool = { query } as unknown as Pool;
+    const store = new PostgresExpenseStore(pool);
+
+    await store.updatePersonalDetails("emp-shameel", { phone: "   " });
+
+    expect(query).toHaveBeenCalledWith(expect.any(String), [null, "emp-shameel"]);
   });
 });

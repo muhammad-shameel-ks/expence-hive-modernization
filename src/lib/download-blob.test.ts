@@ -23,8 +23,8 @@ describe("downloadBlob", () => {
 
   afterEach(() => {
     vi.restoreAllMocks();
-    delete (URL as Record<string, unknown>).createObjectURL;
-    delete (URL as Record<string, unknown>).revokeObjectURL;
+    delete (URL as unknown as Record<string, unknown>).createObjectURL;
+    delete (URL as unknown as Record<string, unknown>).revokeObjectURL;
   });
 
   it("clicks a detached anchor named after the file, then revokes the object URL after the download starts", () => {

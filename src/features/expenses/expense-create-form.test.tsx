@@ -132,7 +132,7 @@ afterEach(() => {
   cleanup();
   vi.unstubAllGlobals();
   vi.restoreAllMocks();
-  delete Element.prototype.scrollIntoView;
+  delete (Element.prototype as unknown as Record<string, unknown>).scrollIntoView;
 });
 
 async function advanceToReviewStep() {
@@ -203,7 +203,7 @@ describe("ExpenseCreateForm persistent receipt preview", () => {
     render(<ExpenseCreateForm />);
 
     expect(screen.queryByTestId("receipt-preview")).toBeNull();
-    expect(screen.getByText("FAST CAPTURE")).toBeInTheDocument();
+    expect(screen.getByText("Start with the proof.")).toBeInTheDocument();
   });
 
   it("removing the picked file collapses the preview surface and repicking restores it", async () => {
@@ -215,7 +215,7 @@ describe("ExpenseCreateForm persistent receipt preview", () => {
     fireEvent.click(screen.getByRole("button", { name: "Remove" }));
 
     expect(screen.queryByTestId("receipt-preview")).toBeNull();
-    expect(screen.getByText("FAST CAPTURE")).toBeInTheDocument();
+    expect(screen.getByText("Start with the proof.")).toBeInTheDocument();
     expect(receiptPreviewCalls.unmounts).toBe(1);
 
     const replacement = pickReceipt("replacement.pdf");
@@ -441,5 +441,174 @@ describe("ExpenseCreateForm mobile receipt sheet", () => {
 
     expect(lastPreviewProps()?.claimId).toBe("exp-1");
     expect(lastPreviewProps()?.fileName).toBe("stored.pdf");
+  });
+});
+
+describe("ExpenseCreateForm receipt suggestions (OCR)", () => {
+  // The extraction route and the draft routes are stubbed separately so the
+  // suggestion flow can be asserted without a real server.
+  function stubSuggestionFetch(suggestions: unknown, options: { fail?: boolean } = {}) {
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      if (url.includes("/api/receipts/extract")) {
+        if (options.fail) {
+          throw new Error("network down");
+        }
+        return {
+          ok: true,
+          json: async () => ({ suggestions }),
+        };
+      }
+      return {
+        ok: true,
+        json: async () => ({ claim: { id: "exp-1" } }),
+      };
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    return fetchMock;
+  }
+
+  function pickReceiptPdf() {
+    const file = new File([new Uint8Array([0x25, 0x50, 0x44, 0x46, 0x2d])], "receipt.pdf", {
+      type: "application/pdf",
+    });
+    fireEvent.change(screen.getByLabelText("Add receipt"), { target: { files: [file] } });
+  }
+
+  const SUGGESTIONS = {
+    amountMinor: 37000,
+    date: "2026-08-10",
+    vendor: "Green Leaf Cafe",
+    categoryGuess: "Meals",
+  };
+
+  it("shows the extracted suggestions as editable fields after picking a receipt", async () => {
+    stubSuggestionFetch(SUGGESTIONS);
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+
+    const amountInput = await screen.findByLabelText("Amount", { exact: false });
+    expect(amountInput).toHaveValue("370.00");
+    expect(screen.getByLabelText("Expense date")).toHaveValue("2026-08-10");
+    expect(screen.getByLabelText("Vendor", { exact: false })).toHaveValue("Green Leaf Cafe");
+    const category = screen.getByLabelText("Suggested category - please confirm", { exact: false });
+    expect(category).toHaveValue("Meals");
+    expect(screen.getByRole("button", { name: "Apply suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "Skip suggestions" })).toBeInTheDocument();
+  });
+
+  it("applies accepted suggestions into the draft fields after confirmation", async () => {
+    stubSuggestionFetch(SUGGESTIONS);
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+    await screen.findByLabelText("Amount", { exact: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "Apply suggestions" }));
+    expect(screen.getByText(/applied to your draft/i)).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+
+    expect(screen.getByLabelText("What was this expense for?")).toHaveValue("Green Leaf Cafe");
+    expect(screen.getByLabelText(/amount/i)).toHaveValue("370.00");
+    expect(screen.getByLabelText("Expense date")).toHaveValue("2026-08-10");
+    expect(screen.getByLabelText("Category")).toHaveValue("Meals");
+  });
+
+  it("lets the employee edit a suggestion before applying", async () => {
+    stubSuggestionFetch(SUGGESTIONS);
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+    const amountInput = await screen.findByLabelText("Amount", { exact: false });
+
+    fireEvent.change(amountInput, { target: { value: "400" } });
+    fireEvent.click(screen.getByRole("button", { name: "Apply suggestions" }));
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+
+    expect(screen.getByLabelText(/amount/i)).toHaveValue("400");
+  });
+
+  it("writes nothing to the draft before the employee applies", async () => {
+    const fetchMock = stubSuggestionFetch(SUGGESTIONS);
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+    await screen.findByLabelText("Amount", { exact: false });
+
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+
+    // No draft save (POST /api/expenses) and no extraction re-run happened
+    // on continue; the fields arrive empty.
+    expect(fetchMock).toHaveBeenCalledTimes(1);
+    expect(screen.getByLabelText("What was this expense for?")).toHaveValue("");
+    expect(screen.getByLabelText(/amount/i)).toHaveValue("");
+  });
+
+  it("dismisses the suggestions and keeps the flow usable", async () => {
+    stubSuggestionFetch(SUGGESTIONS);
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+    await screen.findByLabelText("Amount", { exact: false });
+
+    fireEvent.click(screen.getByRole("button", { name: "Skip suggestions" }));
+
+    expect(screen.queryByLabelText("Suggested category - please confirm", { exact: false })).toBeNull();
+    expect(screen.getByRole("button", { name: /continue with receipt/i })).toBeInTheDocument();
+    fireEvent.click(screen.getByRole("button", { name: /continue with receipt/i }));
+    expect(screen.getByLabelText(/amount/i)).toHaveValue("");
+  });
+
+  it("shows a clear message when the receipt yields no suggestions and keeps the flow usable", async () => {
+    stubSuggestionFetch({});
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+
+    expect(await screen.findByText(/could not read any details from this receipt/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: "No suggestions" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue with receipt/i })).toBeInTheDocument();
+  });
+
+  it("shows a clear message when extraction fails and keeps the flow usable", async () => {
+    stubSuggestionFetch(SUGGESTIONS, { fail: true });
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+
+    expect(await screen.findByText(/could not read this receipt right now/i)).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /continue with receipt/i })).toBeInTheDocument();
+  });
+
+  it("announces the reading state while extraction runs", async () => {
+    let resolveFetch: ((value: unknown) => void) | null = null;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(async (input: RequestInfo | URL) => {
+        if (String(input).includes("/api/receipts/extract")) {
+          await new Promise((resolve) => {
+            resolveFetch = resolve;
+          });
+          return { ok: true, json: async () => ({ suggestions: SUGGESTIONS }) };
+        }
+        return { ok: true, json: async () => ({ claim: { id: "exp-1" } }) };
+      }),
+    );
+    render(<ExpenseCreateForm />);
+    pickReceiptPdf();
+
+    // jsdom does not expose the explicit "status" role in its accessibility
+    // tree, so the live-region message is asserted by its text.
+    const reading = await screen.findByText(/reading your receipt/i);
+    expect(reading).toBeInTheDocument();
+
+    await act(async () => {
+      resolveFetch?.(null);
+    });
+    await screen.findByLabelText("Amount", { exact: false });
+    expect(screen.getByLabelText("Amount", { exact: false })).toHaveValue("370.00");
+  });
+
+  it("never extracts for a stored receipt on a resumed draft", async () => {
+    const fetchMock = stubSuggestionFetch(SUGGESTIONS);
+    render(<ExpenseCreateForm initial={draftInitial({ receiptFileName: "stored.pdf" })} />);
+
+    expect(screen.queryByLabelText("Suggested category - please confirm", { exact: false })).toBeNull();
+    expect(fetchMock).not.toHaveBeenCalled();
   });
 });

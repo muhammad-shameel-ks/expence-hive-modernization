@@ -1,4 +1,8 @@
-import { describe, expect, it } from "vitest";
+// @vitest-environment jsdom
+import "@testing-library/jest-dom/vitest";
+import { cleanup, render, screen } from "@testing-library/react";
+import { afterEach, describe, expect, it } from "vitest";
+import { ActivityItemRow } from "./activity-item-row";
 import { matchesActivityQuery } from "./my-activity";
 import type { ActivityItem } from "./mock-data";
 
@@ -50,5 +54,23 @@ describe("matchesActivityQuery", () => {
 
   it("does not match unrelated text", () => {
     expect(matchesActivityQuery(item({}), "zzz-no-such-thing")).toBe(false);
+  });
+});
+
+describe("ActivityItemRow approval comment rendering (ADR-0028)", () => {
+  afterEach(cleanup);
+
+  it("shows the approval comment in the detail callout", () => {
+    render(<ActivityItemRow item={item({ detail: "Within software budget" })} />);
+
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    expect(screen.getByText("Within software budget")).toBeInTheDocument();
+  });
+
+  it("renders no detail callout for an approval without a comment", () => {
+    const { container } = render(<ActivityItemRow item={item({})} />);
+
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    expect(container.querySelector(".rounded-lg.border")).toBeNull();
   });
 });

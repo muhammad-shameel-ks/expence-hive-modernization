@@ -140,3 +140,44 @@ describe("JourneyFlow delegation rendering", () => {
     expect(screen.getByText("Skipped: delegated to Rishikesh")).toBeInTheDocument();
   });
 });
+
+describe("JourneyFlow approval comment rendering (ADR-0028)", () => {
+  afterEach(cleanup);
+
+  const approvedExpense = (detail?: string): Expense =>
+    baseExpense({
+      status: "in-approval",
+      history: [
+        { id: "h1", date: "Aug 1", actor: "Muhammad Shameel", actorId: "emp-shameel", kind: "submitted" },
+        { id: "h2", date: "Aug 2", actor: "Ada Lovelace", actorId: "emp-ada", kind: "approved", detail },
+      ],
+    });
+
+  it("shows the approval comment as the approved entry's detail", () => {
+    const steps = getJourneyFlowItems(approvedExpense("Within software budget"));
+    expect(steps.find((step) => step.id === "h2")).toMatchObject({
+      label: "Approved",
+      detail: "Within software budget",
+      actor: "Ada Lovelace",
+    });
+
+    render(<JourneyFlow expense={approvedExpense("Within software budget")} currentUserId="emp-shameel" />);
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    expect(screen.getByText("Within software budget")).toBeInTheDocument();
+  });
+
+  it("renders nothing extra for an approval without a comment", () => {
+    const steps = getJourneyFlowItems(approvedExpense(undefined));
+    expect(steps.find((step) => step.id === "h2")?.detail).toBeUndefined();
+
+    const { container } = render(
+      <JourneyFlow expense={approvedExpense(undefined)} currentUserId="emp-shameel" />,
+    );
+    expect(screen.getByText("Approved")).toBeInTheDocument();
+    // No empty detail paragraph is rendered for the comment-less approval.
+    const emptyParagraphs = Array.from(container.querySelectorAll("p")).filter(
+      (p) => p.textContent === "",
+    );
+    expect(emptyParagraphs).toHaveLength(0);
+  });
+});

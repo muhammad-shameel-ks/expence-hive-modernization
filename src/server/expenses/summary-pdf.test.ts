@@ -1,11 +1,33 @@
 import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
-import { PDFDict, PDFDocument, PDFName } from "pdf-lib";
+import { PDFArray, PDFDict, PDFDocument, PDFName } from "pdf-lib";
 import { describe, expect, it } from "vitest";
 import { InMemoryBlobStore } from "../blob/fakes";
 import { createExpenseCommands, type ExpenseCommands } from "./commands";
 import { InMemoryExpenseStore } from "./in-memory";
-import type { ExpenseEmployee } from "./ports";
+import type { BankDetails, ExpenseClaim, ExpenseEmployee, ExpenseFlow } from "./ports";
 import { buildExpenseSummaryPdf } from "./summary-pdf";
+
+// The summary tests exercise the PDF, not the submission gate: every
+// fixture employee carries an approved account so submits behave like a
+// fully set-up organization.
+const APPROVED_BANK_DETAILS: BankDetails = {
+  holderName: "Muhammad Shameel",
+  accountNumber: "90123456789012",
+  ifsc: "ICIC0004567",
+  bankName: "ICICI Bank",
+  branch: "Koramangala",
+};
+
+class TestExpenseStore extends InMemoryExpenseStore {
+  constructor(input: { employees: ExpenseEmployee[]; flows?: ExpenseFlow[] }) {
+    super({
+      ...input,
+      approvedBankDetails: Object.fromEntries(
+        input.employees.map((employee) => [employee.id, APPROVED_BANK_DETAILS]),
+      ),
+    });
+  }
+}
 
 // The default privilege catalog (ADR-0015) the migration and seeds backfill:
 // submit-only except Manager +approve, Finance Head +finance +org activity,
@@ -14,7 +36,7 @@ const SUBMIT_ONLY = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: false,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
@@ -36,7 +58,7 @@ function emp(
 }
 
 function build() {
-  const store = new InMemoryExpenseStore({
+  const store = new TestExpenseStore({
     employees: [
       emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
       emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
@@ -140,7 +162,7 @@ describe("expense summary PDF builder", () => {
 
     const names = pdfDoc.catalog.lookup(PDFName.of("Names"), PDFDict);
     const embeddedFiles = names.lookup(PDFName.of("EmbeddedFiles"), PDFDict);
-    const fileNames = embeddedFiles.lookup(PDFName.of("Names"));
+    const fileNames = embeddedFiles.lookup(PDFName.of("Names"), PDFArray);
     expect(fileNames.size()).toBe(2);
   });
 
@@ -215,11 +237,48 @@ describe("expense summary PDF builder", () => {
     expect(text).toContain("Rejected on: Aug 4, 2026, 10:00 AM");
   });
 
-  it("renders the hold trail: held and resumed events with actor and reason", async () => {
-    const store = new InMemoryExpenseStore({
+  it("renders each approval comment as a read-only entry in the comment section", async () => {
+    const { commands } = build();
+    const submitted = await createSubmittedClaim(commands);
+    await commands.approveStage("emp-ada", submitted.id, "Within software budget");
+    await commands.approveStage("emp-pramod", submitted.id, "Finance Head agrees");
+    const [claim, employees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const bytes = await buildExpenseSummaryPdf({ claim, employees });
+
+    const text = await extractText(bytes);
+    expect(text).toContain("Approval comment");
+    expect(text).toContain("Within software budget");
+    expect(text).toContain("Approved by: Ada Lovelace");
+    expect(text).toContain("Approved on: Aug 4, 2026, 10:00 AM");
+    expect(text).toContain("Finance Head agrees");
+    expect(text).toContain("Approved by: Pramod");
+  });
+
+  it("renders nothing extra for approvals without a comment", async () => {
+    const { commands } = build();
+    const submitted = await createSubmittedClaim(commands);
+    await commands.approveStage("emp-ada", submitted.id);
+    const [claim, employees] = await Promise.all([
+      commands.getClaim("emp-shameel", submitted.id),
+      commands.listEmployees("emp-shameel"),
+    ]);
+
+    const bytes = await buildExpenseSummaryPdf({ claim, employees });
+
+    const text = await extractText(bytes);
+    expect(text).not.toContain("Approval comment");
+    expect(text).not.toContain("Comments");
+  });
+
+  it("never renders a hold trail, even when legacy held/resumed events exist in history", async () => {
+    const store = new TestExpenseStore({
       employees: [
         emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
-        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng", role: { ...ROLE_MANAGER, capabilities: { ...SUBMIT_ONLY, canApprove: true, canHold: true } } }),
+        emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
         emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
         emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
       ],
@@ -258,32 +317,26 @@ describe("expense summary PDF builder", () => {
       expenseDate: "2026-08-04",
       attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
     })).id);
-    await commands.holdClaim("emp-ada", submitted.id, "Awaiting the missing invoice");
-    const [heldClaim, heldEmployees] = await Promise.all([
-      commands.getClaim("emp-shameel", submitted.id),
-      commands.listEmployees("emp-shameel"),
-    ]);
-
-    const heldBytes = await buildExpenseSummaryPdf({ claim: heldClaim, employees: heldEmployees });
-    const heldText = await extractText(heldBytes);
-    expect(heldText).toContain("Held");
-    expect(heldText).toContain("Since Aug 4, 2026, 10:00 AM by Ada Lovelace");
-    expect(heldText).toContain("Awaiting the missing invoice");
-
-    await commands.resumeClaim("emp-ada", submitted.id);
+    // A legacy claim that predates the migration keeps its held/resumed
+    // events in history; the summary must not render them.
+    const legacy = await store.getClaim(submitted.id);
+    const legacyHeldKind = "held" as unknown as ExpenseClaim["history"][number]["kind"];
+    const legacyResumedKind = "resumed" as unknown as ExpenseClaim["history"][number]["kind"];
+    legacy!.history.push(
+      { id: "history-legacy-held", kind: legacyHeldKind, actorId: "emp-ada", detail: "Awaiting the missing invoice", createdAt: "2026-08-04T10:00:00.000Z" },
+      { id: "history-legacy-resumed", kind: legacyResumedKind, actorId: "emp-ada", createdAt: "2026-08-04T11:00:00.000Z" },
+    );
+    await store.updateClaim(legacy!);
     const [claim, employees] = await Promise.all([
       commands.getClaim("emp-shameel", submitted.id),
       commands.listEmployees("emp-shameel"),
     ]);
 
     const bytes = await buildExpenseSummaryPdf({ claim, employees });
-
     const text = await extractText(bytes);
-    expect(text).toContain("Held and resumed");
-    expect(text).toContain("Held");
-    expect(text).toContain("Resumed");
-    expect(text).toContain("Awaiting the missing invoice");
-    expect(text).toContain("Ada Lovelace");
+
+    expect(text).not.toContain("Held and resumed");
+    expect(text).not.toContain("On hold");
   });
 
   it("paginates a long wrapped comment instead of clipping it", async () => {
@@ -326,7 +379,7 @@ describe("expense summary PDF builder", () => {
   });
 
   it("renders an amount-guard auto-skipped step with its reason in the journey", async () => {
-    const store = new InMemoryExpenseStore({
+    const store = new TestExpenseStore({
       employees: [
         emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
         emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),

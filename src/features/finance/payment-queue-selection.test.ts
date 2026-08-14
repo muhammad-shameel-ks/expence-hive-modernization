@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ExpenseClaim } from "@/server/expenses/ports";
-import { hasReceiptAttachment, selectedClaimFor, stepSelection } from "./payment-queue-selection";
+import {
+  hasReceiptAttachment,
+  isSelectionAllSelected,
+  selectedClaimFor,
+  stepSelection,
+  toggleAllSelection,
+  toggleClaimSelection,
+} from "./payment-queue-selection";
 
 function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
   return {
@@ -114,5 +121,53 @@ describe("stepSelection", () => {
   it("returns null for an empty row list", () => {
     expect(stepSelection([], "first", 1)).toBeNull();
     expect(stepSelection([], null, -1)).toBeNull();
+  });
+});
+
+describe("batch multi-select (ADR-0023)", () => {
+  it("adds a claim id to an empty selection", () => {
+    const next = toggleClaimSelection(new Set(), "claim-1");
+    expect([...next]).toEqual(["claim-1"]);
+  });
+
+  it("removes a claim id that is already selected", () => {
+    const next = toggleClaimSelection(new Set(["claim-1", "claim-2"]), "claim-1");
+    expect([...next]).toEqual(["claim-2"]);
+  });
+
+  it("never mutates the caller's selection", () => {
+    const selected = new Set(["claim-1"]);
+    toggleClaimSelection(selected, "claim-2");
+    expect([...selected]).toEqual(["claim-1"]);
+  });
+
+  it("keeps ids selected outside the visible rows when toggling all", () => {
+    const next = toggleAllSelection(new Set(["hidden-claim"]), ["claim-1", "claim-2"]);
+    expect([...next].sort()).toEqual(["claim-1", "claim-2", "hidden-claim"]);
+  });
+
+  it("selects every visible row id when none are selected", () => {
+    const next = toggleAllSelection(new Set(), ["claim-1", "claim-2"]);
+    expect([...next].sort()).toEqual(["claim-1", "claim-2"]);
+  });
+
+  it("clears the visible rows when all of them are already selected", () => {
+    const next = toggleAllSelection(new Set(["claim-1", "claim-2", "hidden-claim"]), [
+      "claim-1",
+      "claim-2",
+    ]);
+    expect([...next]).toEqual(["hidden-claim"]);
+  });
+
+  it("selects every visible row when only some are selected", () => {
+    const next = toggleAllSelection(new Set(["claim-1"]), ["claim-1", "claim-2"]);
+    expect([...next].sort()).toEqual(["claim-1", "claim-2"]);
+  });
+
+  it("is all-selected only when every visible row is selected", () => {
+    expect(isSelectionAllSelected(new Set(["a", "b"]), ["a", "b"])).toBe(true);
+    expect(isSelectionAllSelected(new Set(["a"]), ["a", "b"])).toBe(false);
+    expect(isSelectionAllSelected(new Set(["a", "b"]), [])).toBe(false);
+    expect(isSelectionAllSelected(new Set(), ["a"])).toBe(false);
   });
 });

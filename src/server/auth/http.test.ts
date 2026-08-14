@@ -113,7 +113,7 @@ describe("GET /verify", () => {
     await auth.requestLogin({ email: ada.email });
     const token = new URL(emailProvider.sent[0].url).searchParams.get("token")!;
     const previous = process.env.NODE_ENV;
-    process.env.NODE_ENV = "production";
+    (process.env as Record<string, string | undefined>).NODE_ENV = "production";
 
     try {
       const response = await handleVerifyRequest(
@@ -124,7 +124,7 @@ describe("GET /verify", () => {
       const cookie = response.headers.get("set-cookie") ?? "";
       expect(cookie).toContain("; Secure");
     } finally {
-      process.env.NODE_ENV = previous;
+      (process.env as Record<string, string | undefined>).NODE_ENV = previous;
     }
   });
 

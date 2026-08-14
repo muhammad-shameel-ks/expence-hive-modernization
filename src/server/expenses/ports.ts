@@ -7,9 +7,9 @@ export type ExpenseRole = {
   code: string;
   displayName: string;
   departmentId?: string | null;
-  // The six privilege toggles (ADR-0015), resolved from the roles table.
-  // Present on records read from the store; absent on legacy data, which
-  // resolves to the submit-only default.
+  // The six privilege toggles (ADR-0015, amended by ADR-0024 and ADR-0026),
+  // resolved from the roles table. Present on records read from the store;
+  // absent on legacy data, which resolves to the submit-only default.
   capabilities?: RoleCapabilities | null;
 };
 
@@ -17,7 +17,14 @@ export type ExpenseEmployee = {
   id: string;
   organizationId: string;
   name: string;
+  // Identity-owned email (profile display); absent on legacy mock rows.
+  email?: string;
+  // The editable personal field (ADR-0024); absent until set.
+  phone?: string;
   departmentId?: string | null;
+  // The department display name, joined from the departments table; absent
+  // on legacy mock rows and for employees without a department.
+  departmentName?: string | null;
   role: ExpenseRole | null;
   // The lifecycle flag: deactivated staff are excluded from routing
   // eligibility and treated as vacant when a claim is assigned to them.
@@ -79,8 +86,6 @@ export type ExpenseHistoryEvent = {
     | "skipped"
     | "auto-skipped"
     | "comment"
-    | "held"
-    | "resumed"
     | "delegated";
   actorId?: string;
   actorName?: string;
@@ -118,19 +123,6 @@ export type ActivityEntry = {
   createdAt: string;
 };
 
-// One row of the admin held-claims oversight view (ADR-0016): every held
-// claim in an organization with the names resolved for display, so the
-// Superadmin console never renders raw ids.
-export type HeldClaimRow = {
-  claimId: string;
-  ref: string;
-  title: string;
-  heldBy: string;
-  heldReason: string;
-  heldAt: string;
-  stage: string;
-};
-
 export type ExpenseClaim = {
   id: string;
   ref: string;
@@ -147,12 +139,6 @@ export type ExpenseClaim = {
   currentStage?: string;
   currentActorId?: string;
   currentStageSince?: string;
-  // The hold state (ADR-0016): when heldAt is set the claim is paused at
-  // its current stage - the flow position is kept, the claim is frozen
-  // against terminal actions, and it is exempt from the absence sweep.
-  heldAt?: string;
-  heldBy?: string;
-  heldReason?: string;
   attachment?: ExpenseAttachment;
   comments?: string;
   steps: ExpenseStep[];
@@ -192,6 +178,50 @@ export type ExpenseFlow = {
   steps: FlowStepTarget[];
 };
 
+// The approved payment account (ADR-0024): holder name, account number,
+// IFSC, bank name, and branch. Bank details are never written directly;
+// they change only through a bank-detail change request that an authorized
+// role approves.
+export type BankDetails = {
+  holderName: string;
+  accountNumber: string;
+  ifsc: string;
+  bankName: string;
+  branch: string;
+};
+
+export type BankDetailRequestStatus = "pending" | "approved" | "rejected";
+
+// The audit trail of one bank-detail change request, mirroring claim
+// history events: submitted by the requester, then approved or rejected by
+// the reviewer (the rejection carries the reason).
+export type BankDetailRequestEvent = {
+  id: string;
+  kind: "submitted" | "approved" | "rejected";
+  actorId?: string;
+  actorName?: string;
+  detail?: string;
+  createdAt: string;
+};
+
+// A bank-detail change request (ADR-0024): the employee, the requested
+// account, the requester, the reviewer, the decision, and the history.
+// The employee's active bank details are the requested details of their
+// last approved request.
+export type BankDetailChangeRequest = {
+  id: string;
+  organizationId: string;
+  employeeId: string;
+  status: BankDetailRequestStatus;
+  requested: BankDetails;
+  requesterId: string;
+  reviewerId?: string;
+  rejectionReason?: string;
+  requestedAt: string;
+  reviewedAt?: string;
+  history: BankDetailRequestEvent[];
+};
+
 export interface ExpenseStore {
   getEmployee(id: string): Promise<ExpenseEmployee | null>;
   listEmployees(organizationId: string): Promise<ExpenseEmployee[]>;
@@ -211,4 +241,21 @@ export interface ExpenseStore {
     organizationId: string,
     kinds: readonly ExpenseHistoryEvent["kind"][],
   ): Promise<ActivityEntry[]>;
+  // Profile and bank details (ADR-0024). The active bank details are the
+  // requested details of the employee's last approved request; the register
+  // export reads them live at payment time (slice 06).
+  getApprovedBankDetails(employeeId: string): Promise<BankDetails | null>;
+  // The approved account per employee of an organization, for the finance
+  // approval surface's current-vs-requested comparison.
+  listApprovedBankDetails(organizationId: string): Promise<
+    Array<{ employeeId: string; details: BankDetails }>
+  >;
+  listBankDetailChangeRequests(employeeId: string): Promise<BankDetailChangeRequest[]>;
+  listPendingBankDetailChangeRequests(organizationId: string): Promise<BankDetailChangeRequest[]>;
+  getBankDetailChangeRequest(id: string): Promise<BankDetailChangeRequest | null>;
+  createBankDetailChangeRequest(request: BankDetailChangeRequest): Promise<void>;
+  updateBankDetailChangeRequest(request: BankDetailChangeRequest): Promise<void>;
+  // The editable personal field (ADR-0024): phone is stored on the employee
+  // record; an empty value clears it.
+  updatePersonalDetails(employeeId: string, input: { phone?: string }): Promise<void>;
 }

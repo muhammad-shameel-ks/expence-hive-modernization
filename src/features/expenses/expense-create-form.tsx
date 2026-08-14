@@ -6,6 +6,20 @@ import styles from "./expense-create.module.css";
 import { Drawer } from "@/components/motion/drawer";
 import { ReceiptPreview } from "@/features/receipts/receipt-preview";
 import { receiptValidationError } from "./receipt-file-validation";
+import {
+  ReceiptSuggestionsPanel,
+  type AppliedSuggestions,
+  type ReceiptSuggestionsStatus,
+} from "./receipt-suggestions";
+import type { ReceiptSuggestion } from "@/server/receipts/ports";
+
+type ExtractionState = {
+  status: ReceiptSuggestionsStatus;
+  suggestions: ReceiptSuggestion;
+  message?: string;
+};
+
+const IDLE_EXTRACTION: ExtractionState = { status: "dismissed", suggestions: {} };
 
 type FormState = {
   title: string;
@@ -110,6 +124,8 @@ export function ExpenseCreateForm({
   const [claimId, setClaimId] = useState<string | null>(initial?.claimId ?? null);
   const [storedReceiptName, setStoredReceiptName] = useState<string | undefined>(initial?.receiptFileName);
   const [receiptSourceVersion, setReceiptSourceVersion] = useState(0);
+  const [extraction, setExtraction] = useState<ExtractionState>(IDLE_EXTRACTION);
+  const extractionTokenRef = useRef(0);
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -147,12 +163,79 @@ export function ExpenseCreateForm({
       event.target.value = "";
       setReceipt(null);
       setSheetOpen(false);
+      setExtraction(IDLE_EXTRACTION);
       setError(validationError);
       return;
     }
     setReceipt(file);
     setReceiptSourceVersion((version) => version + 1);
     setError(null);
+    void extractSuggestions(file);
+  }
+
+  // Fetches the server-side extraction suggestions for a freshly picked
+  // receipt (ADR-0025). The result is only a suggestion set: nothing is
+  // written to the draft until the employee applies it. A stale response
+  // (a newer pick superseded this one) is discarded.
+  async function extractSuggestions(file: File) {
+    const token = ++extractionTokenRef.current;
+    setExtraction({ status: "loading", suggestions: {} });
+    try {
+      const body = new FormData();
+      body.set("receipt", file);
+      const response = await fetch("/api/receipts/extract", { method: "POST", body });
+      let payload: { suggestions?: ReceiptSuggestion; message?: string } = {};
+      try {
+        payload = (await response.json()) as { suggestions?: ReceiptSuggestion; message?: string };
+      } catch {
+        payload = {};
+      }
+      if (token !== extractionTokenRef.current) return;
+      if (!response.ok) {
+        setExtraction({
+          status: "failed",
+          suggestions: {},
+          message: "We could not read this receipt right now. You can still add the details yourself.",
+        });
+        return;
+      }
+      const suggestions = payload.suggestions ?? {};
+      const hasAny =
+        suggestions.amountMinor !== undefined ||
+        suggestions.date !== undefined ||
+        suggestions.vendor !== undefined ||
+        suggestions.categoryGuess !== undefined;
+      if (hasAny) {
+        setExtraction({ status: "ready", suggestions });
+      } else {
+        setExtraction({
+          status: "failed",
+          suggestions: {},
+          message: "We could not read any details from this receipt. You can add them yourself.",
+        });
+      }
+    } catch {
+      if (token !== extractionTokenRef.current) return;
+      setExtraction({
+        status: "failed",
+        suggestions: {},
+        message: "We could not read this receipt right now. You can still add the details yourself.",
+      });
+    }
+  }
+
+  // Applies the confirmed suggestions to the draft form state. This is the
+  // employee's explicit confirmation: the values were shown as editable
+  // suggestions and nothing reached the draft before this call.
+  function applySuggestions(values: AppliedSuggestions) {
+    update("amount", values.amount);
+    update("expenseDate", values.date || new Date().toISOString().slice(0, 10));
+    if (values.vendor.trim()) update("title", values.vendor.trim());
+    if (values.category) {
+      update("category", values.category);
+      update("subCategory", CATEGORY_SUB_CATEGORIES[values.category]?.[0] ?? "");
+    }
+    setExtraction((current) => ({ ...current, status: "applied" }));
   }
 
   async function saveDraft(event?: FormEvent) {
@@ -230,65 +313,95 @@ export function ExpenseCreateForm({
           <p className={styles.eyebrow}>
             {step === 1 ? "STEP 1 OF 3 / RECEIPT" : step === 2 ? "STEP 2 OF 3 / DETAILS" : "STEP 3 OF 3 / REVIEW"}
           </p>
-          <div className={step === 3 ? styles.splitLayout : styles.receiptLayout}>
-            <div className={styles.wizardMain}>
-              {step === 1 ? (
-                <ReceiptStep
-                  source={receiptSource}
-                  chooseReceipt={chooseReceipt}
-                  error={error}
-                  onContinue={() => setStep(2)}
-                  onRemove={() => {
-                    setReceipt(null);
-                    setSheetOpen(false);
-                    setError(null);
-                  }}
-                />
-              ) : step === 2 ? (
-                <DetailsStep
-                  form={form}
-                  update={update}
-                  onBack={() => setStep(1)}
-                  onReview={saveDraft}
-                  busy={busy}
-                  error={error}
-                />
-              ) : receiptSource ? (
-                <ReviewStep
-                  form={form}
-                  source={receiptSource}
-                  onBack={() => setStep(2)}
-                  onSubmit={submitClaim}
-                  busy={busy}
-                  error={error}
-                  canSubmit={canSubmit}
-                />
-              ) : null}
+
+          {step === 1 && !receiptSource ? (
+            <div className={styles.singleLayout}>
+              <ReceiptStep
+                source={receiptSource}
+                chooseReceipt={chooseReceipt}
+                error={error}
+                extraction={extraction}
+                onApplySuggestions={applySuggestions}
+                onDismissSuggestions={() => setExtraction(IDLE_EXTRACTION)}
+                onContinue={() => setStep(2)}
+                onRemove={() => {
+                  setReceipt(null);
+                  setSheetOpen(false);
+                  setExtraction(IDLE_EXTRACTION);
+                  extractionTokenRef.current += 1;
+                  setError(null);
+                }}
+              />
             </div>
-            <aside className={`${styles.wizardSide} ${step === 3 ? styles.splitAside : ""}`}>
-              {step === 1 ? <CaptureRail done={Boolean(receiptSource)} step={1} /> : null}
-              {step === 2 ? <SummaryPanel form={form} label="Claim so far" /> : null}
-              {step === 3 ? <ReviewIntro /> : null}
-              {isMobile === true && receiptSource ? (
-                <div className={styles.mobileReceiptAction}>
-                  <button
-                    ref={viewReceiptButtonRef}
-                    className={`${styles.button} ${styles.buttonSecondary}`}
-                    type="button"
-                    onClick={() => setSheetOpen(true)}
-                  >
-                    View receipt
-                  </button>
-                </div>
-              ) : null}
-              {/* The rail preview is desktop-only; mobile gets the sheet above. */}
-              {isMobile === false && receiptSource ? (
-                <div className={styles.captureRailPreview}>
-                  <ReceiptPreviewSurface source={receiptSource} sourceKey={receiptPreviewKey} />
-                </div>
-              ) : null}
-            </aside>
-          </div>
+          ) : (
+            <div className={step === 3 ? styles.splitLayout : styles.receiptLayout}>
+              <div className={styles.wizardMain}>
+                {step === 1 ? (
+                  <ReceiptStep
+                    source={receiptSource}
+                    chooseReceipt={chooseReceipt}
+                    error={error}
+                    extraction={extraction}
+                    onApplySuggestions={applySuggestions}
+                    onDismissSuggestions={() => setExtraction(IDLE_EXTRACTION)}
+                    onContinue={() => setStep(2)}
+                    onRemove={() => {
+                      setReceipt(null);
+                      setSheetOpen(false);
+                      setExtraction(IDLE_EXTRACTION);
+                      extractionTokenRef.current += 1;
+                      setError(null);
+                    }}
+                  />
+                ) : step === 2 ? (
+                  <DetailsStep
+                    form={form}
+                    update={update}
+                    onBack={() => setStep(1)}
+                    onReview={saveDraft}
+                    busy={busy}
+                    error={error}
+                  />
+                ) : receiptSource ? (
+                  <ReviewStep
+                    form={form}
+                    source={receiptSource}
+                    onBack={() => setStep(2)}
+                    onSubmit={submitClaim}
+                    busy={busy}
+                    error={error}
+                    canSubmit={canSubmit}
+                  />
+                ) : null}
+              </div>
+              <aside className={`${styles.wizardSide} ${step === 3 ? styles.splitAside : ""}`}>
+                {/* Desktop preview rendered side-by-side with step content */}
+                {isMobile === false && receiptSource ? (
+                  <div className={styles.captureRailPreview}>
+                    <ReceiptPreviewSurface
+                      source={receiptSource}
+                      sourceKey={receiptPreviewKey}
+                      className="h-[540px] lg:h-[620px]"
+                    />
+                  </div>
+                ) : null}
+                {isMobile === true && receiptSource ? (
+                  <div className={styles.mobileReceiptAction}>
+                    <button
+                      ref={viewReceiptButtonRef}
+                      className={`${styles.button} ${styles.buttonSecondary}`}
+                      type="button"
+                      onClick={() => setSheetOpen(true)}
+                    >
+                      View receipt
+                    </button>
+                  </div>
+                ) : null}
+                {step === 2 ? <SummaryPanel form={form} label="Claim so far" /> : null}
+                {step === 3 ? <ReviewIntro /> : null}
+              </aside>
+            </div>
+          )}
           <Drawer
             open={sheetOpen && Boolean(receiptSource)}
             onOpenChange={setSheetOpen}
@@ -317,12 +430,18 @@ function ReceiptStep({
   source,
   chooseReceipt,
   error,
+  extraction,
+  onApplySuggestions,
+  onDismissSuggestions,
   onContinue,
   onRemove,
 }: {
   source: ReceiptSource | null;
   chooseReceipt: (event: ChangeEvent<HTMLInputElement>) => void;
   error: string | null;
+  extraction: ExtractionState;
+  onApplySuggestions: (values: AppliedSuggestions) => void;
+  onDismissSuggestions: () => void;
   onContinue: () => void;
   onRemove: () => void;
 }) {
@@ -330,16 +449,14 @@ function ReceiptStep({
   const stored = source?.kind === "stored";
   const fileInputRef = useRef<HTMLInputElement>(null);
 
-  return (
-    <section className={styles.receiptStage}>
-      <span className={styles.uploadIcon} aria-hidden>↑</span>
-      <h1>{stored ? "Your proof is already in." : "Start with the proof."}</h1>
-      <p>
-        {stored
-          ? "The receipt attached to this draft is stored and protected. It cannot be replaced here."
-          : "Take a photo or choose a receipt. We'll ask for only the details we can't get from the document."}
-      </p>
-      {!stored ? (
+  if (!source) {
+    return (
+      <section className={styles.receiptStageSingle}>
+        <span className={styles.uploadIcon} aria-hidden>↑</span>
+        <h1>Start with the proof.</h1>
+        <p>
+          Take a photo or choose a receipt. We&apos;ll ask for only the details we can&apos;t get from the document.
+        </p>
         <div className={styles.uploadActions}>
           <label className={styles.button}>
             Add receipt
@@ -351,37 +468,77 @@ function ReceiptStep({
               onChange={chooseReceipt}
             />
           </label>
-          {source?.kind === "local" ? (
-            <button
-              className={`${styles.button} ${styles.buttonSecondary}`}
-              type="button"
-              onClick={() => {
-                // Reset the input so picking the same file again fires a
-                // change event after the removal.
-                if (fileInputRef.current) fileInputRef.current.value = "";
-                onRemove();
-              }}
-            >
-              Remove
-            </button>
-          ) : null}
         </div>
-      ) : null}
-      {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
-      {attachedName ? (
-        <div className={styles.receiptPreview}>
-          <span>
+        {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
+      </section>
+    );
+  }
+
+  return (
+    <section className={styles.panel} aria-label="Receipt details">
+      <div className={styles.panelHeader}>
+        <div>
+          <p className={styles.eyebrow}>STEP 1 / PROOF</p>
+          <h2>{stored ? "Your proof is already in." : "Receipt attached"}</h2>
+        </div>
+        <span className={styles.statusChip}>Ready</span>
+      </div>
+
+      <div className={styles.receiptPreview}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="truncate">
             {stored ? `Receipt already attached: ${attachedName}` : `Receipt ready: ${attachedName}`}
           </span>
+          {!stored && source?.kind === "local" ? (
+            <div className="flex items-center gap-2 shrink-0">
+              <label className={`${styles.button} ${styles.buttonSecondary} !min-h-[32px] !py-1 !px-3 text-xs cursor-pointer`}>
+                Change
+                <input
+                  ref={fileInputRef}
+                  aria-label="Add receipt"
+                  className={styles.fileInput}
+                  type="file"
+                  accept=".pdf,application/pdf"
+                  onChange={chooseReceipt}
+                />
+              </label>
+              <button
+                className={`${styles.button} ${styles.buttonSecondary} !min-h-[32px] !py-1 !px-3 text-xs`}
+                type="button"
+                onClick={() => {
+                  if (fileInputRef.current) fileInputRef.current.value = "";
+                  onRemove();
+                }}
+              >
+                Remove
+              </button>
+            </div>
+          ) : null}
+        </div>
+      </div>
+
+      {error ? <p role="alert" className={styles.errorMessage}>{error}</p> : null}
+
+      {/* Suggestions only apply to a freshly picked receipt; a stored receipt
+          on a resumed draft has no extraction surface (it cannot be replaced). */}
+      {source?.kind === "local" ? (
+        <div style={{ marginTop: 24 }}>
+          <ReceiptSuggestionsPanel
+            status={extraction.status}
+            suggestions={extraction.suggestions}
+            message={extraction.message}
+            categories={Object.keys(CATEGORY_SUB_CATEGORIES)}
+            onApply={onApplySuggestions}
+            onDismiss={onDismissSuggestions}
+          />
         </div>
       ) : null}
-      {attachedName ? (
-        <div style={{ marginTop: 28 }}>
-          <button className={styles.button} type="button" onClick={onContinue}>
-            Continue with receipt <span aria-hidden>→</span>
-          </button>
-        </div>
-      ) : null}
+
+      <div className={styles.actions}>
+        <button className={styles.button} type="button" onClick={onContinue}>
+          Continue with receipt <span aria-hidden>→</span>
+        </button>
+      </div>
     </section>
   );
 }
@@ -494,10 +651,6 @@ function ReviewIntro() {
   return <div><p className={styles.eyebrow}>READY FOR APPROVAL</p><h1>Check it once, then send it on.</h1><p className={styles.intro}>This claim will follow the standard path: Manager → IT → Finance.</p></div>;
 }
 
-function CaptureRail({ done, step }: { done: boolean; step: number }) {
-  return <aside className={styles.captureRail}><p className={styles.eyebrow}>FAST CAPTURE</p><h2>Three things, then done.</h2><p>The form follows the natural order of expense work: proof, context, submit.</p><div className={styles.captureSteps}><CaptureStep number="1" title="Add proof" detail="Photo, scan, or PDF" done={done} /><CaptureStep number="2" title="Confirm context" detail="Category and payment details" done={step > 1} /><CaptureStep number="3" title="Review & send" detail="See who reviews it next" done={step > 2} /></div></aside>;
-}
-
 function ReceiptPreviewSurface({
   source,
   sourceKey,
@@ -532,8 +685,4 @@ function Field({ label, hint, children }: { label: string; hint?: string; childr
 
 function MoneyInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return <div className={styles.moneyInput}><span aria-hidden>₹</span><input className={styles.textInput} required inputMode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" placeholder="0.00" value={value} onChange={(event) => onChange(event.target.value.replace(/[^0-9.]/g, ""))} /></div>;
-}
-
-function CaptureStep({ number, title, detail, done }: { number: string; title: string; detail: string; done: boolean }) {
-  return <div className={`${styles.captureStep} ${done ? styles.captureStepDone : ""}`}><span className={styles.captureStepMarker}>{done ? "✓" : number}</span><div><strong>{title}</strong><small>{detail}</small></div></div>;
 }

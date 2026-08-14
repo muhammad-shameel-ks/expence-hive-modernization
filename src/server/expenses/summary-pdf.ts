@@ -176,44 +176,34 @@ export async function buildExpenseSummaryPdf(
     }
   }
 
-  // The hold trail (ADR-0016): held and resumed events render with their
-  // actor and reason, mirroring the timeline, so a PDF of a held claim is
-  // never silent about the pause - the held-claims workflow is visible on
-  // every surface, the PDF included (issue #54).
-  const holdEvents = claim.history.filter(
-    (event) => event.kind === "held" || event.kind === "resumed",
-  );
-  if (holdEvents.length > 0) {
-    y -= 8;
-    sectionHeading("Held and resumed");
-    for (const event of holdEvents) {
-      const eventLabel = event.kind === "held" ? "Held" : "Resumed";
-      const eventActor =
-        event.actorName ??
-        (event.actorId ? (names.get(event.actorId) ?? event.actorId) : "System");
-      ensureSpace(BODY_LINE_HEIGHT * 2);
-      drawText(`${eventLabel} \u00B7 ${formatTimestamp(event.createdAt)}`, LABEL_COLUMN_X, { font: semibold });
-      drawText(eventActor, LABEL_COLUMN_X + 12, { size: 9, color: MUTED, lineHeight: 12 });
-      if (event.detail) {
-        ensureSpace(BODY_LINE_HEIGHT * 2);
-        drawText(event.detail, LABEL_COLUMN_X + 12, { size: 9, color: MUTED, lineHeight: 12 });
-        y -= 2;
-      }
-      y -= 2;
-    }
-  }
-
   // The comment section renders the claim's comments plus the rejection
   // reason as a read-only entry from history (ADR-0009): the reason is never
   // written into the comments field, so the two always appear together here.
+  // Approval comments (ADR-0028) render the same way - one entry per
+  // approval that carried a comment, never written into the comments field.
   const comments = claim.comments?.trim();
   const rejection = claim.status === "rejected" ? latestRejectionFor(claim) : undefined;
-  if (comments || rejection) {
+  const approvalComments = claim.history.filter(
+    (event) => event.kind === "approved" && event.detail?.trim(),
+  );
+  if (comments || rejection || approvalComments.length > 0) {
     y -= 8;
     sectionHeading("Comments");
     if (comments) {
       ensureSpace(BODY_LINE_HEIGHT * 2);
       drawText(comments, LABEL_COLUMN_X, { lineHeight: 16 });
+    }
+    for (const approval of approvalComments) {
+      y -= 4;
+      ensureSpace(BODY_LINE_HEIGHT * 2);
+      drawText("Approval comment", LABEL_COLUMN_X, { font: semibold, size: 9, color: MUTED, lineHeight: 12 });
+      ensureSpace(BODY_LINE_HEIGHT * 2);
+      drawText(approval.detail!.trim(), LABEL_COLUMN_X, { lineHeight: 16 });
+      y -= 2;
+      ensureSpace(BODY_LINE_HEIGHT * 2);
+      const actorName = approval.actorId ? names.get(approval.actorId) ?? approval.actorId : "System";
+      drawText(`Approved by: ${actorName}`, LABEL_COLUMN_X, { lineHeight: 16 });
+      drawText(`Approved on: ${formatTimestamp(approval.createdAt)}`, LABEL_COLUMN_X, { lineHeight: 16 });
     }
     if (rejection) {
       y -= 4;
@@ -260,16 +250,6 @@ function expenseFactRows(
     ["Requester", requester?.name ?? "Unknown"],
     ["Status", STATUS_LABELS[claim.status]],
   );
-  // A held claim keeps its flow status (ADR-0016), so the hold surfaces as
-  // its own facts: holder, since-when, and the reason, mirroring the Held
-  // badge on the other surfaces.
-  if (claim.heldAt) {
-    const holder = claim.heldBy ? (employees.find((candidate) => candidate.id === claim.heldBy)?.name ?? claim.heldBy) : "Unknown";
-    rows.push(
-      ["Held", `Since ${formatTimestamp(claim.heldAt)} by ${holder}`],
-      ["Hold reason", claim.heldReason ?? ""],
-    );
-  }
   if (receipt) rows.push(["Receipt", `Attached: ${receipt.fileName}`]);
   return rows;
 }

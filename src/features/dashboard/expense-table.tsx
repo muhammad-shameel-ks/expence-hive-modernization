@@ -107,7 +107,7 @@ export function ExpenseTable({
                   {formatMoney(expense.amount, expense.currency)}
                 </TableCell>
                 <TableCell className="hidden max-w-[150px] whitespace-normal lg:table-cell">
-                  <StatusBadge held={expense.held} status={expense.status} />
+                  <StatusBadge status={expense.status} />
                 </TableCell>
                 <TableCell className="hidden lg:table-cell">
                   <p
