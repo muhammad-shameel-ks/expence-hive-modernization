@@ -841,7 +841,7 @@ export function createAdminCommands({
           ? undefined
           : parseRoleCapabilities(input.capabilities);
       if (input.capabilities !== null && input.capabilities !== undefined && !capabilities) {
-        throw new AdminError("validation", "A capability set must be five booleans.");
+        throw new AdminError("validation", `A capability set must be ${CAPABILITY_KEYS.length} booleans.`);
       }
       const role = await store.createRole(actor.organizationId, {
         code,
@@ -863,7 +863,7 @@ export function createAdminCommands({
       const actor = await requireAdmin(actorId);
       const parsed = parseRoleCapabilities(capabilities);
       if (!parsed) {
-        throw new AdminError("validation", "A capability set must be five booleans.");
+        throw new AdminError("validation", `A capability set must be ${CAPABILITY_KEYS.length} booleans.`);
       }
       const role = await requireActiveRole(actor.organizationId, roleId);
       if (role.code === SUPERADMIN_ROLE_CODE) {

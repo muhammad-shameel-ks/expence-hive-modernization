@@ -13,8 +13,8 @@
 
 ## Current Work
 
-- What: bulk expense approvals (ADR-0029) - dedicated approvals inbox table (/expenses/approvals), batch selection with summary total, confirmation modal with optional approval comment, resilient server-side batch approval command with per-claim skip reporting, and active Approvals navigation link.
-- Plan: ADR-0029 (`docs/architecture/decisions/0029-bulk-expense-approvals.md`).
-- Next: 1283+ vitest tests passing (68 files), lint and build green. Bulk approvals ready for review.
+- What: full ADR compliance/connectivity audit (ADRs 0015-0029) plus fixes for findings surfaced by the audit and an automated PR review on #63: bulk-approve no longer silently pays in-finance claims (restricted to in-approval status per ADR-0029), the `paid` history event now records the bank account used (ADR-0024), the approval-comment length limit is a single shared constant (200) enforced client and server, the admin capability-count error message derives from the six-key catalog instead of a stale "five", and the duplicated selection-set helpers between the approvals inbox and payment queue were consolidated into `src/lib/claim-selection.ts`. Also fixed an unrelated flaky test in `expense-create-form.test.tsx` (an assertion that didn't wait for an async remount).
+- Audit notes: no missing ADR/doc cross-references and no orphaned domain modules were found. `docs/specs/approval-revamp-hold-delegation-dashboard.md` is stale (still documents the Hold feature removed by ADR-0026) and should eventually get a superseded-by note.
+- Next: 1285 vitest tests passing (68 files), lint and build green.
 
 

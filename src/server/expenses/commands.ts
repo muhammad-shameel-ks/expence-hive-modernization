@@ -19,6 +19,7 @@ import {
   type ExpenseEmployee,
   type ExpenseStore,
   type FlowStepTarget,
+  MAX_APPROVAL_COMMENT_LENGTH,
   type ReceiptData,
   type ReceiptUploadInput,
   type UpdateExpenseDraftInput,
@@ -27,10 +28,6 @@ import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel, resolveReceiptContentTyp
 import { parsePaymentRegisterData } from "./payment-register-import";
 
 const MAX_REASON_CODE_LENGTH = 200;
-// The optional free-text note an approver may attach to an approval
-// (ADR-0028): bounded like delegation reasons so the history detail stays a
-// short explanation, never a document.
-const MAX_APPROVAL_COMMENT_LENGTH = 200;
 
 function canAccessFinance(employee: ExpenseEmployee): boolean {
   return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessFinance;
@@ -544,19 +541,27 @@ export function createExpenseCommands({
   }
 
   // The shared payment transition (ADR-0023): stamps the terminal step
-  // paid, records the claim's own 'paid' history event with actor and
-  // timestamp, and moves the claim to its terminal paid state. Both the
-  // single-claim markPaid and the bulk run apply this exact transition so
-  // the audit trail of a bulk-paid claim is identical to a one-off payment.
-  function applyPayment(
+  // paid, records the claim's own 'paid' history event with actor,
+  // timestamp, and the account the payment actually used, and moves the
+  // claim to its terminal paid state. The account is read live at execution
+  // time (ADR-0024 decision 5), never from a per-claim snapshot, so it
+  // reflects whatever bank details were approved at the moment of payment.
+  // Both the single-claim markPaid and the bulk run apply this exact
+  // transition so the audit trail of a bulk-paid claim is identical to a
+  // one-off payment.
+  async function applyPayment(
     claim: ExpenseClaim,
     step: ExpenseClaim["steps"][number],
     actorId: string,
     paidAt: string,
-  ): void {
+  ): Promise<void> {
+    const account = await store.getApprovedBankDetails(claim.requesterId);
+    const detail = account
+      ? `Paid to ${account.holderName}, account ${account.accountNumber} (${account.ifsc}, ${account.bankName})`
+      : "Payment marked complete";
     step.status = "paid";
     step.decidedAt = paidAt;
-    claim.history.push({ id: idFactory("history"), kind: "paid", actorId, detail: "Payment marked complete", createdAt: paidAt });
+    claim.history.push({ id: idFactory("history"), kind: "paid", actorId, detail, createdAt: paidAt });
     claim.status = "paid";
     claim.currentStage = undefined;
     claim.currentActorId = undefined;
@@ -972,53 +977,29 @@ export function createExpenseCommands({
           continue;
         }
         const claim = await catchUp(claimRow);
-        if (claim.status !== "in-approval" && claim.status !== "in-finance") {
+        // Bulk approval is an approval-stage action only (ADR-0029 decision 4):
+        // finance verify/pay has its own confirmation surface (ADR-0023) and
+        // must not be reachable through this batch, even for actors who also
+        // hold finance privilege. An in-finance claim is skipped like any
+        // other claim that isn't waiting for an approval decision.
+        if (claim.status !== "in-approval") {
           skipped.push({ claimId, reason: "not-in-approval", message: bulkApproveSkipMessage("not-in-approval") });
           continue;
         }
 
         const decidedAt = now().toISOString();
-        if (claim.status === "in-finance") {
-          const index = terminalIndex(claim);
-          const step = claim.steps[index];
-          const isEligible = Boolean(
-            step &&
-            actor.role &&
-            step.roleId === actor.role.id &&
-            (step.status === "pending" || step.status === "verified"),
-          );
-          if (!isEligible) {
-            skipped.push({ claimId, reason: "not-eligible", message: bulkApproveSkipMessage("not-eligible") });
-            continue;
-          }
-          if (step.status === "pending") {
-            step.status = "verified";
-            step.decidedAt = decidedAt;
-            claim.history.push({
-              id: idFactory("history"),
-              kind: "verified",
-              actorId,
-              detail: trimmedComment || "Finance verification complete",
-              createdAt: decidedAt,
-            });
-            claim.version += 1;
-          } else {
-            applyPayment(claim, step, actorId, decidedAt);
-          }
-        } else {
-          const index = claim.steps.findIndex((step) => step.status === "pending");
-          if (index === -1 || isTerminalIndex(claim, index)) {
-            skipped.push({ claimId, reason: "not-in-approval", message: bulkApproveSkipMessage("not-in-approval") });
-            continue;
-          }
-          const requester = requesterById.get(claim.requesterId);
-          if (!requester || !canActOnStep(requester, actor, claim.steps[index])) {
-            skipped.push({ claimId, reason: "not-eligible", message: bulkApproveSkipMessage("not-eligible") });
-            continue;
-          }
-          applyApproval(claim, index, actorId, decidedAt, trimmedComment);
-          await catchUpAbsentStages(claim, employees, timeoutDays, now, idFactory);
+        const index = claim.steps.findIndex((step) => step.status === "pending");
+        if (index === -1 || isTerminalIndex(claim, index)) {
+          skipped.push({ claimId, reason: "not-in-approval", message: bulkApproveSkipMessage("not-in-approval") });
+          continue;
         }
+        const requester = requesterById.get(claim.requesterId);
+        if (!requester || !canActOnStep(requester, actor, claim.steps[index])) {
+          skipped.push({ claimId, reason: "not-eligible", message: bulkApproveSkipMessage("not-eligible") });
+          continue;
+        }
+        applyApproval(claim, index, actorId, decidedAt, trimmedComment);
+        await catchUpAbsentStages(claim, employees, timeoutDays, now, idFactory);
 
         try {
           await store.updateClaim(claim);
@@ -1231,7 +1212,7 @@ export function createExpenseCommands({
         throw new ExpenseError("conflict", "This claim is not ready for payment.");
       }
       if (step.status !== "verified") throw new ExpenseError("conflict", "Verify the claim before marking payment.");
-      applyPayment(claim, step, actorId, now().toISOString());
+      await applyPayment(claim, step, actorId, now().toISOString());
       await store.updateClaim(claim);
       return claim;
     },
@@ -1260,7 +1241,7 @@ export function createExpenseCommands({
           skipped.push({ claimId, reason, message: bulkPaySkipMessage(reason) });
           continue;
         }
-        applyPayment(claim, step, actorId, now().toISOString());
+        await applyPayment(claim, step, actorId, now().toISOString());
         try {
           await store.updateClaim(claim);
         } catch (error) {

@@ -901,6 +901,11 @@ describe("expense commands", () => {
 
     expect(paid.status).toBe("paid");
     expect(paid.history.map((event) => event.kind)).toEqual(["draft", "submitted", "approved", "approved", "verified", "paid"]);
+    // ADR-0024 decision 5: the paid event records the account the payment
+    // actually used, read live from the store at execution time.
+    expect(paid.history.at(-1)?.detail).toBe(
+      `Paid to ${APPROVED_BANK_DETAILS.holderName}, account ${APPROVED_BANK_DETAILS.accountNumber} (${APPROVED_BANK_DETAILS.ifsc}, ${APPROVED_BANK_DETAILS.bankName})`,
+    );
   });
 
   describe("finance verification pool authorization", () => {
@@ -3362,23 +3367,25 @@ describe("bulk approvals (ADR-0029)", () => {
       });
     });
 
-    it("verifies in-finance claims in bulk when executed by a finance executive", async () => {
+    it("skips in-finance claims even when executed by a finance executive", async () => {
+      // ADR-0029 decision 4: bulk approval validates "in-approval" status only.
+      // Finance verify/pay has its own confirmation surface (ADR-0023) and
+      // must never be reachable through the approvals-inbox bulk action, even
+      // for an actor who also carries finance privilege.
       const { commands } = buildCommands();
       const claim1 = await submitStandardDraft(commands, employee.id);
       await commands.approveStage("emp-ada", claim1.id);
       await commands.approveStage("emp-pramod", claim1.id); // in-finance
 
       const report = await commands.approveClaims("emp-finance", [claim1.id], "Finance bulk verified");
-      expect(report.skipped).toEqual([]);
-      expect(report.approved.map((c) => c.id)).toEqual([claim1.id]);
+      expect(report.approved).toEqual([]);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: claim1.id, reason: "not-in-approval" }),
+      );
 
       const c1 = await commands.getClaim(employee.id, claim1.id);
       expect(c1.status).toBe("in-finance");
-      expect(c1.history.at(-1)).toMatchObject({
-        kind: "verified",
-        actorId: "emp-finance",
-        detail: "Finance bulk verified",
-      });
+      expect(c1.history.at(-1)?.kind).not.toBe("verified");
     });
 
     it("deduplicates claim ids so duplicate ids are approved once", async () => {

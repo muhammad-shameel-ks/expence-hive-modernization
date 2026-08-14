@@ -252,10 +252,16 @@ describe("ExpenseCreateForm persistent receipt preview", () => {
     await screen.findByRole("button", { name: /submit for approval/i });
 
     expect(screen.getByTestId("receipt-preview")).toBeInTheDocument();
-    expect(lastPreviewProps()?.claimId).toBe("exp-1");
-    expect(lastPreviewProps()?.fileName).toBe("receipt.pdf");
-    expect(receiptPreviewCalls.mounts).toBe(2);
-    expect(receiptPreviewCalls.sourceLoads).toBe(2);
+    // The remount to the "stored" receipt source is driven by the draft-save
+    // fetch's response setting claimId, a state update that lands in a
+    // render pass after the review step's button first appears - so this
+    // waits for it instead of asserting immediately.
+    await waitFor(() => {
+      expect(lastPreviewProps()?.claimId).toBe("exp-1");
+      expect(lastPreviewProps()?.fileName).toBe("receipt.pdf");
+      expect(receiptPreviewCalls.mounts).toBe(2);
+      expect(receiptPreviewCalls.sourceLoads).toBe(2);
+    });
   });
 
   it("keeps one stored preview mounted through all steps and Back/re-entry", async () => {

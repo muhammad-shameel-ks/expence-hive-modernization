@@ -30,7 +30,7 @@ import {
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
 import type { BulkApproveReport } from "@/server/expenses/commands";
-import type { ExpenseEmployee } from "@/server/expenses/ports";
+import { MAX_APPROVAL_COMMENT_LENGTH, type ExpenseEmployee } from "@/server/expenses/ports";
 import { ExpenseDrawer } from "@/features/dashboard/expense-drawer";
 import { formatMoney } from "@/features/dashboard/journey-meta";
 import type { Expense } from "@/features/dashboard/mock-data";
@@ -52,8 +52,6 @@ export interface ApprovalsInboxTableProps {
   currentUserRoleId?: string;
   currentUserRoleCode?: string;
 }
-
-const MAX_COMMENT_LENGTH = 2000;
 
 export function ApprovalsInboxTable({
   expenses,
@@ -681,13 +679,14 @@ export function ApprovalsInboxTable({
               <textarea
                 id="bulk-approval-comment"
                 value={approvalComment}
-                onChange={(e) => setApprovalComment(e.target.value.slice(0, MAX_COMMENT_LENGTH))}
+                onChange={(e) => setApprovalComment(e.target.value.slice(0, MAX_APPROVAL_COMMENT_LENGTH))}
+                maxLength={MAX_APPROVAL_COMMENT_LENGTH}
                 rows={3}
                 placeholder="Add a remark to record on each approved claim's timeline..."
                 className="w-full resize-none rounded-xl border border-input bg-card p-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
               />
               <span className="self-end text-[11px] text-muted-foreground">
-                {approvalComment.length} / {MAX_COMMENT_LENGTH}
+                {approvalComment.length} / {MAX_APPROVAL_COMMENT_LENGTH}
               </span>
             </div>
           </div>

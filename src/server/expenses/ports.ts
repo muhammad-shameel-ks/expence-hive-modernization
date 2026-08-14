@@ -2,6 +2,13 @@ import type { ReceiptContentType } from "../blob/keys";
 import type { AmountGuard } from "../shared/amount-guard";
 import type { RoleCapabilities } from "../shared/authorization";
 
+// The optional free-text note an approver may attach to an approval
+// (ADR-0028): bounded like delegation reasons so the history detail stays a
+// short explanation, never a document. Shared between the server command
+// that enforces it and the client forms that should never let a user type
+// past what the server will accept.
+export const MAX_APPROVAL_COMMENT_LENGTH = 200;
+
 export type ExpenseRole = {
   id: string;
   code: string;

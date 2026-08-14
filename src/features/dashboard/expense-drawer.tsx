@@ -24,7 +24,7 @@ import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
 import { formatMoney, initials, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
-import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { MAX_APPROVAL_COMMENT_LENGTH, type ExpenseClaim, type ExpenseEmployee } from "@/server/expenses/ports";
 import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import { JourneyFlow } from "./journey-flow";
 import { StatusBadge } from "./status-badge";
@@ -731,6 +731,7 @@ export function ExpenseDrawer({
                   id="approve-comment"
                   value={approveComment}
                   onChange={(event) => setApproveComment(event.target.value)}
+                  maxLength={MAX_APPROVAL_COMMENT_LENGTH}
                   rows={2}
                   className="mt-1 w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
                 />
