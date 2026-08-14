@@ -1,19 +1,12 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { adminCommands } from "@/server/admin/dev";
-import { expenseCommands } from "@/server/expenses/dev";
 import { AdminSetup } from "@/features/admin/admin-setup";
-import { AppHeader } from "@/components/layout/app-header";
-import { devAuth } from "@/server/auth/dev";
+import { requireSessionEmployee } from "@/server/shared/session";
 import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import styles from "../expenses/expenses.module.css";
 
 export default async function AdminPage() {
-  const sessionId = (await cookies()).get("eh_session")?.value;
-  const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
-  if (!employee) {
-    redirect("/login");
-  }
+  const employee = await requireSessionEmployee();
 
   const admin = adminCommands();
   const actor = await admin.getAdminActor(employee.id);
@@ -28,14 +21,8 @@ export default async function AdminPage() {
     admin.listDepartments(actor.id),
     isSuperadmin ? admin.getAbsenceTimeoutDays(actor.id) : Promise.resolve(null),
   ]);
-  const workspace = await expenseCommands().getWorkspace(employee.id);
   return (
     <main className={styles.page}>
-      <AppHeader
-        employeeName={workspace.employee.name}
-        role={workspace.employee.role}
-        activePath="/admin"
-      />
       <AdminSetup
         people={people}
         flows={flows}

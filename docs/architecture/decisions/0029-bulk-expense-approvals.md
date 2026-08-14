@@ -27,3 +27,4 @@ Approvers requested the ability to select multiple claims and mark them as appro
 - Every claim maintains an exact, audited approval history event with timestamp, actor, and comment.
 - Partial failures (e.g. concurrent approvals by another user) are clearly communicated in a warning summary while successful approvals proceed.
 - The `Approvals` navigation link in `AppHeader` is activated for users with approval capabilities.
+- Superseded: `AppHeader` was replaced by `AppSidebar` (grouped, role-gated nav); the same capability gate now activates the link there instead.

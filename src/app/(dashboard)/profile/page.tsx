@@ -1,16 +1,12 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { devAuth } from "@/server/auth/dev";
 import { profileCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
-import { AppHeader } from "@/components/layout/app-header";
+import { requireSessionEmployee } from "@/server/shared/session";
 import { ProfilePage } from "@/features/profile/profile-page";
 import styles from "../expenses/expenses.module.css";
 
 export default async function ProfileRoute() {
-  const sessionId = (await cookies()).get("eh_session")?.value;
-  const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
-  if (!employee) redirect("/login");
+  const employee = await requireSessionEmployee();
 
   let profile;
   try {
@@ -26,11 +22,6 @@ export default async function ProfileRoute() {
 
   return (
     <main className={styles.page}>
-      <AppHeader
-        employeeName={profile.employee.name}
-        role={profile.employee.role}
-        activePath="/profile"
-      />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Profile / personal details
