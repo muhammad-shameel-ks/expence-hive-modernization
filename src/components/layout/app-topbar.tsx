@@ -1,7 +1,7 @@
 "use client";
 
 import { usePathname } from "next/navigation";
-import { LogOut } from "lucide-react";
+import { LogOut, UserRound } from "lucide-react";
 import { SidebarTrigger } from "@/components/ui/sidebar";
 import { Separator } from "@/components/ui/separator";
 import {
@@ -46,6 +46,13 @@ export function AppTopbar({ employeeName }: { employeeName: string }) {
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end">
             <DropdownMenuLabel className="truncate">{employeeName}</DropdownMenuLabel>
+            <DropdownMenuSeparator />
+            <DropdownMenuItem asChild>
+              <a href="/profile">
+                <UserRound />
+                Profile
+              </a>
+            </DropdownMenuItem>
             <DropdownMenuSeparator />
             <form action="/api/auth/logout" method="post">
               <DropdownMenuItem asChild variant="destructive">

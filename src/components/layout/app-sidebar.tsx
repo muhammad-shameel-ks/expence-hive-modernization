@@ -6,6 +6,8 @@ import {
   ListChecks,
   CheckCircle2,
   Wallet,
+  Landmark,
+  FileText,
   Activity as ActivityIcon,
   ShieldCheck,
 } from "lucide-react";
@@ -27,16 +29,24 @@ import {
 export type DashboardPath =
   | "/expenses"
   | "/expenses/all"
+  | "/expenses/approvals"
   | "/finance/payments"
+  | "/finance/expenses"
+  | "/finance/bank-details"
   | "/finance/activity"
-  | "/admin";
+  | "/admin"
+  | "/profile";
 
 export const DASHBOARD_PAGE_LABELS: Record<DashboardPath, string> = {
   "/expenses": "Dashboard",
   "/expenses/all": "My expenses",
+  "/expenses/approvals": "Approvals",
   "/finance/payments": "Payment queue",
+  "/finance/expenses": "Expense list",
+  "/finance/bank-details": "Bank approvals",
   "/finance/activity": "Activity",
   "/admin": "Admin console",
+  "/profile": "Profile",
 };
 
 function activePathFor(pathname: string): DashboardPath | undefined {
@@ -46,11 +56,12 @@ function activePathFor(pathname: string): DashboardPath | undefined {
 export function AppSidebar({ role = null }: { role?: ExpenseRole | null }) {
   const activePath = activePathFor(usePathname());
   const capabilities = resolveRoleCapabilities(role);
-  const isApprover = capabilities.canApprove;
+  const isApprover = capabilities.canApprove || capabilities.canAccessFinance;
   const canViewPaymentQueue = capabilities.canAccessFinance;
+  const canReviewBankDetails = capabilities.approveBankDetails;
   const canViewOrganizationActivity = capabilities.canViewOrganizationActivity;
   const canViewAdminConsole = capabilities.canAccessAdminConsole || activePath === "/admin";
-  const showApprovalsGroup = isApprover || canViewPaymentQueue;
+  const showApprovalsGroup = isApprover || canViewPaymentQueue || canReviewBankDetails;
 
   return (
     <Sidebar collapsible="icon">
@@ -104,9 +115,15 @@ export function AppSidebar({ role = null }: { role?: ExpenseRole | null }) {
               <SidebarMenu>
                 {isApprover ? (
                   <SidebarMenuItem>
-                    <SidebarMenuButton disabled tooltip="Coming in a later milestone">
-                      <CheckCircle2 />
-                      <span>Approvals</span>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={activePath === "/expenses/approvals"}
+                      tooltip="Approvals"
+                    >
+                      <a href="/expenses/approvals">
+                        <CheckCircle2 />
+                        <span>Approvals</span>
+                      </a>
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ) : null}
@@ -124,6 +141,20 @@ export function AppSidebar({ role = null }: { role?: ExpenseRole | null }) {
                     </SidebarMenuButton>
                   </SidebarMenuItem>
                 ) : null}
+                {canReviewBankDetails ? (
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={activePath === "/finance/bank-details"}
+                      tooltip="Bank approvals"
+                    >
+                      <a href="/finance/bank-details">
+                        <Landmark />
+                        <span>Bank approvals</span>
+                      </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                ) : null}
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
@@ -134,6 +165,18 @@ export function AppSidebar({ role = null }: { role?: ExpenseRole | null }) {
             <SidebarGroupLabel>Insights</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
+                <SidebarMenuItem>
+                  <SidebarMenuButton
+                    asChild
+                    isActive={activePath === "/finance/expenses"}
+                    tooltip="Expense list"
+                  >
+                    <a href="/finance/expenses">
+                      <FileText />
+                      <span>Expense list</span>
+                    </a>
+                  </SidebarMenuButton>
+                </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild

@@ -45,7 +45,7 @@ const roleWithCapabilities = (capabilities: Partial<RoleCapabilities>): ExpenseR
     canSubmit: true,
     canApprove: false,
     canAccessFinance: false,
-    canHold: false,
+    approveBankDetails: false,
     canViewOrganizationActivity: false,
     canAccessAdminConsole: false,
     ...capabilities,
@@ -59,14 +59,21 @@ describe("AppSidebar", () => {
     expect(screen.getByText("My expenses")).toBeInTheDocument();
     expect(screen.queryByText("Approvals")).not.toBeInTheDocument();
     expect(screen.queryByText("Payment queue")).not.toBeInTheDocument();
+    expect(screen.queryByText("Bank approvals")).not.toBeInTheDocument();
+    expect(screen.queryByText("Expense list")).not.toBeInTheDocument();
     expect(screen.queryByText("Activity")).not.toBeInTheDocument();
     expect(screen.queryByText("Admin console")).not.toBeInTheDocument();
   });
 
-  it("shows a disabled Approvals item for approvers", () => {
+  it("shows a working Approvals link for approvers", () => {
     renderSidebar(roleWithCapabilities({ canApprove: true }));
-    const approvals = screen.getByText("Approvals").closest("button");
-    expect(approvals).toBeDisabled();
+    const approvals = screen.getByText("Approvals").closest("a");
+    expect(approvals).toHaveAttribute("href", "/expenses/approvals");
+  });
+
+  it("shows Approvals for finance-only capability too", () => {
+    renderSidebar(roleWithCapabilities({ canAccessFinance: true }));
+    expect(screen.getByText("Approvals")).toBeInTheDocument();
   });
 
   it("shows Payment queue for finance capability", () => {
@@ -74,8 +81,15 @@ describe("AppSidebar", () => {
     expect(screen.getByText("Payment queue")).toBeInTheDocument();
   });
 
-  it("shows Activity for organization activity capability", () => {
+  it("shows Bank approvals for the approveBankDetails capability", () => {
+    renderSidebar(roleWithCapabilities({ approveBankDetails: true }));
+    const bankApprovals = screen.getByText("Bank approvals").closest("a");
+    expect(bankApprovals).toHaveAttribute("href", "/finance/bank-details");
+  });
+
+  it("shows Expense list and Activity for organization activity capability", () => {
     renderSidebar(roleWithCapabilities({ canViewOrganizationActivity: true }));
+    expect(screen.getByText("Expense list")).toBeInTheDocument();
     expect(screen.getByText("Activity")).toBeInTheDocument();
   });
 

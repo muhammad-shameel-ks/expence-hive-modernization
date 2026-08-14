@@ -1,19 +1,15 @@
-import { cookies } from "next/headers";
 import Link from "next/link";
 import { redirect } from "next/navigation";
-import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
-import { AppHeader } from "@/components/layout/app-header";
+import { requireSessionEmployee } from "@/server/shared/session";
 import { Button } from "@/components/ui/button";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import { OrgWideExpenseList } from "@/features/finance/org-wide-expense-list";
 import styles from "../../expenses/expenses.module.css";
 
 export default async function FinanceExpensesPage() {
-  const sessionId = (await cookies()).get("eh_session")?.value;
-  const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
-  if (!employee) redirect("/login");
+  const employee = await requireSessionEmployee();
 
   let workspace;
   try {
@@ -37,7 +33,6 @@ export default async function FinanceExpensesPage() {
     if (isExpenseError(error) && error.code === "unauthorized") {
       return (
         <main className={styles.page}>
-          <AppHeader employeeName={workspace.employee.name} role={workspace.employee.role} />
           <div className="mx-auto w-full max-w-7xl px-4 py-10 sm:px-6 lg:px-10">
             <h1 className="mt-2 text-3xl font-semibold tracking-tight text-foreground">Expense list</h1>
             <p className="mt-4 text-sm text-muted-foreground">
@@ -57,11 +52,6 @@ export default async function FinanceExpensesPage() {
 
   return (
     <main className={styles.page}>
-      <AppHeader
-        employeeName={workspace.employee.name}
-        role={workspace.employee.role}
-        activePath="/finance/expenses"
-      />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Finance / expense list
