@@ -22,7 +22,8 @@ window.matchMedia ??= ((query: string) => ({
 })) as unknown as typeof window.matchMedia;
 
 import { AppSidebar } from "./app-sidebar";
-import { SidebarProvider } from "@/components/ui/sidebar";
+import { AppTopbar } from "./app-topbar";
+import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
 import { TooltipProvider } from "@/components/ui/tooltip";
 
 afterEach(cleanup);
@@ -96,5 +97,21 @@ describe("AppSidebar", () => {
   it("shows Admin console for admin console capability", () => {
     renderSidebar(roleWithCapabilities({ canAccessAdminConsole: true }));
     expect(screen.getByText("Admin console")).toBeInTheDocument();
+  });
+
+  it("renders SidebarInset with min-w-0 to prevent wide content from pushing the topbar offscreen", () => {
+    const { container } = render(
+      <TooltipProvider>
+        <SidebarProvider>
+          <SidebarInset>
+            <AppTopbar employeeName="Rishikesh" />
+          </SidebarInset>
+        </SidebarProvider>
+      </TooltipProvider>
+    );
+
+    const inset = container.querySelector('[data-slot="sidebar-inset"]');
+    expect(inset).toHaveClass("min-w-0");
+    expect(screen.getByRole("button", { name: "Rishikesh" })).toBeInTheDocument();
   });
 });
