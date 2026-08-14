@@ -1,12 +1,10 @@
-import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
-import { devAuth } from "@/server/auth/dev";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
 import { resolveRoleCapabilities } from "@/server/shared/authorization";
+import { requireSessionEmployee } from "@/server/shared/session";
 import { ExpenseCreateForm, type ExpenseDraftInitial } from "@/features/expenses/expense-create-form";
 import { draftAttachmentFileName } from "@/features/expenses/expense-draft";
-import { AppHeader } from "@/components/layout/app-header";
 import styles from "../expenses.module.css";
 
 export default async function NewExpensePage({
@@ -14,9 +12,7 @@ export default async function NewExpensePage({
 }: {
   searchParams: Promise<{ id?: string }>;
 }) {
-  const sessionId = (await cookies()).get("eh_session")?.value;
-  const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
-  if (!employee) redirect("/login");
+  const employee = await requireSessionEmployee();
   const commands = expenseCommands();
   let workspace;
   try {
@@ -58,7 +54,6 @@ export default async function NewExpensePage({
 
   return (
     <main className={styles.page}>
-      <AppHeader employeeName={workspace.employee.name} role={workspace.employee.role} />
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <p className="text-xs font-semibold uppercase tracking-[0.18em] text-primary">
           Expense operations / {initial ? "continue draft" : "new claim"}

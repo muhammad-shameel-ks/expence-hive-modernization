@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Plus, LayoutList } from "lucide-react";
-import { devAuth } from "@/server/auth/dev";
+import { requireSessionEmployee } from "@/server/shared/session";
 import { expenseCommands, expenseDevStore } from "@/server/expenses/dev";
 import { adminDevStore } from "@/server/admin/dev";
 import { isExpenseError } from "@/server/expenses/commands";
@@ -14,7 +14,6 @@ import {
 import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { Button } from "@/components/ui/button";
 import styles from "./expenses.module.css";
-import { AppHeader } from "@/components/layout/app-header";
 import { ExpenseDashboard } from "@/features/dashboard/dashboard";
 import { activityEntryToItem, claimToExpense } from "@/features/dashboard/expense-read-model";
 
@@ -23,11 +22,7 @@ export default async function ExpensesPage({
 }: {
   searchParams: Promise<{ claim?: string }>;
 }) {
-  const sessionId = (await cookies()).get("eh_session")?.value;
-  const employee = sessionId ? devAuth().getCurrentEmployee(sessionId) : null;
-  if (!employee) {
-    redirect("/login");
-  }
+  const employee = await requireSessionEmployee();
   const { claim: focusClaimId } = await searchParams;
   // The persisted period preference (ADR-0020): the switch writes the cookie
   // client-side and refreshes the route, so this server read recomputes the
@@ -67,12 +62,6 @@ export default async function ExpensesPage({
 
   return (
     <main className={styles.page}>
-      <AppHeader
-        employeeName={workspace.employee.name}
-        role={workspace.employee.role}
-        activePath="/expenses"
-      />
-
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
         <div className="flex flex-wrap items-start justify-between gap-4">
           <div>
