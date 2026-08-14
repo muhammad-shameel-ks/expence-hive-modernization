@@ -19,13 +19,14 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from "@/components/ui/dropdown-menu";
-import { DASHBOARD_PAGE_LABELS, type DashboardPath } from "@/components/layout/app-sidebar";
+import { activePathFor, DASHBOARD_PAGE_LABELS } from "@/lib/dashboard-routes";
 
 export function AppTopbar({ employeeName }: { employeeName: string }) {
-  const pageLabel = DASHBOARD_PAGE_LABELS[usePathname() as DashboardPath];
+  const activePath = activePathFor(usePathname());
+  const pageLabel = activePath ? DASHBOARD_PAGE_LABELS[activePath] : undefined;
 
   return (
-    <header className="sticky top-0 z-10 flex h-14 shrink-0 items-center gap-2 border-b bg-background px-4">
+    <header className="sticky top-0 z-10 flex h-[var(--app-topbar-height)] shrink-0 items-center gap-2 border-b bg-background px-4">
       <SidebarTrigger />
       <Separator orientation="vertical" className="mr-2 h-4" />
       <Breadcrumb>
@@ -38,7 +39,10 @@ export function AppTopbar({ employeeName }: { employeeName: string }) {
 
       <div className="ml-auto flex items-center gap-2">
         <DropdownMenu>
-          <DropdownMenuTrigger className="flex items-center gap-2 rounded-md p-1.5 text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring">
+          <DropdownMenuTrigger
+            aria-label={employeeName}
+            className="flex items-center gap-2 rounded-md p-1.5 text-sm outline-hidden hover:bg-accent focus-visible:ring-2 focus-visible:ring-ring"
+          >
             <Avatar size="sm">
               <AvatarFallback aria-hidden="true">{employeeName.charAt(0)}</AvatarFallback>
             </Avatar>

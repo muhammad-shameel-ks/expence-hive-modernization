@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import type { ExpenseRole } from "@/server/expenses/ports";
+import { activePathFor } from "@/lib/dashboard-routes";
 import {
   Sidebar,
   SidebarContent,
@@ -25,33 +26,6 @@ import {
   SidebarMenuItem,
   SidebarRail,
 } from "@/components/ui/sidebar";
-
-export type DashboardPath =
-  | "/expenses"
-  | "/expenses/all"
-  | "/expenses/approvals"
-  | "/finance/payments"
-  | "/finance/expenses"
-  | "/finance/bank-details"
-  | "/finance/activity"
-  | "/admin"
-  | "/profile";
-
-export const DASHBOARD_PAGE_LABELS: Record<DashboardPath, string> = {
-  "/expenses": "Dashboard",
-  "/expenses/all": "My expenses",
-  "/expenses/approvals": "Approvals",
-  "/finance/payments": "Payment queue",
-  "/finance/expenses": "Expense list",
-  "/finance/bank-details": "Bank approvals",
-  "/finance/activity": "Activity",
-  "/admin": "Admin console",
-  "/profile": "Profile",
-};
-
-function activePathFor(pathname: string): DashboardPath | undefined {
-  return (Object.keys(DASHBOARD_PAGE_LABELS) as DashboardPath[]).find((path) => path === pathname);
-}
 
 export function AppSidebar({ role = null }: { role?: ExpenseRole | null }) {
   const activePath = activePathFor(usePathname());

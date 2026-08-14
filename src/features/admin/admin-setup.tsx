@@ -48,7 +48,7 @@ export function AdminSetup({
     <>
       {/* Section Navigation Tabs */}
       <nav
-        className="sticky top-14 z-[5] flex items-center gap-1.5 overflow-x-auto border-b border-[#e1e7ee] bg-white/95 px-[clamp(22px,4vw,56px)] py-2.5 backdrop-blur-md"
+        className="sticky top-[var(--app-topbar-height)] z-[5] flex items-center gap-1.5 overflow-x-auto border-b border-[#e1e7ee] bg-white/95 px-[clamp(22px,4vw,56px)] py-2.5 backdrop-blur-md"
         aria-label="Administration sub-navigation"
       >
         <button
