@@ -7,6 +7,7 @@ import {
   handleApproveExpenseRequest,
   handleApprovalsQueueRequest,
   handleBulkApproveExpensesRequest,
+  handleBulkVerifyExpensesRequest,
   handleCreateExpenseRequest,
   handleDelegateExpenseRequest,
   handleDeleteExpenseRequest,
@@ -1580,5 +1581,75 @@ describe("bulk approvals HTTP handlers (ADR-0029)", () => {
       "emp-shameel",
     );
     expect(deniedResponse.status).toBe(403);
+  });
+
+  it("rejects non-JSON or malformed bodies for bulk verify", async () => {
+    const { commands } = build();
+
+    const notJson = await handleBulkVerifyExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-verify", {
+        method: "POST",
+        body: "invalid-json",
+        headers: { "content-type": "application/json" },
+      }),
+      commands,
+      "emp-finance",
+    );
+    expect(notJson.status).toBe(422);
+
+    const emptyArray = await handleBulkVerifyExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-verify", {
+        method: "POST",
+        body: JSON.stringify({ claimIds: [] }),
+        headers: { "content-type": "application/json" },
+      }),
+      commands,
+      "emp-finance",
+    );
+    expect(emptyArray.status).toBe(422);
+  });
+
+  it("successfully bulk verifies claims for a finance actor", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = (await createResponse.json()) as { claim: ExpenseClaim };
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+    await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+    await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-pramod",
+      claim.id,
+    );
+
+    const response = await handleBulkVerifyExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-verify", {
+        method: "POST",
+        body: JSON.stringify({ claimIds: [claim.id] }),
+        headers: { "content-type": "application/json" },
+      }),
+      commands,
+      "emp-finance",
+    );
+
+    expect(response.status).toBe(200);
+    const body = (await response.json()) as { report: { verified: ExpenseClaim[]; skipped: unknown[] } };
+    expect(body.report.verified).toHaveLength(1);
+    expect(body.report.verified[0].id).toBe(claim.id);
+    expect(body.report.skipped).toEqual([]);
   });
 });

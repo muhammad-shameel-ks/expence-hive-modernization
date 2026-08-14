@@ -3318,6 +3318,17 @@ describe("bulk approvals (ADR-0029)", () => {
       const financeQueue = await commands.listApprovalsQueue("emp-finance");
       expect(financeQueue.map((c) => c.id)).toContain(submitted.id);
     });
+
+    it("does not include already-verified in-finance claims in the approvals queue", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", submitted.id);
+      await commands.approveStage("emp-pramod", submitted.id); // now at Finance Executive (in-finance)
+      await commands.verifyClaim("emp-finance", submitted.id); // now verified
+
+      const financeQueue = await commands.listApprovalsQueue("emp-finance");
+      expect(financeQueue.find((c) => c.id === submitted.id)).toBeUndefined();
+    });
   });
 
   describe("approveClaims", () => {
@@ -3446,6 +3457,120 @@ describe("bulk approvals (ADR-0029)", () => {
 
       const report = await commands.approveClaims("emp-ada", [claim1.id]);
       expect(report.approved).toHaveLength(0);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: claim1.id, reason: "conflict" }),
+      );
+    });
+  });
+
+  describe("verifyClaims", () => {
+    it("rejects an actor whose role lacks the canAccessFinance privilege", async () => {
+      const { commands } = buildCommands();
+      const submitted = await submitStandardDraft(commands, employee.id);
+
+      await expect(commands.verifyClaims(employee.id, [submitted.id])).rejects.toMatchObject({
+        code: "unauthorized",
+        message: "Only Finance can verify claims.",
+      });
+    });
+
+    it("verifies multiple eligible claims in bulk for a finance executive", async () => {
+      const { commands } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      const claim2 = await submitStandardDraft(commands, "emp-katherine");
+      await commands.approveStage("emp-ada", claim1.id);
+      await commands.approveStage("emp-pramod", claim1.id); // in-finance
+      await commands.approveStage("emp-ada", claim2.id);
+      await commands.approveStage("emp-pramod", claim2.id); // in-finance
+
+      const report = await commands.verifyClaims("emp-finance", [claim1.id, claim2.id]);
+      expect(report.skipped).toEqual([]);
+      expect(report.verified.map((c) => c.id).sort()).toEqual([claim1.id, claim2.id].sort());
+
+      const c1 = await commands.getClaim(employee.id, claim1.id);
+      expect(c1.status).toBe("in-finance");
+      const terminal1 = c1.steps.at(-1);
+      expect(terminal1?.status).toBe("verified");
+      expect(c1.history.at(-1)).toMatchObject({
+        kind: "verified",
+        actorId: "emp-finance",
+        detail: "Finance verification complete",
+      });
+    });
+
+    it("skips claims that are not in-finance (e.g. still in approval or draft)", async () => {
+      const { commands } = buildCommands();
+      const inApproval = await submitStandardDraft(commands, employee.id);
+
+      const report = await commands.verifyClaims("emp-finance", [inApproval.id]);
+      expect(report.verified).toEqual([]);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: inApproval.id, reason: "not-in-finance" }),
+      );
+    });
+
+    it("skips claims requested by the finance executive themselves", async () => {
+      const financeHead = emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" });
+      const financeExec = emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" });
+      const financeExecFlow: ExpenseFlow = {
+        id: "flow-finance-exec",
+        roleId: ROLE_FINANCE_EXECUTIVE.id,
+        steps: [roleStep(ROLE_FINANCE_HEAD.id), roleStep(ROLE_FINANCE_EXECUTIVE.id)],
+      };
+      const { commands } = buildCommands({
+        employees: [financeHead, financeExec],
+        flows: [financeExecFlow],
+      });
+      const ownClaim = await commands.createDraft(financeExec.id, {
+        title: "Finance supply purchase",
+        category: "Supplies",
+        amountMinor: 4000,
+        currency: "INR",
+        expenseDate: "2026-08-04",
+        attachment: { fileName: "receipt.pdf", contentType: "application/pdf", data: PDF_RECEIPT },
+      });
+      await commands.submitClaim(financeExec.id, ownClaim.id);
+      await commands.approveStage(financeHead.id, ownClaim.id);
+
+      const report = await commands.verifyClaims(financeExec.id, [ownClaim.id]);
+      expect(report.verified).toEqual([]);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: ownClaim.id, reason: "self-claim" }),
+      );
+    });
+
+    it("deduplicates claim ids so duplicate ids are verified once", async () => {
+      const { commands } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", claim1.id);
+      await commands.approveStage("emp-pramod", claim1.id);
+
+      const report = await commands.verifyClaims("emp-finance", [claim1.id, claim1.id]);
+      expect(report.verified).toHaveLength(1);
+      expect(report.skipped).toHaveLength(0);
+    });
+
+    it("skips not-found claim ids", async () => {
+      const { commands } = buildCommands();
+      const report = await commands.verifyClaims("emp-finance", ["non-existent-id"]);
+      expect(report.verified).toHaveLength(0);
+      expect(report.skipped).toContainEqual(
+        expect.objectContaining({ claimId: "non-existent-id", reason: "not-found" }),
+      );
+    });
+
+    it("handles optimistic concurrency store conflict gracefully as a skipped claim", async () => {
+      const { commands, store } = buildCommands();
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", claim1.id);
+      await commands.approveStage("emp-pramod", claim1.id);
+
+      vi.spyOn(store, "updateClaim").mockRejectedValueOnce(
+        new ExpenseError("conflict", "Claim was modified"),
+      );
+
+      const report = await commands.verifyClaims("emp-finance", [claim1.id]);
+      expect(report.verified).toHaveLength(0);
       expect(report.skipped).toContainEqual(
         expect.objectContaining({ claimId: claim1.id, reason: "conflict" }),
       );

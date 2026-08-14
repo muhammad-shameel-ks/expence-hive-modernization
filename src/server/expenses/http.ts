@@ -415,6 +415,29 @@ export async function handleBulkApproveExpensesRequest(
   }
 }
 
+export async function handleBulkVerifyExpensesRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object") return validationResponse();
+    const claimIds = (body as Record<string, unknown>).claimIds;
+    if (
+      !Array.isArray(claimIds) ||
+      claimIds.length === 0 ||
+      !claimIds.every((claimId) => typeof claimId === "string")
+    ) {
+      return validationResponse();
+    }
+    const report = await commands.verifyClaims(actorId, claimIds as string[]);
+    return Response.json({ report });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
 export async function handleApprovalsQueueRequest(
   _request: Request,
   commands: ExpenseCommands,

@@ -305,4 +305,87 @@ describe("ApprovalsInboxTable", () => {
 
     expect(screen.getByRole("dialog")).toBeInTheDocument();
   });
+
+  it("displays 'Verify selected' and executes bulk verification when items require verification", async () => {
+    const list = [
+      buildExpense({ id: "exp-v1", title: "Cloud bill", amount: 1200, primaryAction: "verify", status: "in-finance" }),
+      buildExpense({ id: "exp-v2", ref: "EXP-2026-0002", title: "License renewal", amount: 3500, primaryAction: "verify", status: "in-finance" }),
+    ];
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        report: {
+          verified: [
+            { id: "exp-v1", status: "in-finance" },
+            { id: "exp-v2", status: "in-finance" },
+          ],
+          skipped: [],
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderTable(list);
+
+    // Header says Pending verification when all claims are verification claims
+    expect(screen.getByText(/Pending verification \(2\)/i)).toBeInTheDocument();
+
+    const selectAll = screen.getByLabelText("Select all claims in list");
+    fireEvent.click(selectAll);
+
+    const verifyButton = screen.getByRole("button", { name: /Verify selected \(2\)/i });
+    expect(verifyButton).toBeInTheDocument();
+    fireEvent.click(verifyButton);
+
+    expect(screen.getByText("Verify 2 expense claims")).toBeInTheDocument();
+    expect(screen.getByText("₹4,700.00")).toBeInTheDocument();
+
+    const confirmButton = screen.getByRole("button", { name: /Confirm & Verify \(2\)/i });
+    fireEvent.click(confirmButton);
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/expenses/bulk-verify", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          claimIds: ["exp-v1", "exp-v2"],
+        }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText("Successfully verified 2 expense claims.")).toBeInTheDocument();
+    });
+    expect(mockRefresh).toHaveBeenCalled();
+  });
+
+  it("displays warnings if bulk verification has skipped claims", async () => {
+    const list = [
+      buildExpense({ id: "exp-v1", title: "Cloud bill", primaryAction: "verify", status: "in-finance" }),
+      buildExpense({ id: "exp-v2", ref: "EXP-2026-0002", title: "License renewal", primaryAction: "verify", status: "in-finance" }),
+    ];
+
+    const fetchMock = vi.fn().mockResolvedValue({
+      ok: true,
+      json: async () => ({
+        report: {
+          verified: [{ id: "exp-v1", status: "in-finance" }],
+          skipped: [{ claimId: "exp-v2", reason: "conflict", message: "This claim was modified by another action." }],
+        },
+      }),
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderTable(list);
+
+    fireEvent.click(screen.getByLabelText("Select all claims in list"));
+    fireEvent.click(screen.getByRole("button", { name: /Verify selected/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm & Verify/i }));
+
+    await waitFor(() => {
+      expect(screen.getByText(/Verification completed with warnings: 1 verified, 1 skipped\./)).toBeInTheDocument();
+      expect(screen.getByText(/This claim was modified by another action\./)).toBeInTheDocument();
+    });
+  });
 });
