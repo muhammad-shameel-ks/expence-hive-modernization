@@ -1,7 +1,7 @@
 import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { Plus, LayoutList } from "lucide-react";
-import { requireSessionEmployee } from "@/server/shared/session";
+import { getWorkspaceOrRedirect, requireSessionEmployee } from "@/server/shared/session";
 import { expenseCommands, expenseDevStore } from "@/server/expenses/dev";
 import { adminDevStore } from "@/server/admin/dev";
 import { isExpenseError } from "@/server/expenses/commands";
@@ -27,14 +27,11 @@ export default async function ExpensesPage({
   // client-side and refreshes the route, so this server read recomputes the
   // cards, the claims list, and the activity feed together.
   const period = parseDashboardPeriod((await cookies()).get(DASHBOARD_PERIOD_COOKIE)?.value);
-  let workspace;
+  const workspace = await getWorkspaceOrRedirect(employee.id);
   let activityEntries;
   let focusClaim;
   try {
-    [workspace, activityEntries] = await Promise.all([
-      expenseCommands().getWorkspace(employee.id),
-      expenseCommands().listActivity(employee.id),
-    ]);
+    activityEntries = await expenseCommands().listActivity(employee.id);
     // The focusClaim deep-link (e.g. ?claim= from the admin console)
     // resolves the claim server-side so the dashboard can open it on mount.
     focusClaim = focusClaimId

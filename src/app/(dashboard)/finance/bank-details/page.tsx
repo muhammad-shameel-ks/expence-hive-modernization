@@ -1,27 +1,14 @@
 import Link from "next/link";
-import { redirect } from "next/navigation";
-import { expenseCommands } from "@/server/expenses/dev";
 import { profileCommands } from "@/server/expenses/dev";
-import { isExpenseError } from "@/server/expenses/commands";
 import { isExpenseAuthError } from "@/server/expenses/profile-http";
-import { requireSessionEmployee } from "@/server/shared/session";
+import { getWorkspaceOrRedirect, requireSessionEmployee } from "@/server/shared/session";
 import { Button } from "@/components/ui/button";
 import { BankDetailApprovals } from "@/features/finance/bank-detail-approvals";
 import styles from "../../expenses/expenses.module.css";
 
 export default async function FinanceBankDetailsPage() {
   const employee = await requireSessionEmployee();
-
-  try {
-    // A deactivated employee still holds a session but is rejected by the
-    // expense domain; send them back to sign-in instead of crashing.
-    await expenseCommands().getWorkspace(employee.id);
-  } catch (error) {
-    if (isExpenseError(error) && error.code === "unauthorized") {
-      redirect("/login");
-    }
-    throw error;
-  }
+  await getWorkspaceOrRedirect(employee.id);
 
   let requests;
   try {

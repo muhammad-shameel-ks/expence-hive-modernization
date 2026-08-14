@@ -3,7 +3,7 @@ import { redirect } from "next/navigation";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
 import { resolveRoleCapabilities } from "@/server/shared/authorization";
-import { requireSessionEmployee } from "@/server/shared/session";
+import { getWorkspaceOrRedirect, requireSessionEmployee } from "@/server/shared/session";
 import { Button } from "@/components/ui/button";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
 import { ApprovalsInboxTable } from "@/features/approvals/approvals-inbox-table";
@@ -11,16 +11,7 @@ import styles from "../expenses.module.css";
 
 export default async function ApprovalsPage() {
   const employee = await requireSessionEmployee();
-
-  let workspace;
-  try {
-    workspace = await expenseCommands().getWorkspace(employee.id);
-  } catch (error) {
-    if (isExpenseError(error) && error.code === "unauthorized") {
-      redirect("/login");
-    }
-    throw error;
-  }
+  const workspace = await getWorkspaceOrRedirect(employee.id);
 
   const capabilities = resolveRoleCapabilities(workspace.employee.role);
   if (!capabilities.canApprove && !capabilities.canAccessFinance) {
