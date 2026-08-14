@@ -60,8 +60,6 @@ const APPROVER_CARDS: DashboardCards = {
   approver: {
     awaitingMyActionCount: 2,
     awaitingMyActionTotalMinor: 36000,
-    myHoldsCount: 1,
-    holdClaimIds: ["ex-held"],
     agedCount: 1,
     agedClaimIds: ["ex-aged"],
   },
@@ -81,14 +79,13 @@ const FINANCE_CARDS: DashboardCards = {
   },
 };
 
-function renderDashboard(cards: DashboardCards, expenses: Expense[]) {
+function renderDashboard(cards: DashboardCards, expenses: Expense[], role: { roleId?: string; roleCode?: string } = {}) {
   return render(
     <ExpenseDashboard
       currentUser="Sanil Davis"
       currentUserId="emp-user"
-      currentUserRoleId="role-manager"
-      currentUserRoleCode="manager"
-      currentUserCanHold
+      currentUserRoleId={role.roleId ?? "role-manager"}
+      currentUserRoleCode={role.roleCode ?? "manager"}
       cards={cards}
       absenceTimeoutDays={3}
       period="month"
@@ -108,12 +105,10 @@ describe("ExpenseDashboard card grids", () => {
     expect(screen.getByRole("button", { name: "Resume draft" })).toBeInTheDocument();
   });
 
-  it("renders the approver card set with hold and aging CTAs", () => {
+  it("renders the approver card set with an aging CTA", () => {
     renderDashboard(APPROVER_CARDS, []);
     expect(screen.getByText("Awaiting my action")).toBeInTheDocument();
-    expect(screen.getByText("My holds")).toBeInTheDocument();
     expect(screen.getByText("Aging")).toBeInTheDocument();
-    expect(screen.getByRole("button", { name: "Resume a hold" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: "Review oldest" })).toBeInTheDocument();
     expect(screen.queryByText("Spent this month")).not.toBeInTheDocument();
   });
@@ -166,6 +161,64 @@ describe("ExpenseDashboard period switch", () => {
   });
 });
 
+describe("ExpenseDashboard role-adaptive layouts (ADR-0027)", () => {
+  // A claim assigned to the viewer for a decision: it must surface in the
+  // "needs your attention" card.
+  const decision = () =>
+    expense({
+      id: "ex-decision",
+      title: "Decision needed",
+      status: "in-approval",
+      requesterId: "emp-other",
+      nextActorId: "emp-user",
+    });
+
+  const headingIndex = (label: string) =>
+    screen.getAllByRole("heading").findIndex((heading) => heading.textContent?.startsWith(label));
+
+  it("leads with the expense list for employees and shows no attention panel when empty", () => {
+    renderDashboard(EMPLOYEE_CARDS, [], { roleCode: "executive" });
+    expect(screen.getByRole("heading", { name: "Your Expense" })).toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "Needs your attention" })).not.toBeInTheDocument();
+  });
+
+  it("shows the employee attention card only when it has items, after the list", () => {
+    renderDashboard(EMPLOYEE_CARDS, [decision()], { roleCode: "executive" });
+    expect(headingIndex("Your Expense")).toBeLessThan(headingIndex("Needs your attention"));
+  });
+
+  it("leads with the attention card for approvers, with the expense list below", () => {
+    renderDashboard(APPROVER_CARDS, [decision()], { roleCode: "manager" });
+    expect(headingIndex("Needs your attention")).toBeLessThan(headingIndex("Your Expense"));
+  });
+
+  it("leads with the attention card for finance roles, with the expense list below", () => {
+    renderDashboard(FINANCE_CARDS, [decision()], { roleCode: "finance-executive" });
+    expect(headingIndex("Needs your attention")).toBeLessThan(headingIndex("Your Expense"));
+  });
+
+  it("never renders an empty attention panel in the approver layout", () => {
+    renderDashboard(APPROVER_CARDS, []);
+    expect(screen.queryByRole("heading", { name: "Needs your attention" })).not.toBeInTheDocument();
+  });
+
+  it("never renders an empty attention panel in the finance layout", () => {
+    renderDashboard(FINANCE_CARDS, []);
+    expect(screen.queryByRole("heading", { name: "Needs your attention" })).not.toBeInTheDocument();
+  });
+
+  it("keeps the admin-first default for superadmin: overview and attention side by side", () => {
+    renderDashboard(FINANCE_CARDS, [decision()], { roleCode: "superadmin" });
+    expect(headingIndex("Your Expense")).toBeLessThan(headingIndex("Needs your attention"));
+    expect(screen.getByRole("heading", { name: "Needs your attention" })).toBeInTheDocument();
+  });
+
+  it("keeps the my-activity feed in every layout", () => {
+    renderDashboard(EMPLOYEE_CARDS, [], { roleCode: "executive" });
+    expect(screen.getByRole("heading", { name: "My activity" })).toBeInTheDocument();
+  });
+});
+
 describe("ExpenseDashboard drawer integration", () => {
   it("opens the drawer on the newest draft from the drafts CTA", () => {
     const draft = expense({ id: "ex-draft", title: "Team lunch draft", status: "draft", attachments: [] });
@@ -196,23 +249,22 @@ describe("ExpenseDashboard drawer integration", () => {
     expect(screen.getByRole("button", { name: /^Rejected/ })).toBeInTheDocument();
   });
 
-  it("opens the drawer on the held claim from the holds CTA", () => {
-    const held = expense({
-      id: "ex-held",
-      title: "Held travel claim",
+  it("opens the drawer on the oldest aged claim from the aging CTA", () => {
+    const aged = expense({
+      id: "ex-aged",
+      title: "Stuck travel claim",
       status: "in-approval",
-      held: { by: "Sanil Davis", at: "2026-08-05T09:00:00Z", reason: "Awaiting docs" },
     });
-    renderDashboard(APPROVER_CARDS, [held]);
-    fireEvent.click(screen.getByRole("button", { name: "Resume a hold" }));
+    renderDashboard(APPROVER_CARDS, [aged]);
+    fireEvent.click(screen.getByRole("button", { name: "Review oldest" }));
     expect(screen.getByRole("dialog")).toBeInTheDocument();
-    expect(screen.getByRole("dialog")).toHaveTextContent("Held travel claim");
+    expect(screen.getByRole("dialog")).toHaveTextContent("Stuck travel claim");
   });
 
-  it("does nothing when the hold CTA has no held claim ids", () => {
-    const cards: DashboardCards = { view: "approver", approver: { ...APPROVER_CARDS.approver, holdClaimIds: [] } };
+  it("does nothing when the aging CTA has no aged claim ids", () => {
+    const cards: DashboardCards = { view: "approver", approver: { ...APPROVER_CARDS.approver, agedClaimIds: [] } };
     renderDashboard(cards, []);
-    fireEvent.click(screen.getByRole("button", { name: "Resume a hold" }));
+    fireEvent.click(screen.getByRole("button", { name: "Review oldest" }));
     expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
   });
 });

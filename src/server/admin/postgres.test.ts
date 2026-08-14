@@ -815,7 +815,7 @@ describe("role capabilities", () => {
     can_submit: true,
     can_approve: true,
     can_access_finance: false,
-    can_hold: false,
+    can_approve_bank_details: false,
     can_view_org_activity: false,
     can_access_admin_console: false,
     ...overrides,
@@ -832,6 +832,10 @@ describe("role capabilities", () => {
       expect.stringContaining("can_submit, can_approve, can_access_finance"),
       ["org-1"],
     );
+    expect(query).toHaveBeenCalledWith(
+      expect.not.stringContaining("can_hold"),
+      ["org-1"],
+    );
     expect(roles).toEqual([
       {
         id: "role-1",
@@ -845,7 +849,7 @@ describe("role capabilities", () => {
           canSubmit: true,
           canApprove: true,
           canAccessFinance: false,
-          canHold: false,
+          approveBankDetails: false,
           canViewOrganizationActivity: false,
           canAccessAdminConsole: false,
         },
@@ -856,13 +860,13 @@ describe("role capabilities", () => {
   it("getRole maps the capability columns too", async () => {
     const query = vi
       .fn()
-      .mockResolvedValue({ rows: [roleRow({ can_hold: true, can_access_admin_console: true })] });
+      .mockResolvedValue({ rows: [roleRow({ can_access_admin_console: true })] });
     const pool = { query } as unknown as Pool;
     const store = new PostgresAdminStore(pool);
 
     const role = await store.getRole("role-1");
 
-    expect(role?.capabilities).toMatchObject({ canHold: true, canAccessAdminConsole: true });
+    expect(role?.capabilities).toMatchObject({ canAccessAdminConsole: true });
     expect(query).toHaveBeenCalledWith(expect.stringContaining("FROM roles WHERE id = $1"), [
       "role-1",
     ]);
@@ -879,7 +883,8 @@ describe("role capabilities", () => {
     });
 
     const sql = String(query.mock.calls[0]?.[0]);
-    expect(sql).toContain("can_submit, can_approve, can_access_finance, can_hold");
+    expect(sql).toContain("can_submit, can_approve, can_access_finance");
+    expect(sql).not.toContain("can_hold");
     expect(sql).toContain("VALUES ($1, $2, $3, $4, false, $5, $6, $7, $8, $9, $10)");
     expect(query).toHaveBeenCalledWith(expect.any(String), [
       expect.any(String),
@@ -897,7 +902,7 @@ describe("role capabilities", () => {
       canSubmit: true,
       canApprove: false,
       canAccessFinance: false,
-      canHold: false,
+      approveBankDetails: false,
       canViewOrganizationActivity: false,
       canAccessAdminConsole: false,
     });
@@ -915,8 +920,8 @@ describe("role capabilities", () => {
         canSubmit: true,
         canApprove: true,
         canAccessFinance: false,
-        canHold: true,
-        canViewOrganizationActivity: false,
+        approveBankDetails: true,
+        canViewOrganizationActivity: true,
         canAccessAdminConsole: false,
       },
     });
@@ -930,7 +935,7 @@ describe("role capabilities", () => {
       true,
       false,
       true,
-      false,
+      true,
       false,
     ]);
   });
@@ -944,7 +949,7 @@ describe("role capabilities", () => {
       canSubmit: true,
       canApprove: false,
       canAccessFinance: true,
-      canHold: false,
+      approveBankDetails: true,
       canViewOrganizationActivity: true,
       canAccessAdminConsole: false,
     });
@@ -958,7 +963,7 @@ describe("role capabilities", () => {
       true,
       false,
       true,
-      false,
+      true,
       true,
       false,
     ]);

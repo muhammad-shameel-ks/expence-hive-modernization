@@ -52,9 +52,8 @@ export function isStageTimedOut(
 // This is the single shared implementation of the absence auto-skip
 // (ADR-0018): the lazy read-path catch-up in the expense commands and the
 // scheduled sweep worker both call it, so the two enforcement paths cannot
-// drift. A held claim is exempt (ADR-0016): the hold is an explicit human
-// decision that outranks the timeout, so the sweep never advances a held
-// claim - the lazy path and the worker inherit the exemption here.
+// drift. The sweep applies to every pending claim (ADR-0026): there is no
+// hold exemption.
 export function catchUpAbsentStages(
   claim: ExpenseClaim,
   employees: ExpenseEmployee[],
@@ -63,7 +62,6 @@ export function catchUpAbsentStages(
   idFactory: (prefix: string) => string,
 ): boolean {
   if (claim.status !== "in-approval" && claim.status !== "in-finance") return false;
-  if (claim.heldAt) return false;
   const employeesById = new Map(employees.map((employee) => [employee.id, employee]));
   const activeEmployeeIds = new Set(
     employees.filter((employee) => employee.active).map((employee) => employee.id),

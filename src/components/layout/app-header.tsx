@@ -9,11 +9,12 @@ export function AppHeader({
 }: {
   employeeName: string;
   role?: ExpenseRole | null;
-  activePath?: "/expenses" | "/expenses/all" | "/finance/payments" | "/finance/activity" | "/admin";
+  activePath?: "/expenses" | "/expenses/all" | "/expenses/approvals" | "/finance/payments" | "/finance/expenses" | "/finance/bank-details" | "/finance/activity" | "/admin" | "/profile";
 }) {
   const capabilities = resolveRoleCapabilities(role);
-  const isApprover = capabilities.canApprove;
+  const isApprover = capabilities.canApprove || capabilities.canAccessFinance;
   const canViewPaymentQueue = capabilities.canAccessFinance;
+  const canReviewBankDetails = capabilities.approveBankDetails;
   const canViewOrganizationActivity = capabilities.canViewOrganizationActivity;
   const canViewAdminConsole = capabilities.canAccessAdminConsole || activePath === "/admin";
 
@@ -40,12 +41,15 @@ export function AppHeader({
           className={`${styles.navLink} ${activePath === "/expenses/all" ? styles.navLinkActive : ""}`}
           href="/expenses/all"
         >
-          Expenses
+          My expenses
         </a>
         {isApprover ? (
-          <span className={styles.navLink} title="Coming in a later milestone">
+          <a
+            className={`${styles.navLink} ${activePath === "/expenses/approvals" ? styles.navLinkActive : ""}`}
+            href="/expenses/approvals"
+          >
             Approvals
-          </span>
+          </a>
         ) : null}
         {canViewPaymentQueue ? (
           <a
@@ -53,6 +57,22 @@ export function AppHeader({
             href="/finance/payments"
           >
             Payment queue
+          </a>
+        ) : null}
+        {canViewOrganizationActivity ? (
+          <a
+            className={`${styles.navLink} ${activePath === "/finance/expenses" ? styles.navLinkActive : ""}`}
+            href="/finance/expenses"
+          >
+            Expense list
+          </a>
+        ) : null}
+        {canReviewBankDetails ? (
+          <a
+            className={`${styles.navLink} ${activePath === "/finance/bank-details" ? styles.navLinkActive : ""}`}
+            href="/finance/bank-details"
+          >
+            Bank approvals
           </a>
         ) : null}
         {canViewOrganizationActivity ? (
@@ -71,6 +91,12 @@ export function AppHeader({
             Admin
           </a>
         ) : null}
+        <a
+          className={`${styles.navLink} ${activePath === "/profile" ? styles.navLinkActive : ""}`}
+          href="/profile"
+        >
+          Profile
+        </a>
       </nav>
 
       <div className={styles.account}>

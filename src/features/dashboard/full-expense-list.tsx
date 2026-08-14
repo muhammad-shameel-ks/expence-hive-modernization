@@ -15,15 +15,12 @@ export function FullExpenseList({
   currentUserId,
   currentUserRoleId,
   currentUserRoleCode,
-  currentUserCanHold,
 }: {
   expenses: Expense[];
   currentUser: string;
   currentUserId?: string;
   currentUserRoleId?: string;
   currentUserRoleCode?: string;
-  /** Whether the viewer's role carries the can_hold capability (ADR-0015/0016). */
-  currentUserCanHold?: boolean;
 }) {
   const [selected, setSelected] = useState<Expense | null>(null);
   const [open, setOpen] = useState(false);
@@ -70,7 +67,6 @@ export function FullExpenseList({
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
         currentUserRoleCode={currentUserRoleCode}
-        currentUserCanHold={currentUserCanHold}
       />
     </section>
   );

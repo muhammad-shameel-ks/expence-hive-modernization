@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 import "@testing-library/jest-dom/vitest";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { cleanup, fireEvent, render, screen, waitFor } from "@testing-library/react";
+import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import { PaymentQueueTable } from "./payment-queue-table";
 import { PAYMENT_QUEUE_COLUMNS } from "./payment-queue-columns";
 import { buildAndDownloadXlsx } from "./payment-queue-export";
@@ -25,6 +25,13 @@ vi.mock("./payment-queue-export", () => ({
   buildAndDownloadXlsx: vi.fn(),
 }));
 
+const buildAndDownloadPaymentRegisterMock = vi.hoisted(() => vi.fn());
+
+vi.mock("./payment-register-export", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("./payment-register-export")>()),
+  buildAndDownloadPaymentRegister: buildAndDownloadPaymentRegisterMock,
+}));
+
 const buildAndDownloadXlsxMock = vi.mocked(buildAndDownloadXlsx);
 
 function buildClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
@@ -41,7 +48,13 @@ function buildClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
     currency: "INR",
     expenseDate: "2026-08-01",
     status: "in-finance",
-    steps: [],
+    steps: [
+      {
+        id: "s-1",
+        roleId: "role-finance-executive",
+        status: "verified",
+      },
+    ],
     history: [],
     version: 1,
     createdAt: "2026-08-01T00:00:00.000Z",
@@ -59,35 +72,6 @@ function buildTerminalClaim(stepStatus: "pending" | "verified"): ExpenseClaim {
         status: stepStatus,
       },
     ],
-  });
-}
-
-function buildRejectedClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
-  return buildClaim({
-    id: "claim-rejected",
-    ref: "EXP-0002",
-    title: "Team lunch",
-    status: "rejected",
-    steps: [
-      {
-        id: "s-1",
-        roleId: "role-finance-executive",
-        status: "rejected",
-        decidedAt: "2026-08-03T11:00:00.000Z",
-      },
-    ],
-    history: [
-      { id: "h-1", kind: "draft", actorId: "employee-1", createdAt: "2026-08-01T09:00:00.000Z" },
-      { id: "h-2", kind: "submitted", actorId: "employee-1", createdAt: "2026-08-01T10:00:00.000Z" },
-      {
-        id: "h-3",
-        kind: "rejected",
-        actorId: "employee-2",
-        detail: "Missing itemized receipt",
-        createdAt: "2026-08-03T11:00:00.000Z",
-      },
-    ],
-    ...overrides,
   });
 }
 
@@ -180,7 +164,7 @@ describe("PaymentQueueTable comment save loading state", () => {
   });
 });
 
-describe("PaymentQueueTable terminal verify/pay actions", () => {
+describe("PaymentQueueTable terminal pay action (verified-only queue, ADR-0023)", () => {
   beforeEach(() => {
     mockRefresh.mockReset();
   });
@@ -190,7 +174,7 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
     vi.unstubAllGlobals();
   });
 
-  it("offers Verify for payment on a pending in-finance claim to a terminal pool member", () => {
+  it("never renders a not-yet-verified in-finance claim in the queue", () => {
     render(
       <PaymentQueueTable
         claims={[buildTerminalClaim("pending")]}
@@ -200,12 +184,12 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
       />,
     );
 
-    const verifyBtn = screen.getByRole("button", { name: "Verify for payment" });
-    expect(verifyBtn).toBeEnabled();
+    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
+    expect(screen.getByText("No claims match your search.")).toBeInTheDocument();
   });
 
-  it("offers Mark paid on a verified in-finance claim to a terminal pool member", () => {
+  it("offers Mark paid on a verified claim to a terminal pool member", () => {
     render(
       <PaymentQueueTable
         claims={[buildTerminalClaim("verified")]}
@@ -222,18 +206,17 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
   it("hides the action when the viewer holds a different role than the terminal step", () => {
     render(
       <PaymentQueueTable
-        claims={[buildTerminalClaim("pending")]}
+        claims={[buildTerminalClaim("verified")]}
         employees={[]}
         currentUserId="emp-finance-2"
         currentUserRoleId="role-finance-head"
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
   });
 
-  it("hides the action for paid claims", () => {
+  it("never renders paid claims in the queue", () => {
     const paid = buildTerminalClaim("verified");
     paid.status = "paid";
     render(
@@ -245,12 +228,12 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
+    expect(screen.getByText("No claims match your search.")).toBeInTheDocument();
   });
 
   it("hides the action when the viewer is the requester of the claim", () => {
-    const claim = buildTerminalClaim("pending");
+    const claim = buildTerminalClaim("verified");
     claim.requesterId = "emp-finance-2";
     render(
       <PaymentQueueTable
@@ -261,26 +244,7 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
       />,
     );
 
-    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
-  });
-
-  it("POSTs verify and refreshes the queue on success", async () => {
-    const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ claim: {} }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
-
-    render(
-      <PaymentQueueTable
-        claims={[buildTerminalClaim("pending")]}
-        employees={[]}
-        currentUserId="emp-finance-2"
-        currentUserRoleId="role-finance-executive"
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: "Verify for payment" }));
-
-    expect(fetchMock).toHaveBeenCalledWith("/api/expenses/claim-1/verify", { method: "POST" });
-    await waitFor(() => expect(mockRefresh).toHaveBeenCalledTimes(1));
+    expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
   });
 
   it("POSTs pay and refreshes the queue on success", async () => {
@@ -314,14 +278,14 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
 
     render(
       <PaymentQueueTable
-        claims={[buildTerminalClaim("pending")]}
+        claims={[buildTerminalClaim("verified")]}
         employees={[]}
         currentUserId="emp-finance-2"
         currentUserRoleId="role-finance-executive"
       />,
     );
 
-    fireEvent.click(screen.getByRole("button", { name: "Verify for payment" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark paid" }));
 
     await waitFor(() =>
       expect(
@@ -332,77 +296,82 @@ describe("PaymentQueueTable terminal verify/pay actions", () => {
   });
 });
 
-describe("PaymentQueueTable held claims", () => {
+describe("PaymentQueueTable verified claims", () => {
   afterEach(() => {
     cleanup();
     vi.unstubAllGlobals();
   });
 
-  function buildHeldClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
+  it("shows the verified flow status with no Held badge anywhere", () => {
+    render(<PaymentQueueTable claims={[buildTerminalClaim("verified")]} employees={[]} />);
+
+    expect(screen.getByText("in-finance")).toBeInTheDocument();
+    expect(screen.queryByText("Held")).not.toBeInTheDocument();
+  });
+
+  it("offers Mark paid to a terminal pool member", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildTerminalClaim("verified")]}
+        employees={[]}
+        currentUserId="emp-finance-2"
+        currentUserRoleId="role-finance-executive"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Mark paid" })).toBeInTheDocument();
+  });
+
+  it("offers pay on a verified-but-unpaid claim", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildTerminalClaim("verified")]}
+        employees={[]}
+        currentUserId="emp-finance-2"
+        currentUserRoleId="role-finance-executive"
+      />,
+    );
+
+    expect(screen.getByRole("button", { name: "Mark paid" })).toBeInTheDocument();
+  });
+});
+
+describe("PaymentQueueTable rejected rows never appear (ADR-0023)", () => {
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  function buildRejectedClaim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
     return buildClaim({
-      id: "claim-held",
-      ref: "EXP-0004",
-      title: "Held conference flight",
-      status: "in-finance",
-      heldAt: "2026-08-05T10:00:00.000Z",
-      heldBy: "employee-2",
-      heldReason: "Awaiting the missing invoice",
+      id: "claim-rejected",
+      ref: "EXP-0002",
+      title: "Team lunch",
+      status: "rejected",
       steps: [
         {
           id: "s-1",
           roleId: "role-finance-executive",
-          status: "pending",
+          status: "rejected",
+          decidedAt: "2026-08-03T11:00:00.000Z",
+        },
+      ],
+      history: [
+        { id: "h-1", kind: "draft", actorId: "employee-1", createdAt: "2026-08-01T09:00:00.000Z" },
+        { id: "h-2", kind: "submitted", actorId: "employee-1", createdAt: "2026-08-01T10:00:00.000Z" },
+        {
+          id: "h-3",
+          kind: "rejected",
+          actorId: "employee-2",
+          detail: "Missing itemized receipt",
+          createdAt: "2026-08-03T11:00:00.000Z",
         },
       ],
       ...overrides,
     });
   }
 
-  it("shows the Held badge in the payment status cell", () => {
-    render(<PaymentQueueTable claims={[buildHeldClaim()]} employees={[]} />);
-
-    expect(screen.getByText("Held")).toBeInTheDocument();
-    // The underlying flow status is kept, so the status cell still names it.
-    expect(screen.getByText("in-finance")).toBeInTheDocument();
-  });
-
-  it("freezes a held claim against verify/pay even for a terminal pool member", () => {
-    render(
-      <PaymentQueueTable
-        claims={[buildHeldClaim()]}
-        employees={[]}
-        currentUserId="emp-finance-2"
-        currentUserRoleId="role-finance-executive"
-      />,
-    );
-
-    expect(screen.getByText("Held")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
-  });
-
-  it("freezes a verified-but-held claim against pay", () => {
-    render(
-      <PaymentQueueTable
-        claims={[buildHeldClaim({ steps: [{ id: "s-1", roleId: "role-finance-executive", status: "verified" }] })]}
-        employees={[]}
-        currentUserId="emp-finance-2"
-        currentUserRoleId="role-finance-executive"
-      />,
-    );
-
-    expect(screen.getByText("Held")).toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
-  });
-});
-
-describe("PaymentQueueTable rejected rows", () => {
-  afterEach(() => {
-    cleanup();
-    vi.unstubAllGlobals();
-  });
-
-  it("shows a Rejected chip with a live count of rejected claims", () => {
+  it("renders only verified claims and excludes rejected or paid claims", () => {
     render(
       <PaymentQueueTable
         claims={[buildClaim(), buildClaim({ id: "claim-paid", ref: "EXP-0003", status: "paid" }), buildRejectedClaim()]}
@@ -410,99 +379,21 @@ describe("PaymentQueueTable rejected rows", () => {
       />,
     );
 
-    const chip = screen.getByRole("button", { name: /Rejected/ });
-    expect(chip).toHaveTextContent("Rejected");
-    expect(chip.querySelector("span")?.textContent).toBe("1");
-  });
-
-  it("shows only rejected claims when the Rejected filter is active", () => {
-    render(
-      <PaymentQueueTable
-        claims={[buildClaim(), buildClaim({ id: "claim-paid", ref: "EXP-0003", status: "paid" }), buildRejectedClaim()]}
-        employees={[]}
-      />,
-    );
-
-    fireEvent.click(screen.getByRole("button", { name: /Rejected/ }));
-
-    expect(screen.getByText("EXP-0002")).toBeInTheDocument();
-    expect(screen.queryByText("EXP-0001")).not.toBeInTheDocument();
+    expect(screen.queryByText("EXP-0002")).not.toBeInTheDocument();
     expect(screen.queryByText("EXP-0003")).not.toBeInTheDocument();
+    expect(screen.getByText("EXP-0001")).toBeInTheDocument();
   });
 
-  it("shows Rejected as the payment status on a rejected row", () => {
-    render(<PaymentQueueTable claims={[buildRejectedClaim()]} employees={[]} />);
-
-    // The chip label and the payment-status badge both say "Rejected".
-    expect(screen.getAllByText("Rejected")).toHaveLength(2);
-    expect(screen.queryByText("Not Paid")).not.toBeInTheDocument();
-  });
-
-  it("shows no verify/pay action on a rejected row even to a terminal pool member", () => {
+  it("never renders the rejection reason or a comment editor for a rejected claim", () => {
     render(
       <PaymentQueueTable
-        claims={[buildRejectedClaim({ steps: [{ id: "s-1", roleId: "role-finance-executive", status: "verified" }] })]}
-        employees={[]}
-        currentUserId="emp-finance-2"
-        currentUserRoleId="role-finance-executive"
-      />,
-    );
-
-    expect(screen.queryByRole("button", { name: "Verify for payment" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("button", { name: "Mark paid" })).not.toBeInTheDocument();
-  });
-
-  it("shows no comment editor on a rejected row", () => {
-    render(
-      <PaymentQueueTable
-        claims={[buildRejectedClaim({ comments: "Would-be comment" })]}
+        claims={[buildClaim(), buildRejectedClaim({ comments: "Would-be comment" })]}
         employees={FINANCE_EMPLOYEES}
       />,
     );
 
+    expect(screen.queryByText("Missing itemized receipt")).not.toBeInTheDocument();
     expect(screen.queryByRole("textbox", { name: "Comment for EXP-0002" })).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
-  });
-
-  it("renders the rejection reason and actor read-only in the Comments cell", () => {
-    render(<PaymentQueueTable claims={[buildRejectedClaim()]} employees={FINANCE_EMPLOYEES} />);
-
-    expect(screen.getByText("Missing itemized receipt")).toBeInTheDocument();
-    expect(screen.getByText("Rejected by Grace Hopper on 2026-08-03")).toBeInTheDocument();
-  });
-
-  it("renders the latest rejection event when a claim was rejected more than once", () => {
-    const claim = buildRejectedClaim({
-      history: [
-        {
-          id: "h-1",
-          kind: "rejected",
-          actorId: "employee-2",
-          detail: "First rejection",
-          createdAt: "2026-08-02T11:00:00.000Z",
-        },
-        {
-          id: "h-2",
-          kind: "rejected",
-          actorId: "employee-1",
-          detail: "Final rejection",
-          createdAt: "2026-08-03T11:00:00.000Z",
-        },
-      ],
-    });
-    render(<PaymentQueueTable claims={[claim]} employees={FINANCE_EMPLOYEES} />);
-
-    expect(screen.getByText("Final rejection")).toBeInTheDocument();
-    expect(screen.queryByText("First rejection")).not.toBeInTheDocument();
-    expect(screen.getByText("Rejected by Ada Lovelace on 2026-08-03")).toBeInTheDocument();
-  });
-
-  it("does not write into the claim's comments field for a rejected row", () => {
-    const rejected = buildRejectedClaim({ comments: "Finance note" });
-    render(<PaymentQueueTable claims={[rejected]} employees={FINANCE_EMPLOYEES} />);
-
-    expect(screen.queryByText("Finance note")).not.toBeInTheDocument();
-    expect(screen.queryByRole("textbox")).not.toBeInTheDocument();
   });
 });
 
@@ -516,7 +407,10 @@ describe("PaymentQueueTable renders columns from the shared schema", () => {
     render(<PaymentQueueTable claims={[buildClaim()]} employees={[]} />);
 
     const labels = screen.getAllByRole("columnheader").map((header) => header.textContent?.trim());
-    expect(labels).toEqual(PAYMENT_QUEUE_COLUMNS.map((column) => column.label));
+    expect(labels).toEqual([
+      "Select all claims",
+      ...PAYMENT_QUEUE_COLUMNS.map((column) => column.label),
+    ]);
   });
 
   it("renders a sort toggle only for schema columns with a sortKey", () => {
@@ -531,12 +425,12 @@ describe("PaymentQueueTable renders columns from the shared schema", () => {
     }
   });
 
-  it("spans the empty state across every schema column", () => {
+  it("spans the empty state across every schema column plus the selection checkbox", () => {
     render(<PaymentQueueTable claims={[]} employees={[]} />);
 
     expect(screen.getByText("No claims match your search.")).toHaveAttribute(
       "colspan",
-      String(PAYMENT_QUEUE_COLUMNS.length),
+      String(PAYMENT_QUEUE_COLUMNS.length + 1),
     );
   });
 
@@ -624,8 +518,8 @@ describe("PaymentQueueTable Excel export", () => {
         employees={[]}
       />,
     );
-    // Rejected filter with no rejected claims -> empty view.
-    fireEvent.click(screen.getByRole("button", { name: /Rejected/ }));
+    // Search query with no match -> empty view.
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nonexistent-ref" } });
     fireEvent.click(screen.getByRole("button", { name: "Export" }));
 
     expect(screen.getByRole("button", { name: "Export current view" })).toBeDisabled();
@@ -653,29 +547,193 @@ describe("PaymentQueueTable Excel export", () => {
     expect(scope).toBe("current");
   });
 
-  it("exports every claim, ignoring filters, for the full queue", () => {
+  it("exports every claim the queue holds, ignoring filters, for the full queue", () => {
     openExportPopover([
       buildClaim(),
-      buildClaim({ id: "claim-paid", ref: "EXP-0003", status: "paid" }),
+      buildClaim({ id: "claim-2", ref: "EXP-0002" }),
     ]);
 
     fireEvent.click(screen.getByRole("button", { name: "Export full queue" }));
 
     expect(buildAndDownloadXlsxMock).toHaveBeenCalledTimes(1);
     const [rows, , scope] = buildAndDownloadXlsxMock.mock.calls[0];
-    expect(rows.map((claim) => claim.id)).toEqual(["claim-1", "claim-paid"]);
+    expect(rows.map((claim) => claim.id)).toEqual(["claim-1", "claim-2"]);
     expect(scope).toBe("full");
   });
 
   it("exports the full queue even when the filtered view is empty", () => {
     openExportPopover([buildClaim()]);
 
-    fireEvent.click(screen.getByRole("button", { name: /Rejected/ }));
+    fireEvent.change(screen.getByRole("searchbox"), { target: { value: "nonexistent-ref" } });
     fireEvent.click(screen.getByRole("button", { name: "Export full queue" }));
 
     expect(buildAndDownloadXlsxMock).toHaveBeenCalledTimes(1);
     const [rows] = buildAndDownloadXlsxMock.mock.calls[0];
     expect(rows.map((claim) => claim.id)).toEqual(["claim-1"]);
+  });
+});
+
+describe("PaymentQueueTable payment register export (ADR-0023)", () => {
+  const APPROVED_BANK_DETAILS = {
+    employeeId: "employee-1",
+    details: {
+      holderName: "Ada Lovelace",
+      accountNumber: "001234567890",
+      ifsc: "HDFC0001234",
+      bankName: "HDFC Bank",
+      branch: "Indiranagar, Bengaluru",
+    },
+  };
+
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    buildAndDownloadPaymentRegisterMock.mockReset();
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("renders a select-all checkbox in the header and one per claim row", () => {
+    render(<PaymentQueueTable claims={[buildClaim(), buildClaim({ id: "claim-2", ref: "EXP-0002" })]} employees={[]} />);
+
+    expect(screen.getByRole("checkbox", { name: "Select all claims" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0001" })).toBeInTheDocument();
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0002" })).toBeInTheDocument();
+  });
+
+  it("disables the register export until at least one claim is selected", () => {
+    render(<PaymentQueueTable claims={[buildClaim()]} employees={[]} />);
+
+    const exportButton = screen.getByRole("button", { name: "Export payment register" });
+    expect(exportButton).toBeDisabled();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0001" }));
+    expect(screen.getByRole("button", { name: "Export payment register" })).toBeEnabled();
+  });
+
+  it("toggles a row selection on click and lets the header checkbox select every visible row", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildClaim(), buildClaim({ id: "claim-2", ref: "EXP-0002" })]}
+        employees={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0001" }));
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0001" })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0001" }));
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0001" })).not.toBeChecked();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all claims" }));
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0001" })).toBeChecked();
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0002" })).toBeChecked();
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all claims" }));
+    expect(screen.getByRole("checkbox", { name: "Select EXP-0001" })).not.toBeChecked();
+  });
+
+  it("does not open the expense drawer when toggling a row checkbox", () => {
+    render(<PaymentQueueTable claims={[buildClaim()]} employees={[]} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0001" }));
+
+    expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+  });
+
+  it("exports exactly the selected claims with their approved bank details", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildClaim(), buildClaim({ id: "claim-2", ref: "EXP-0002", requesterId: "employee-2" })]}
+        employees={[
+          { id: "employee-1", organizationId: "org-1", name: "Ada Lovelace", role: null, active: true, managerId: null },
+          { id: "employee-2", organizationId: "org-1", name: "Grace Hopper", role: null, active: true, managerId: null },
+        ]}
+        approvedBankDetails={[
+          APPROVED_BANK_DETAILS,
+          {
+            employeeId: "employee-2",
+            details: {
+              holderName: "Grace Hopper",
+              accountNumber: "9876543210",
+              ifsc: "ICIC0004321",
+              bankName: "ICICI Bank",
+              branch: "Koramangala, Bengaluru",
+            },
+          },
+        ]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0002" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export payment register" }));
+
+    expect(buildAndDownloadPaymentRegisterMock).toHaveBeenCalledTimes(1);
+    const [rows] = buildAndDownloadPaymentRegisterMock.mock.calls[0] as [
+      Array<{ expenseId: string; employeeName: string; amount: number; details: unknown }>,
+    ];
+    expect(rows).toHaveLength(1);
+    expect(rows[0].expenseId).toBe("claim-2");
+    expect(rows[0].employeeName).toBe("Grace Hopper");
+    expect(rows[0].amount).toBe(1250);
+    expect(rows[0].details).toMatchObject({ holderName: "Grace Hopper", accountNumber: "9876543210" });
+  });
+
+  it("shows a success message when every selected claim is exported", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildClaim(), buildClaim({ id: "claim-2", ref: "EXP-0002" })]}
+        employees={[]}
+        approvedBankDetails={[APPROVED_BANK_DETAILS, { ...APPROVED_BANK_DETAILS, employeeId: "employee-1" }]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all claims" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export payment register" }));
+
+    expect(
+      screen.getByRole("status"),
+    ).toHaveTextContent("Payment register exported for 2 claims.");
+  });
+
+  it("reports selected claims skipped for missing approved bank details", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildClaim(), buildClaim({ id: "claim-2", ref: "EXP-0002", requesterId: "employee-2" })]}
+        employees={[]}
+        approvedBankDetails={[APPROVED_BANK_DETAILS]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all claims" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export payment register" }));
+
+    expect(buildAndDownloadPaymentRegisterMock).toHaveBeenCalledTimes(1);
+    const [rows] = buildAndDownloadPaymentRegisterMock.mock.calls[0];
+    expect(rows.map((row: { expenseId: string }) => row.expenseId)).toEqual(["claim-1"]);
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "1 selected claim was skipped: approved bank details are missing, so it cannot be paid yet.",
+    );
+  });
+
+  it("downloads nothing and explains when none of the selection can be exported", () => {
+    render(
+      <PaymentQueueTable
+        claims={[buildClaim({ requesterId: "employee-2" })]}
+        employees={[]}
+        approvedBankDetails={[]}
+      />,
+    );
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Export payment register" }));
+
+    expect(buildAndDownloadPaymentRegisterMock).not.toHaveBeenCalled();
+    expect(screen.getByRole("status")).toHaveTextContent(
+      "None of the selected claims can be exported: they have no approved bank details yet.",
+    );
   });
 });
 
@@ -970,5 +1028,207 @@ describe("PaymentQueueTable download summary in the side panel", () => {
       await screen.findByText("Could not reach the server. Check your connection and try again."),
     ).toBeInTheDocument();
     expect(downloadBlobMock).not.toHaveBeenCalled();
+  });
+});
+
+describe("PaymentQueueTable drag-and-drop table Excel import", () => {
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("handles dragging and dropping an Excel file onto the table container to auto-select claims", async () => {
+    const claim1 = buildClaim({ id: "claim-1", ref: "EXP-0001" });
+    const claim2 = buildClaim({ id: "claim-2", ref: "EXP-0002" });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            report: {
+              matched: [claim1],
+              conflicts: [],
+              unknownIds: [],
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    render(<PaymentQueueTable claims={[claim1, claim2]} employees={[]} />);
+
+    const tableDropZone = screen.getByTestId("payment-queue-droppable-table");
+
+    // Drag over table shows drag indicators
+    fireEvent.dragEnter(tableDropZone, {
+      dataTransfer: {
+        items: [{ kind: "file", type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }],
+      },
+    });
+
+    expect(screen.getByText("Drop Excel register to auto-select claims")).toBeInTheDocument();
+
+    const file = new File(["dummy excel bytes"], "payment-register.xlsx", {
+      type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    });
+
+    // Drop onto table
+    fireEvent.drop(tableDropZone, {
+      dataTransfer: { files: [file] },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("1 matching claim selected.");
+    });
+
+    // Verify claim-1 checkbox is checked, claim-2 is unchecked
+    const claim1Checkbox = screen.getByRole("checkbox", { name: "Select EXP-0001" });
+    const claim2Checkbox = screen.getByRole("checkbox", { name: "Select EXP-0002" });
+
+    expect(claim1Checkbox).toBeChecked();
+    expect(claim2Checkbox).not.toBeChecked();
+  });
+});
+
+describe("PaymentQueueTable bulk payment verification preview", () => {
+  beforeEach(() => {
+    mockRefresh.mockReset();
+    vi.stubGlobal(
+      "ResizeObserver",
+      class {
+        observe() {}
+        unobserve() {}
+        disconnect() {}
+      },
+    );
+  });
+
+  afterEach(() => {
+    cleanup();
+    vi.unstubAllGlobals();
+  });
+
+  it("displays total amount, claim count, payee names, and bank details in the quick verification preview dialog", () => {
+    const claim1 = buildClaim({
+      id: "claim-1",
+      ref: "EXP-0001",
+      title: "Team lunch",
+      amountMinor: 250000,
+      requesterId: "employee-1",
+    });
+    const claim2 = buildClaim({
+      id: "claim-2",
+      ref: "EXP-0002",
+      title: "Software license",
+      amountMinor: 125000,
+      requesterId: "employee-2",
+    });
+
+    render(
+      <PaymentQueueTable
+        claims={[claim1, claim2]}
+        employees={FINANCE_EMPLOYEES}
+        approvedBankDetails={[
+          {
+            employeeId: "employee-1",
+            details: {
+              accountHolderName: "Ada Lovelace",
+              accountNumber: "1234567890",
+              ifscCode: "HDFC0001234",
+              bankName: "HDFC Bank",
+              branchName: "Koramangala",
+            },
+          },
+        ]}
+      />,
+    );
+
+    // Select all claims
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select all claims" }));
+
+    // Click "Mark selected paid" button
+    const markSelectedBtn = screen.getByRole("button", { name: "Mark selected paid" });
+    fireEvent.click(markSelectedBtn);
+
+    // Verify dialog title and description
+    const dialog = screen.getByRole("dialog");
+    const inDialog = within(dialog);
+
+    expect(
+      inDialog.getByRole("heading", { name: "Verify and mark 2 claims as paid" }),
+    ).toBeInTheDocument();
+    expect(
+      inDialog.getByText("Review the itemized amounts and payee bank details before confirming bulk payout."),
+    ).toBeInTheDocument();
+
+    // Verify prominent total payout amount (2500 + 1250 = 3750)
+    expect(inDialog.getByText("Total Payout Amount")).toBeInTheDocument();
+    expect(inDialog.getByText("2 claims selected")).toBeInTheDocument();
+
+    // Verify itemized rows in preview breakdown
+    expect(inDialog.getByText("Team lunch")).toBeInTheDocument();
+    expect(inDialog.getByText("Software license")).toBeInTheDocument();
+    expect(inDialog.getByText("Ada Lovelace")).toBeInTheDocument();
+    expect(inDialog.getByText("Grace Hopper")).toBeInTheDocument();
+    expect(inDialog.getByText(/HDFC Bank ••7890/)).toBeInTheDocument();
+    expect(inDialog.getByText("No bank details")).toBeInTheDocument();
+
+    // Verify confirmation button with formatted total
+    expect(
+      inDialog.getByRole("button", { name: /Confirm payment/ }),
+    ).toBeInTheDocument();
+  });
+
+  it("executes payment on confirmation and shows execution report", async () => {
+    const claim1 = buildClaim({ id: "claim-1", ref: "EXP-0001", amountMinor: 100000 });
+
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue(
+        new Response(
+          JSON.stringify({
+            report: {
+              paid: [claim1],
+              skipped: [],
+            },
+          }),
+          { status: 200, headers: { "content-type": "application/json" } },
+        ),
+      ),
+    );
+
+    render(<PaymentQueueTable claims={[claim1]} employees={[]} />);
+
+    fireEvent.click(screen.getByRole("checkbox", { name: "Select EXP-0001" }));
+    fireEvent.click(screen.getByRole("button", { name: "Mark selected paid" }));
+
+    const confirmBtn = screen.getByRole("button", { name: /Confirm payment/ });
+    fireEvent.click(confirmBtn);
+
+    await waitFor(() => {
+      expect(fetch).toHaveBeenCalledWith("/api/finance/payment-register/pay", {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ claimIds: ["claim-1"] }),
+      });
+    });
+
+    await waitFor(() => {
+      expect(screen.getByRole("status")).toHaveTextContent("1 claim marked paid.");
+    });
   });
 });

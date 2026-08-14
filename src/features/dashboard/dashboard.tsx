@@ -1,18 +1,23 @@
 "use client";
-// The role-adaptive dashboard (ADR-0020): a period switch (month / year /
-// overall, persisted in a cookie) recomputes everything below together, and
-// the four-card grid adapts to the viewer's role - employee money cards,
-// an approver action queue, or finance payout health. The bento row below
-// (compact claims list and "needs your attention" card) and the drawer
-// integration stay intact; row clicks open the drawer.
+// The role-adaptive dashboard (ADR-0020/0027): a period switch (month /
+// year / overall, persisted in a cookie) recomputes everything below
+// together, and the four-card grid adapts to the viewer's role - employee
+// money cards, an approver action queue, or finance payout health. The
+// sections below the cards (expense list, "needs your attention" card,
+// activity feed) are arranged per role through the declarative layout map
+// (dashboard-layout.ts), and the drawer integration stays intact; row
+// clicks open the drawer.
 
-import { useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { ArrowUpRight } from "lucide-react";
 import {
   periodLabel,
   type DashboardCards,
   type DashboardPeriod,
 } from "@/server/expenses/dashboard-read-models";
+import { AttentionCard } from "./attention-card";
+import { groupAttentionItems } from "./dashboard-attention";
+import { dashboardLayoutForRole, renderableSections, type DashboardSectionLayout } from "./dashboard-layout";
 import { ExpenseDrawer } from "./expense-drawer";
 import { claimToExpense } from "./expense-read-model";
 import { ExpenseOverview } from "./expense-overview";
@@ -26,7 +31,6 @@ export function ExpenseDashboard({
   currentUserId,
   currentUserRoleId,
   currentUserRoleCode,
-  currentUserCanHold,
   cards,
   absenceTimeoutDays,
   period,
@@ -38,8 +42,6 @@ export function ExpenseDashboard({
   currentUserId?: string;
   currentUserRoleId?: string;
   currentUserRoleCode?: string;
-  /** Whether the viewer's role carries the can_hold capability (ADR-0015/0016). */
-  currentUserCanHold?: boolean;
   /** Server-computed role aggregates (dashboard-read-models.ts); its `view` discriminator picks the card set. */
   cards: DashboardCards;
   /** The organization's configured absence timeout, resolved through the settings seam (ADR-0018). */
@@ -48,7 +50,7 @@ export function ExpenseDashboard({
   period: DashboardPeriod;
   expenses: Expense[];
   activity?: ActivityItem[];
-  /** A claim to open in the drawer on mount, e.g. from the admin held-claims view. */
+  /** A claim to open in the drawer on mount, e.g. from a ?claim= deep link. */
   focusClaim?: Expense;
 }) {
   const [selected, setSelected] = useState<Expense | null>(focusClaim ?? null);
@@ -85,9 +87,41 @@ export function ExpenseDashboard({
 
   const label = periodLabel(period);
 
+  // Claims the current user can act on right now (dashboard-attention.ts).
+  // The layout map renders the attention card only when this has content,
+  // so the page never shows an empty panel (story 22).
+  const attentionItems = useMemo(
+    () =>
+      [...groupAttentionItems(expenses, currentUser, currentUserId, currentUserRoleId).pending].sort((a, b) =>
+        a.submittedAt < b.submittedAt ? 1 : a.submittedAt > b.submittedAt ? -1 : 0,
+      ),
+    [expenses, currentUser, currentUserId, currentUserRoleId],
+  );
+
+  // The per-role layout map (ADR-0027) decides the order and sizing of the
+  // overview, attention, and activity sections; the stat cards above keep
+  // their own role-adaptive behavior (ADR-0020).
+  const layout = dashboardLayoutForRole(cards.view, currentUserRoleCode);
+  const sections = renderableSections(layout, attentionItems.length);
+
+  const sectionRenderers: Record<DashboardSectionLayout["section"], ReactNode> = {
+    overview: (
+      <ExpenseOverview
+        expenses={expenses}
+        period={period}
+        currentUserId={currentUserId}
+        onOpen={openExpense}
+      />
+    ),
+    attention: <AttentionCard items={attentionItems} onOpen={openExpense} />,
+    activity: (
+      <MyActivity items={activity} period={period} onOpen={openActivityClaim} loadingClaimId={loadingClaimId} />
+    ),
+  };
+
   // The card set is picked from the server-computed aggregates; the CTAs
-  // drive real next actions - resume the newest draft, resume a hold, or
-  // chase the most overdue aged claim - all through the drawer.
+  // drive real next actions - resume the newest draft, or chase the most
+  // overdue aged claim - all through the drawer.
   let statCards: StatCard[];
   if (cards.view === "employee") {
     statCards = employeeStatCards(cards.employee, label, {
@@ -98,10 +132,6 @@ export function ExpenseDashboard({
     });
   } else if (cards.view === "approver") {
     statCards = approverStatCards(cards.approver, absenceTimeoutDays, {
-      onResumeHold: () => {
-        const id = cards.approver.holdClaimIds[0];
-        if (id) void openActivityClaim(id);
-      },
       onReviewAged: () => {
         const id = cards.approver.agedClaimIds[0];
         if (id) void openActivityClaim(id);
@@ -159,16 +189,13 @@ export function ExpenseDashboard({
         ))}
       </section>
 
-      <ExpenseOverview
-        expenses={expenses}
-        period={period}
-        currentUser={currentUser}
-        currentUserId={currentUserId}
-        currentUserRoleId={currentUserRoleId}
-        onOpen={openExpense}
-      />
-
-      <MyActivity items={activity} period={period} onOpen={openActivityClaim} loadingClaimId={loadingClaimId} />
+      <div className={layout.gridClassName}>
+        {sections.map((slot) => (
+          <div key={slot.section} className={slot.className}>
+            {sectionRenderers[slot.section]}
+          </div>
+        ))}
+      </div>
 
       <ExpenseDrawer
         open={open}
@@ -178,7 +205,6 @@ export function ExpenseDashboard({
         currentUserId={currentUserId}
         currentUserRoleId={currentUserRoleId}
         currentUserRoleCode={currentUserRoleCode}
-        currentUserCanHold={currentUserCanHold}
       />
     </div>
   );

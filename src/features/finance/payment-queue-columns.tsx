@@ -1,9 +1,9 @@
 import type { ReactNode, RefCallback } from "react";
-import { AlertTriangle, FileText, LoaderCircle } from "lucide-react";
+import { FileText, LoaderCircle } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
 import type { ExpenseClaim } from "@/server/expenses/ports";
-import { approvedOnFor, paymentStatusFor, rejectionFor, type PaymentQueueSortKey } from "./payment-queue-query";
+import { approvedOnFor, paymentStatusFor, type PaymentQueueSortKey } from "./payment-queue-query";
 import { hasReceiptAttachment } from "./payment-queue-selection";
 
 export type PaymentQueueColumnId =
@@ -33,7 +33,7 @@ export interface PaymentQueueColumnHelpers {
   previewButtonRefFor: (claimId: string) => RefCallback<HTMLButtonElement>;
   onToggleReceiptPreview: (claimId: string) => void;
   actingClaimId: string | null;
-  terminalActionFor: (claim: ExpenseClaim) => "verify" | "pay" | null;
+  terminalActionFor: (claim: ExpenseClaim) => "pay" | null;
   onTerminalAction: (claim: ExpenseClaim) => void;
   commentValueFor: (claim: ExpenseClaim) => string;
   savingCommentFor: string | null;
@@ -110,9 +110,7 @@ function renderPaymentStatus(claim: ExpenseClaim, helpers: PaymentQueueColumnHel
             ? "bg-red-500/15 text-red-700 dark:text-red-400"
             : paymentStatus === "Paid"
               ? "bg-emerald-500/15 text-emerald-700 dark:text-emerald-400"
-              : paymentStatus === "Held"
-                ? "bg-violet-500/15 text-violet-700 dark:text-violet-400"
-                : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
+              : "bg-amber-500/15 text-amber-700 dark:text-amber-400",
         )}
       >
         {paymentStatus}
@@ -120,12 +118,12 @@ function renderPaymentStatus(claim: ExpenseClaim, helpers: PaymentQueueColumnHel
       {terminalAction ? (
         <Button
           size="sm"
-          variant={terminalAction === "pay" ? "default" : "outline"}
+          variant="default"
           loading={helpers.actingClaimId === claim.id}
           disabled={helpers.actingClaimId !== null}
           onClick={() => helpers.onTerminalAction(claim)}
         >
-          {terminalAction === "pay" ? "Mark paid" : "Verify for payment"}
+          Mark paid
         </Button>
       ) : null}
     </>
@@ -137,27 +135,7 @@ function renderApprovedOn(claim: ExpenseClaim, helpers: PaymentQueueColumnHelper
   return approvedOn ? approvedOn.slice(0, 10) : "-";
 }
 
-function renderRejection(claim: ExpenseClaim, helpers: PaymentQueueColumnHelpers) {
-  const rejection = rejectionFor(claim);
-  if (!rejection) return <span className="text-muted-foreground">-</span>;
-  const actorName = helpers.employeeNameById.get(rejection.actorId ?? "") ?? "-";
-  return (
-    <div className="flex items-start gap-2 rounded-md border border-amber-300/60 bg-amber-50/70 px-2.5 py-2 text-xs dark:border-amber-500/30 dark:bg-amber-500/10">
-      <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0 text-amber-700 dark:text-amber-400" aria-hidden />
-      <div className="min-w-0">
-        <p className="font-medium leading-snug text-foreground">{rejection.detail ?? "Rejected"}</p>
-        <p className="mt-0.5 text-muted-foreground">
-          Rejected by {actorName} on {rejection.createdAt.slice(0, 10)}
-        </p>
-      </div>
-    </div>
-  );
-}
-
 function renderComments(claim: ExpenseClaim, helpers: PaymentQueueColumnHelpers) {
-  // Rejected claims are a frozen record (ADR-0009): the reason renders
-  // read-only from history, and the comment editor never appears.
-  if (claim.status === "rejected") return renderRejection(claim, helpers);
   const commentValue = helpers.commentValueFor(claim);
   const saving = helpers.savingCommentFor === claim.id;
   return (
@@ -217,15 +195,6 @@ function textApprovedOn(claim: ExpenseClaim, helpers: PaymentQueueColumnTextHelp
 }
 
 function textComments(claim: ExpenseClaim, helpers: PaymentQueueColumnTextHelpers) {
-  // Rejected claims are a frozen record (ADR-0009): the export mirrors the
-  // Comments cell and surfaces the read-only rejection note, never the
-  // claim's comments field.
-  if (claim.status === "rejected") {
-    const rejection = rejectionFor(claim);
-    if (!rejection) return "";
-    const actorName = helpers.employeeNameById.get(rejection.actorId ?? "") ?? "-";
-    return `${rejection.detail ?? "Rejected"} - Rejected by ${actorName} on ${rejection.createdAt.slice(0, 10)}`;
-  }
   return helpers.commentValueFor(claim);
 }
 

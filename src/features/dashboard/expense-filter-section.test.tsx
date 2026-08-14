@@ -206,7 +206,7 @@ describe("ExpenseFilterSection URL sync (ADR-0021)", () => {
     fireEvent.click(screen.getByRole("button", { name: "Software" }));
     fireEvent.change(screen.getByLabelText("Minimum amount"), { target: { value: "500" } });
     await waitFor(() =>
-      expect(mockReplace.mock.calls.at(-1)[0]).toBe(
+      expect(mockReplace.mock.calls.at(-1)?.[0]).toBe(
         "/expenses/all?q=figma&status=in-finance&cats=Software&min=500",
       ),
     );

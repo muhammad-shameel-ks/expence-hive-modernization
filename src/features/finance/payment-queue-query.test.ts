@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { ExpenseClaim } from "@/server/expenses/ports";
-import { approvedOnFor, filterAndSortPaymentQueue, paymentStatusFor, rejectionFor } from "./payment-queue-query";
+import {
+  approvedOnFor,
+  filterAndSortPaymentQueue,
+  isVerifiedClaim,
+  paymentStatusFor,
+  rejectionFor,
+} from "./payment-queue-query";
 
-function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
+function claim(overrides: Partial<ExpenseClaim> = {}): ExpenseClaim {
   return {
     id: "claim-test",
     ref: "EXP-TEST",
@@ -17,7 +23,7 @@ function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
     expenseDate: "2026-08-04",
     status: "in-finance",
     currentStage: "finance",
-    steps: [],
+    steps: [{ id: "s-1", roleId: "role-finance-executive", status: "verified" }],
     history: [],
     version: 1,
     createdAt: "2026-08-04T09:00:00Z",
@@ -25,6 +31,12 @@ function claim(overrides: Partial<ExpenseClaim>): ExpenseClaim {
     ...overrides,
   };
 }
+
+const verifiedStep = (status: ExpenseClaim["steps"][number]["status"] = "verified") => ({
+  id: "s-1",
+  roleId: "role-finance-executive",
+  status,
+});
 
 describe("filterAndSortPaymentQueue", () => {
   it("matches search against title, ref, and category, case-insensitively", () => {
@@ -44,17 +56,17 @@ describe("filterAndSortPaymentQueue", () => {
     expect(filterAndSortPaymentQueue(list, { query: "   " })).toHaveLength(2);
   });
 
-  it("groups claims into Awaiting payment, Paid, and Rejected filters", () => {
+  it("groups verified claims into the Awaiting payment filter; Paid and Rejected filters are always empty (ADR-0023)", () => {
     const list = [
-      claim({ id: "a", status: "in-finance" }),
+      claim({ id: "a" }),
       claim({ id: "b", status: "paid" }),
-      claim({ id: "c", status: "in-finance" }),
+      claim({ id: "c" }),
       claim({ id: "d", status: "rejected" }),
     ];
     expect(filterAndSortPaymentQueue(list, { filter: "Awaiting payment" }).map((c) => c.id)).toEqual(["a", "c"]);
-    expect(filterAndSortPaymentQueue(list, { filter: "Paid" }).map((c) => c.id)).toEqual(["b"]);
-    expect(filterAndSortPaymentQueue(list, { filter: "Rejected" }).map((c) => c.id)).toEqual(["d"]);
-    expect(filterAndSortPaymentQueue(list, { filter: "All" })).toHaveLength(4);
+    expect(filterAndSortPaymentQueue(list, { filter: "Paid" })).toEqual([]);
+    expect(filterAndSortPaymentQueue(list, { filter: "Rejected" })).toEqual([]);
+    expect(filterAndSortPaymentQueue(list, { filter: "All" }).map((c) => c.id)).toEqual(["a", "c"]);
   });
 
   it("filters by category list", () => {
@@ -145,20 +157,59 @@ describe("filterAndSortPaymentQueue", () => {
   });
 });
 
+describe("isVerifiedClaim and the verified-only queue (ADR-0023)", () => {
+  it("accepts an in-finance claim whose terminal step is verified", () => {
+    expect(isVerifiedClaim(claim({}))).toBe(true);
+  });
+
+  it("rejects every other claim state", () => {
+    const stepStatuses: ExpenseClaim["steps"][number]["status"][] = [
+      "pending",
+      "approved",
+      "rejected",
+      "skipped",
+      "paid",
+    ];
+    for (const status of stepStatuses) {
+      expect(isVerifiedClaim(claim({ steps: [verifiedStep(status)] }))).toBe(false);
+    }
+    expect(isVerifiedClaim(claim({ status: "draft", steps: [verifiedStep()] }))).toBe(false);
+    expect(isVerifiedClaim(claim({ status: "in-approval", steps: [verifiedStep()] }))).toBe(false);
+    expect(isVerifiedClaim(claim({ status: "rejected", steps: [verifiedStep()] }))).toBe(false);
+    expect(isVerifiedClaim(claim({ status: "paid", steps: [verifiedStep()] }))).toBe(false);
+    expect(isVerifiedClaim(claim({ steps: [] }))).toBe(false);
+  });
+
+  it("returns only verified claims from a mixed list, before any filter applies", () => {
+    const list = [
+      claim({ id: "verified" }),
+      claim({ id: "pending-terminal", steps: [verifiedStep("pending")] }),
+      claim({ id: "draft", status: "draft" }),
+      claim({ id: "in-approval", status: "in-approval" }),
+      claim({ id: "rejected", status: "rejected" }),
+      claim({ id: "paid", status: "paid" }),
+    ];
+    expect(filterAndSortPaymentQueue(list).map((c) => c.id)).toEqual(["verified"]);
+  });
+
+  it("never lets a non-verified row through any filter or sort", () => {
+    const paid = claim({ id: "paid", status: "paid" });
+    const rejected = claim({ id: "rejected", status: "rejected" });
+    const list = [claim({ id: "verified" }), paid, rejected];
+    expect(filterAndSortPaymentQueue(list, { filter: "Paid" })).toEqual([]);
+    expect(filterAndSortPaymentQueue(list, { filter: "Rejected" })).toEqual([]);
+    expect(filterAndSortPaymentQueue(list, { query: "Test" })).toHaveLength(1);
+    expect(filterAndSortPaymentQueue(list, { sortKey: "amount", sortDir: -1 }).map((c) => c.id)).toEqual([
+      "verified",
+    ]);
+  });
+});
+
 describe("paymentStatusFor", () => {
   it("reports Paid, Not Paid, and Rejected payment statuses", () => {
     expect(paymentStatusFor(claim({ status: "paid" }))).toBe("Paid");
     expect(paymentStatusFor(claim({ status: "in-finance" }))).toBe("Not Paid");
     expect(paymentStatusFor(claim({ status: "rejected" }))).toBe("Rejected");
-  });
-
-  it("reports Held for a held claim regardless of its flow status (ADR-0016)", () => {
-    expect(
-      paymentStatusFor(claim({ status: "in-finance", heldAt: "2026-08-05T10:00:00Z" })),
-    ).toBe("Held");
-    expect(
-      paymentStatusFor(claim({ status: "in-approval", heldAt: "2026-08-05T10:00:00Z" })),
-    ).toBe("Held");
   });
 });
 

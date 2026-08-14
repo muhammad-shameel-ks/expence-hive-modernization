@@ -1,16 +1,16 @@
 // Role authority (ADR-0015): capabilities are per-role data, resolved from
 // the role record everywhere authorization is checked. The hardcoded
 // code-keyed map is gone; a role record carries its own six privilege
-// toggles, and missing or unknown roles fall back to the safe submit-only
-// default. Superadmin is not a toggleable role: the built-in console owner
-// keeps every privilege by construction, regardless of what a role record
-// says.
+// toggles (amended by ADR-0024 and ADR-0026), and missing or unknown roles
+// fall back to the safe submit-only default. Superadmin is not a
+// toggleable role: the built-in console owner keeps every privilege by
+// construction, regardless of what a role record says.
 
 export type RoleCapabilities = {
   canSubmit: boolean;
   canApprove: boolean;
   canAccessFinance: boolean;
-  canHold: boolean;
+  approveBankDetails: boolean;
   canViewOrganizationActivity: boolean;
   canAccessAdminConsole: boolean;
 };
@@ -21,7 +21,7 @@ export const SUBMIT_ONLY_CAPABILITIES: RoleCapabilities = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: false,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
@@ -33,7 +33,7 @@ export const SUPERADMIN_CAPABILITIES: RoleCapabilities = {
   canSubmit: true,
   canApprove: true,
   canAccessFinance: true,
-  canHold: true,
+  approveBankDetails: true,
   canViewOrganizationActivity: true,
   canAccessAdminConsole: true,
 };
@@ -59,10 +59,8 @@ export const FINANCE_EXECUTIVE_ROLE_CODE = "finance-executive";
 // governed - the caller is warned about the pending claims at the role's
 // steps and must confirm the removal, because losing either one leaves a
 // pending step with no eligible actor and the absence sweep advances it.
-// canHold is not an action privilege: losing it does not affect a role's
-// ability to progress a pending step, so it never strands or skips a claim.
 // canSubmit, canViewOrganizationActivity and canAccessAdminConsole are not
-// action privileges either.
+// action privileges.
 export const ACTION_PRIVILEGES = ["canApprove", "canAccessFinance"] as const;
 export type ActionPrivilege = (typeof ACTION_PRIVILEGES)[number];
 

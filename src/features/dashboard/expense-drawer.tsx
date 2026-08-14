@@ -4,7 +4,7 @@
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { motion, useReducedMotion } from "motion/react";
-import { AlertTriangle, ArrowUpRight, Download, Paperclip, PauseCircle, PlayCircle, Search, UserRoundCheck, X } from "lucide-react";
+import { AlertTriangle, ArrowUpRight, Download, Paperclip, Search, UserRoundCheck, X } from "lucide-react";
 import { Drawer } from "@/components/motion/drawer";
 import { EASE_OUT } from "@/lib/ease";
 import { Button } from "@/components/ui/button";
@@ -24,7 +24,7 @@ import { isCurrentActor, isTerminal, nextActionFor } from "./next-action";
 import { firstPdfAttachment, hasAvailableAttachment, hasAvailablePdf } from "./has-available-pdf";
 import { formatMoney, initials, submittedLabel } from "./journey-meta";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
-import type { ExpenseClaim, ExpenseEmployee } from "@/server/expenses/ports";
+import { MAX_APPROVAL_COMMENT_LENGTH, type ExpenseClaim, type ExpenseEmployee } from "@/server/expenses/ports";
 import { SUPERADMIN_ROLE_CODE } from "@/server/shared/authorization";
 import { JourneyFlow } from "./journey-flow";
 import { StatusBadge } from "./status-badge";
@@ -57,7 +57,6 @@ export function ExpenseDrawer({
   currentUserId,
   currentUserRoleId,
   currentUserRoleCode,
-  currentUserCanHold,
 }: {
   open: boolean;
   onOpenChange: (open: boolean) => void;
@@ -67,18 +66,14 @@ export function ExpenseDrawer({
   /** Role id of the viewer; the terminal-stage pool gate compares it against the claim's current step role. */
   currentUserRoleId?: string;
   currentUserRoleCode?: string;
-  /** Whether the viewer's role carries the can_hold capability (ADR-0015/0016). */
-  currentUserCanHold?: boolean;
 }) {
   const [rejectOpen, setRejectOpen] = useState(false);
   const [rejectReason, setRejectReason] = useState("");
   const [rejecting, setRejecting] = useState(false);
   const [rejectError, setRejectError] = useState<string | null>(null);
-  const [holdOpen, setHoldOpen] = useState(false);
-  const [holdReason, setHoldReason] = useState("");
-  const [holding, setHolding] = useState(false);
-  const [holdError, setHoldError] = useState<string | null>(null);
-  const [resuming, setResuming] = useState(false);
+  // The optional approval comment (ADR-0028): free text attached to the
+  // 'approved' history event, never written into the claim comments field.
+  const [approveComment, setApproveComment] = useState("");
   const [delegateOpen, setDelegateOpen] = useState(false);
   const [delegateReason, setDelegateReason] = useState("");
   const [delegateSearch, setDelegateSearch] = useState("");
@@ -130,6 +125,7 @@ export function ExpenseDrawer({
     setActionError(null);
     setOverrideExpense(null);
     setShowPostVerifyPrompt(false);
+    setApproveComment("");
   }
 
   useEffect(() => {
@@ -191,17 +187,10 @@ export function ExpenseDrawer({
     !!isCurrentActor(activeExpense, currentUser, currentUserId) &&
     (activeExpense.primaryAction === "approve" || activeExpense.primaryAction === "verify");
 
-  // Holding (ADR-0016) is per-role: the claim's current stage actor can
-  // pause it when their role carries the can_hold capability, and only
-  // while the claim is in flight and not already held. Resuming is purely
-  // positional - the current stage actor unpauses, no capability needed.
-  const isMine = !!activeExpense && !!isCurrentActor(activeExpense, currentUser, currentUserId);
   const inFlight =
     !!activeExpense &&
     activeExpense.status !== "draft" &&
     !isTerminal(activeExpense.status);
-  const canHold = !!activeExpense && inFlight && !activeExpense.held && isMine && !!currentUserCanHold;
-  const canResume = !!activeExpense?.held && isMine;
 
   // One fetch+error-extraction shape for every drawer mutation: a POST (or
   // DELETE) with a JSON body fallback, surfacing the server's message or a
@@ -229,13 +218,27 @@ export function ExpenseDrawer({
     setActing(true);
     setActionError(null);
     try {
+      // The approval comment (ADR-0028) rides along on the approve request;
+      // verify/pay keep their body-less POST.
+      const init =
+        activeExpense.primaryAction === "approve"
+          ? {
+              method: "POST" as const,
+              headers: { "Content-Type": "application/json" },
+              body: JSON.stringify({ comment: approveComment }),
+            }
+          : { method: "POST" as const };
       const result = await mutate(
         `/api/expenses/${activeExpense.id}/${activeExpense.primaryAction}`,
-        "The action could not be completed. Please try again."
+        "The action could not be completed. Please try again.",
+        init,
       );
       if (!result.ok) {
         setActionError(result.error);
         return;
+      }
+      if (activeExpense.primaryAction === "approve") {
+        setApproveComment("");
       }
       if (activeExpense.primaryAction === "verify") {
         const updated = resolveUpdatedExpense(result.body);
@@ -389,78 +392,12 @@ export function ExpenseDrawer({
     }
   }
 
-  function openHold() {
-    setHoldReason("");
-    setHoldError(null);
-    setHoldOpen(true);
-  }
-
-  async function performHold() {
-    if (!activeExpense) return;
-    const reason = holdReason.trim();
-    if (!reason) {
-      setHoldError("Enter a reason for holding this claim.");
-      return;
-    }
-    setHolding(true);
-    setHoldError(null);
-    try {
-      const result = await mutate(
-        `/api/expenses/${activeExpense.id}/hold`,
-        "Could not hold this claim.",
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ reason }),
-        }
-      );
-      if (result.ok) {
-        const updated = resolveUpdatedExpense(result.body);
-        if (updated) {
-          setOverrideExpense(updated);
-        }
-        setHoldOpen(false);
-        queueSyncedRef.current = true;
-        router.refresh();
-      } else {
-        setHoldError(result.error);
-      }
-    } finally {
-      setHolding(false);
-    }
-  }
-
-  async function performResume() {
-    if (!activeExpense || resuming) return;
-    setResuming(true);
-    setActionError(null);
-    try {
-      const result = await mutate(
-        `/api/expenses/${activeExpense.id}/resume`,
-        "Could not resume this claim."
-      );
-      if (result.ok) {
-        const updated = resolveUpdatedExpense(result.body);
-        if (updated) {
-          setOverrideExpense(updated);
-        }
-        queueSyncedRef.current = true;
-        router.refresh();
-      } else {
-        setActionError(result.error);
-      }
-    } finally {
-      setResuming(false);
-    }
-  }
-
   // Delegation (ADR-0017) is Superadmin-only: the administrator re-routes an
   // in-flight claim to another specific person without acting on it. The
   // person picker loads the organization's employees from the claim endpoint
   // on open, offers only active employees, and excludes the claim's current
   // actor (re-pointing the task to the person already holding it is a
-  // no-op). A held claim stays held - the note tells the delegatee to resume
-  // it (ADR-0016).
+  // no-op).
   function openDelegate() {
     setDelegateReason("");
     setDelegateSearch("");
@@ -627,20 +564,7 @@ export function ExpenseDrawer({
 
       <section className="mt-6" aria-label="What happens next">
         <h3 className="text-sm font-semibold text-foreground">What happens next</h3>
-        {activeExpense.held ? (
-          <div className="mt-2 rounded-xl border border-violet-500/30 bg-violet-500/5 p-4 text-sm">
-            <p className="font-medium text-foreground">This claim is on hold.</p>
-            <p className="mt-1 text-muted-foreground">
-              The current stage actor must resume it before any action is possible.
-            </p>
-            {activeExpense.held.reason ? (
-              <p className="mt-2 flex gap-2 text-violet-700 dark:text-violet-400">
-                <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-                {activeExpense.held.reason}
-              </p>
-            ) : null}
-          </div>
-        ) : terminal ? (
+        {terminal ? (
           <div className="mt-2 rounded-xl border border-border bg-card p-4 text-sm">
             <p className="text-muted-foreground">
               {activeExpense.status === "rejected"
@@ -744,7 +668,7 @@ export function ExpenseDrawer({
                 {activeExpense.title}
               </h2>
               <div className="mt-2 flex flex-wrap items-center gap-2">
-                <StatusBadge held={activeExpense.held} status={activeExpense.status} />
+                <StatusBadge status={activeExpense.status} />
                 <span className="text-xs text-muted-foreground">{activeExpense.category}</span>
               </div>
             </div>
@@ -798,6 +722,21 @@ export function ExpenseDrawer({
             {actionError ? (
               <p role="status" className="mb-3 text-xs text-destructive">{actionError}</p>
             ) : null}
+            {activeExpense.primaryAction === "approve" && next.mine ? (
+              <div className="mb-3">
+                <label htmlFor="approve-comment" className="text-xs font-medium text-muted-foreground">
+                  Comment (optional)
+                </label>
+                <textarea
+                  id="approve-comment"
+                  value={approveComment}
+                  onChange={(event) => setApproveComment(event.target.value)}
+                  maxLength={MAX_APPROVAL_COMMENT_LENGTH}
+                  rows={2}
+                  className="mt-1 w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
+                />
+              </div>
+            ) : null}
             <div className="flex flex-col gap-3 lg:flex-row lg:items-center">
               {activeExpense.status === "draft" ? (
                 <>
@@ -823,46 +762,19 @@ export function ExpenseDrawer({
                 </Button>
               ) : (
                 <>
-                  {!showPostVerifyPrompt ? (
-                    activeExpense.held ? (
-                      canResume ? (
-                        <Button
-                          className="flex-1 gap-1.5"
-                          loading={resuming}
-                          onClick={performResume}
-                        >
-                          <PlayCircle className="h-3.5 w-3.5" />
-                          Resume claim
-                        </Button>
-                      ) : (
-                        <Button className="flex-1" disabled>
-                          On hold
-                        </Button>
-                      )
-                    ) : (
-                      <Button
-                        className="flex-1"
-                        disabled={!activeExpense.primaryAction || !next.mine || acting}
-                        loading={acting}
-                        onClick={performAction}
-                      >
-                        {actionLabel}
-                      </Button>
-                    )
-                  ) : null}
-                  {!activeExpense.held && canReject ? (
-                    <Button variant="destructive" onClick={openReject}>
-                      Reject
+                  {!showPostVerifyPrompt && activeExpense.primaryAction && next.mine ? (
+                    <Button
+                      className="flex-1"
+                      disabled={acting}
+                      loading={acting}
+                      onClick={performAction}
+                    >
+                      {actionLabel}
                     </Button>
                   ) : null}
-                  {canHold ? (
-                    <Button
-                      variant="outline"
-                      className="gap-1.5 border-violet-500/50 text-violet-700 hover:bg-violet-500/10 dark:text-violet-400"
-                      onClick={openHold}
-                    >
-                      <PauseCircle className="h-3.5 w-3.5" />
-                      Hold
+                  {canReject ? (
+                    <Button variant="destructive" onClick={openReject}>
+                      Reject
                     </Button>
                   ) : null}
                   {activeExpense && currentUserRoleCode === SUPERADMIN_ROLE_CODE && inFlight ? (
@@ -881,10 +793,6 @@ export function ExpenseDrawer({
                   </Button>
                 </>
               )}
-              <Button variant="outline" className="gap-1.5">
-                Full record
-                <ArrowUpRight className="h-3.5 w-3.5" />
-              </Button>
             </div>
           </footer>
         </>
@@ -898,12 +806,6 @@ export function ExpenseDrawer({
               Re-route this claim to a specific person. The claim keeps its place in the flow; only the responsible person changes. A reason is required.
             </DialogDescription>
           </DialogHeader>
-          {activeExpense?.held ? (
-            <p className="flex gap-2 rounded-xl border border-violet-500/30 bg-violet-500/5 p-3 text-xs text-violet-700 dark:text-violet-400">
-              <AlertTriangle className="mt-0.5 h-3.5 w-3.5 shrink-0" aria-hidden />
-              This claim is held. Delegating keeps it held - the new actor resumes it.
-            </p>
-          ) : null}
           <div className="flex flex-col gap-2">
             <label htmlFor="delegate-search" className="text-xs font-medium text-muted-foreground">
               Person
@@ -980,40 +882,6 @@ export function ExpenseDrawer({
             </Button>
             <Button variant="default" onClick={performDelegate} loading={delegating}>
               Confirm delegation
-            </Button>
-          </div>
-        </DialogContent>
-      </Dialog>
-
-      <Dialog open={holdOpen} onOpenChange={setHoldOpen}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>Hold this claim</DialogTitle>
-            <DialogDescription>
-              The claim keeps its place in the approval flow but no stage can act on it
-              until the current stage actor resumes it. A reason is required.
-            </DialogDescription>
-          </DialogHeader>
-          <div className="flex flex-col gap-2">
-            <label htmlFor="hold-reason" className="text-xs font-medium text-muted-foreground">
-              Reason
-            </label>
-            <textarea
-              id="hold-reason"
-              value={holdReason}
-              onChange={(e) => setHoldReason(e.target.value)}
-              rows={3}
-              className="w-full rounded-xl border border-border bg-background p-3 text-sm text-foreground outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50"
-              placeholder="Why is this claim on hold? (e.g. waiting for the missing invoice)"
-            />
-            {holdError ? <p className="text-xs text-destructive">{holdError}</p> : null}
-          </div>
-          <div className="flex justify-end gap-3">
-            <Button variant="outline" onClick={() => setHoldOpen(false)} disabled={holding}>
-              Cancel
-            </Button>
-            <Button variant="default" onClick={performHold} loading={holding}>
-              Hold claim
             </Button>
           </div>
         </DialogContent>

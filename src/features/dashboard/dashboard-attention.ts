@@ -18,13 +18,11 @@ export function groupAttentionItems(
     // finance stage, which is a pool - they hold the current step's role
     // (stories 13/14). Claims the user raised but that have moved on to
     // another approver or finance person are excluded, as are drafts,
-    // rejected, and paid claims. A held claim is paused (ADR-0016):
-    // nothing waits on anyone, so it never counts as awaiting attention.
+    // rejected, and paid claims.
     pending: expenses.filter(
       (e) =>
         !isTerminal(e.status) &&
         e.status !== "draft" &&
-        !e.held &&
         (isCurrentActor(e, me, meId) || isTerminalPoolEligible(e, meId, viewerRoleId)),
     ),
   };

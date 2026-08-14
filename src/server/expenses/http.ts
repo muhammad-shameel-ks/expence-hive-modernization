@@ -226,13 +226,22 @@ export async function handleGetExpenseRequest(
 }
 
 export async function handleApproveExpenseRequest(
-  _request: Request,
+  request: Request,
   commands: ExpenseCommands,
   actorId: string,
   claimId: string,
 ): Promise<Response> {
   try {
-    return Response.json({ claim: await commands.approveStage(actorId, claimId) });
+    // The approval comment (ADR-0028) is optional: a body-less POST approves
+    // without one, and a present comment must be a string (trimming and the
+    // length bound live in the command layer).
+    const body = await readBody(request);
+    if (body !== null && typeof body !== "object") return validationResponse();
+    const comment = (body as Record<string, unknown> | null)?.comment;
+    if (comment !== undefined && typeof comment !== "string") return validationResponse();
+    return Response.json({
+      claim: await commands.approveStage(actorId, claimId, comment as string | undefined),
+    });
   } catch (error) {
     return expenseErrorResponse(error);
   }
@@ -321,47 +330,6 @@ export async function handlePayExpenseRequest(
   }
 }
 
-export async function handleHoldExpenseRequest(
-  request: Request,
-  commands: ExpenseCommands,
-  actorId: string,
-  claimId: string,
-): Promise<Response> {
-  try {
-    const body = await readBody(request);
-    if (!body || typeof body !== "object" || typeof (body as Record<string, unknown>).reason !== "string") {
-      return validationResponse();
-    }
-    const reason = (body as Record<string, unknown>).reason as string;
-    // The employee list rides along so the drawer can render the stamped
-    // claim with real actor names, not "System" placeholders.
-    const [claim, employees] = await Promise.all([
-      commands.holdClaim(actorId, claimId, reason),
-      commands.listEmployees(actorId),
-    ]);
-    return Response.json({ claim, employees });
-  } catch (error) {
-    return expenseErrorResponse(error);
-  }
-}
-
-export async function handleResumeExpenseRequest(
-  _request: Request,
-  commands: ExpenseCommands,
-  actorId: string,
-  claimId: string,
-): Promise<Response> {
-  try {
-    const [claim, employees] = await Promise.all([
-      commands.resumeClaim(actorId, claimId),
-      commands.listEmployees(actorId),
-    ]);
-    return Response.json({ claim, employees });
-  } catch (error) {
-    return expenseErrorResponse(error);
-  }
-}
-
 export async function handleFinancePaymentQueueRequest(
   _request: Request,
   commands: ExpenseCommands,
@@ -373,6 +341,171 @@ export async function handleFinancePaymentQueueRequest(
   } catch (error) {
     return expenseErrorResponse(error);
   }
+}
+
+// The register workbook cap: a payment register is one row per claim, so
+// even a large batch stays well under this. The envelope allowance covers
+// the multipart boundaries and part headers on top of the file's bytes,
+// mirroring the receipt-extract route's pre-buffer size check.
+const MAX_PAYMENT_REGISTER_SIZE_BYTES = 10 * 1024 * 1024;
+const REGISTER_MULTIPART_ENVELOPE_ALLOWANCE_BYTES = 256 * 1024;
+
+export async function handlePaymentRegisterImportRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const file = await parseRegisterPart(request);
+    if (!file.ok) return file.response;
+    const report = await commands.importPaymentRegister(actorId, file.data);
+    return Response.json({ report });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handlePaymentRegisterBulkPayRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object") return validationResponse();
+    const claimIds = (body as Record<string, unknown>).claimIds;
+    if (
+      !Array.isArray(claimIds) ||
+      claimIds.length === 0 ||
+      !claimIds.every((claimId) => typeof claimId === "string")
+    ) {
+      return validationResponse();
+    }
+    const report = await commands.markClaimsPaid(actorId, claimIds as string[]);
+    return Response.json({ report });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleBulkApproveExpensesRequest(
+  request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const body = await readBody(request);
+    if (!body || typeof body !== "object") return validationResponse();
+    const claimIds = (body as Record<string, unknown>).claimIds;
+    if (
+      !Array.isArray(claimIds) ||
+      claimIds.length === 0 ||
+      !claimIds.every((claimId) => typeof claimId === "string")
+    ) {
+      return validationResponse();
+    }
+    const comment = (body as Record<string, unknown>).comment;
+    if (comment !== undefined && typeof comment !== "string") {
+      return validationResponse();
+    }
+    const report = await commands.approveClaims(actorId, claimIds as string[], comment as string | undefined);
+    return Response.json({ report });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+export async function handleApprovalsQueueRequest(
+  _request: Request,
+  commands: ExpenseCommands,
+  actorId: string,
+): Promise<Response> {
+  try {
+    const claims = await commands.listApprovalsQueue(actorId);
+    return Response.json({ claims });
+  } catch (error) {
+    return expenseErrorResponse(error);
+  }
+}
+
+// Parses the register-import multipart body: exactly one file part named
+// "register". Size is capped before formData() buffers it (content-length
+// first, chunked bodies counted byte-by-byte), mirroring the receipt
+// routes. Content authority - "is this actually a register Excel?" - lives
+// in the command's server-side parse.
+async function parseRegisterPart(
+  request: Request,
+): Promise<{ ok: true; data: Uint8Array } | { ok: false; response: Response }> {
+  const maxAllowedBytes = MAX_PAYMENT_REGISTER_SIZE_BYTES + REGISTER_MULTIPART_ENVELOPE_ALLOWANCE_BYTES;
+  const contentLengthHeader = request.headers.get("content-length");
+  let parsedRequest = request;
+  if (contentLengthHeader !== null) {
+    const contentLength = Number(contentLengthHeader);
+    if (Number.isFinite(contentLength) && contentLength > maxAllowedBytes) {
+      return { ok: false, response: registerTooLargeResponse() };
+    }
+  } else if (request.body) {
+    const reader = request.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let totalBytes = 0;
+    try {
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          totalBytes += value.byteLength;
+          if (totalBytes > maxAllowedBytes) {
+            await reader.cancel();
+            return { ok: false, response: registerTooLargeResponse() };
+          }
+          chunks.push(value);
+        }
+      }
+    } finally {
+      try {
+        reader.releaseLock();
+      } catch {
+        // Lock might already be released on cancel.
+      }
+    }
+    const combined = new Uint8Array(totalBytes);
+    let offset = 0;
+    for (const chunk of chunks) {
+      combined.set(chunk, offset);
+      offset += chunk.byteLength;
+    }
+    parsedRequest = new Request(request.url, {
+      method: request.method,
+      headers: request.headers,
+      body: combined,
+    });
+  }
+
+  let form: FormData;
+  try {
+    form = await parsedRequest.formData();
+  } catch {
+    return { ok: false, response: validationResponse() };
+  }
+  const file = form.get("register");
+  if (!(file instanceof File)) {
+    return { ok: false, response: validationResponse() };
+  }
+  const data = new Uint8Array(await file.arrayBuffer());
+  if (data.byteLength > MAX_PAYMENT_REGISTER_SIZE_BYTES) {
+    return { ok: false, response: registerTooLargeResponse() };
+  }
+  return { ok: true, data };
+}
+
+function registerTooLargeResponse(): Response {
+  return Response.json(
+    {
+      error: "too-large",
+      message: "The register file is larger than 10 MB. Export the payment register again and drag that file back.",
+    },
+    { status: 413 },
+  );
 }
 
 export async function handleUpdateCommentsRequest(
@@ -400,7 +533,9 @@ function parseAmount(value: string): number | null {
   return Number.isSafeInteger(minor) && minor > 0 ? minor : null;
 }
 
-function expenseErrorResponse(error: unknown): Response {
+// The profile routes reuse this response mapping: the profile commands
+// throw the same ExpenseError codes the expense commands do.
+export function expenseErrorResponse(error: unknown): Response {
   if (!isExpenseError(error)) {
     console.error("expense command failed", error instanceof Error ? error : String(error));
     return Response.json({ error: "internal", message: "An internal server error occurred." }, { status: 500 });

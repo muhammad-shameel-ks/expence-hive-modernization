@@ -5,7 +5,6 @@ import {
   Building2,
   CheckCircle2,
   CircleAlert,
-  PauseCircle,
   ScrollText,
   Settings,
   Users,
@@ -13,15 +12,13 @@ import {
   X,
 } from "lucide-react";
 import type { AdminDepartment, AdminEmployee, AdminRole, FlowDraft } from "@/server/admin/ports";
-import type { HeldClaimRow } from "@/server/expenses/ports";
 import { AuditSection } from "./audit-section";
 import { FlowSection } from "./flow-section";
-import { HeldSection } from "./held-section";
 import { OrgSection } from "./org-section";
 import { PeopleSection } from "./people-section";
 import { SettingsSection } from "./settings-section";
 
-type TabSection = "org" | "people" | "flows" | "audit" | "settings" | "holds";
+type TabSection = "org" | "people" | "flows" | "audit" | "settings";
 
 export function AdminSetup({
   people,
@@ -31,7 +28,6 @@ export function AdminSetup({
   currentEmployeeId,
   isSuperadmin,
   absenceTimeoutDays,
-  heldClaims,
 }: {
   people: AdminEmployee[];
   flows: FlowDraft[];
@@ -40,7 +36,6 @@ export function AdminSetup({
   currentEmployeeId: string;
   isSuperadmin: boolean;
   absenceTimeoutDays: number | null;
-  heldClaims: HeldClaimRow[];
 }) {
   const [activeTab, setActiveTab] = useState<TabSection>("org");
   const [message, setMessage] = useState("");
@@ -142,27 +137,6 @@ export function AdminSetup({
             <span className="hidden sm:inline">Company Settings</span>
           </button>
         ) : null}
-
-        {isSuperadmin ? (
-          <button
-            onClick={() => setActiveTab("holds")}
-            aria-current={activeTab === "holds" ? "page" : undefined}
-            className={`flex items-center gap-1.5 whitespace-nowrap rounded-[9px] px-3.5 py-2 text-xs font-semibold transition-all ${
-              activeTab === "holds"
-                ? "bg-[#e8f2f6] text-[#175d75]"
-                : "text-[#7d8a9b] hover:bg-[#f4f7fa] hover:text-[#26364b]"
-            }`}
-          >
-            <PauseCircle className="size-3.5" />
-            <span className="sm:hidden">Holds</span>
-            <span className="hidden sm:inline">Held Claims</span>
-            <span className={`ml-1 rounded-full px-1.5 py-0.5 text-[0.62rem] font-bold ${
-              activeTab === "holds" ? "bg-[#d9e8ef] text-[#175d75]" : "bg-[#e2e8f0] text-[#475569]"
-            }`}>
-              {heldClaims.length}
-            </span>
-          </button>
-        ) : null}
       </nav>
 
       {/* Main Content Area */}
@@ -187,9 +161,7 @@ export function AdminSetup({
                   ? "Approval Flow Pipelines"
                   : activeTab === "audit"
                     ? "Audit Log"
-                    : activeTab === "settings"
-                      ? "Company Settings"
-                      : "Held Claims Oversight"}
+                    : "Company Settings"}
           </h1>
           <p className="mt-0.5 text-xs text-[#7d8a9b]">
             {activeTab === "org"
@@ -200,9 +172,7 @@ export function AdminSetup({
                   ? "Design, build, and publish multi-stage expense approval workflows."
                   : activeTab === "audit"
                     ? "Review the chronological trail of administrative changes."
-                    : activeTab === "settings"
-                      ? "Configure company-wide approval behavior."
-                      : "Review claims paused by their current stage actor."}
+                    : "Configure company-wide approval behavior."}
           </p>
         </div>
 
@@ -244,9 +214,7 @@ export function AdminSetup({
             onMessage={setMessage}
             onError={setError}
           />
-        ) : (
-          <HeldSection heldClaims={heldClaims} />
-        )}
+        ) : null}
       </div>
 
       {/* Floating Status Notification Toast */}

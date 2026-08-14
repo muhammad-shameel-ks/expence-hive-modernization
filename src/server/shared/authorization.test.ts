@@ -14,7 +14,7 @@ const managerCapabilities: RoleCapabilities = {
   canSubmit: true,
   canApprove: true,
   canAccessFinance: false,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
@@ -23,7 +23,7 @@ const financeHeadCapabilities: RoleCapabilities = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: true,
-  canHold: false,
+  approveBankDetails: true,
   canViewOrganizationActivity: true,
   canAccessAdminConsole: false,
 };
@@ -32,7 +32,7 @@ const financeExecutiveCapabilities: RoleCapabilities = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: true,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
@@ -80,7 +80,7 @@ describe("resolveRoleCapabilities", () => {
   });
 
   it("resolves a custom role's own record set, whatever the code", () => {
-    const custom = { ...managerCapabilities, canHold: true };
+    const custom = { ...managerCapabilities, canAccessAdminConsole: true };
     expect(resolveRoleCapabilities(role("hr-admin", custom))).toEqual(custom);
   });
 
@@ -89,15 +89,19 @@ describe("resolveRoleCapabilities", () => {
     expect(resolveRoleCapabilities(undefined)).toEqual(SUBMIT_ONLY_CAPABILITIES);
   });
 
-  it("gives the submit-only default every false action privilege including hold", () => {
+  it("gives the submit-only default every false action privilege (ADR-0026: no hold toggle, ADR-0024: no bank-detail approval)", () => {
     expect(SUBMIT_ONLY_CAPABILITIES).toEqual({
       canSubmit: true,
       canApprove: false,
       canAccessFinance: false,
-      canHold: false,
+      approveBankDetails: false,
       canViewOrganizationActivity: false,
       canAccessAdminConsole: false,
     });
+  });
+
+  it("gives the built-in Superadmin the approve-bank-details privilege by construction", () => {
+    expect(SUPERADMIN_CAPABILITIES).toMatchObject({ approveBankDetails: true });
   });
 
   it("exposes the locked catalog and superadmin code for the admin console", () => {
@@ -131,14 +135,7 @@ describe("removedActionPrivileges", () => {
     ).toEqual(["canAccessFinance"]);
   });
 
-  it("ignores hold and other non-action capabilities and additions", () => {
-    const holdingRole: RoleCapabilities = { ...managerCapabilities, canHold: true };
-    expect(
-      removedActionPrivileges(holdingRole, {
-        ...holdingRole,
-        canHold: false,
-      }),
-    ).toEqual([]);
+  it("ignores non-action capabilities and additions", () => {
     expect(
       removedActionPrivileges(managerCapabilities, {
         ...managerCapabilities,

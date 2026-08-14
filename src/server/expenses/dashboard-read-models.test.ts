@@ -19,7 +19,7 @@ const SUBMIT_ONLY = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: false,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
@@ -213,24 +213,22 @@ describe("employeeAggregates", () => {
     });
   });
 
-  it("treats held claims as paused: not pending, still spent", () => {
+  it("counts every in-flight claim as pending for the viewer's own money", () => {
     const list = [
-      claim({ id: "a", requesterId: "emp-approver", status: "in-approval", heldAt: "2026-08-05T09:00:00Z" }),
-      claim({ id: "b", requesterId: "emp-approver", status: "in-finance", heldAt: "2026-08-05T09:00:00Z" }),
+      claim({ id: "a", requesterId: "emp-approver", status: "in-approval" }),
+      claim({ id: "b", requesterId: "emp-approver", status: "in-finance" }),
     ];
     const stats = employeeAggregates(list, "emp-approver", "month", NOW);
-    expect(stats.pendingCount).toBe(0);
-    expect(stats.pendingMinor).toBe(0);
+    expect(stats.pendingCount).toBe(2);
     expect(stats.spentCount).toBe(2);
   });
 });
 
 describe("approverAggregates", () => {
-  it("counts claims whose current actor is the viewer, excluding held claims", () => {
+  it("counts claims whose current actor is the viewer", () => {
     const list = [
       claim({ id: "c1", status: "in-approval", currentActorId: "emp-approver", amountMinor: 12000 }),
       claim({ id: "c2", status: "in-finance", currentActorId: "emp-approver", amountMinor: 8000 }),
-      claim({ id: "c3", status: "in-approval", currentActorId: "emp-approver", heldAt: "2026-08-05T09:00:00Z" }),
       claim({ id: "c4", status: "in-approval", currentActorId: "emp-other", amountMinor: 5000 }),
       claim({ id: "c5", status: "paid", currentActorId: "emp-approver", amountMinor: 7000 }),
     ];
@@ -239,30 +237,12 @@ describe("approverAggregates", () => {
     expect(stats.awaitingMyActionTotalMinor).toBe(20000);
   });
 
-  it("counts holds I started and holds sitting on my stage (delegation edge)", () => {
-    const list = [
-      // Held by me but delegated onward: the hold is mine even though the
-      // stage moved on (ADR-0017).
-      claim({ id: "delegated", heldAt: "2026-08-06T09:00:00Z", heldBy: "emp-approver", currentActorId: "emp-other" }),
-      // On my stage, held by someone before the delegation re-pointed it.
-      claim({ id: "on-stage", heldAt: "2026-08-07T09:00:00Z", heldBy: "emp-old-actor", currentActorId: "emp-approver" }),
-      // Someone else's hold elsewhere.
-      claim({ id: "elsewhere", heldAt: "2026-08-08T09:00:00Z", heldBy: "emp-other", currentActorId: "emp-other2" }),
-    ];
-    const stats = approverAggregates(list, "emp-approver", 3, NOW);
-    expect(stats.myHoldsCount).toBe(2);
-    // Newest hold first.
-    expect(stats.holdClaimIds).toEqual(["on-stage", "delegated"]);
-  });
-
   it("ages only the viewer's stage claims past the timeout at a non-terminal stage", () => {
     const list = [
       // Stuck at my non-terminal stage beyond the 3-day timeout.
       claim({ id: "aged", status: "in-approval", currentActorId: "emp-approver", currentStageSince: "2026-08-01T09:00:00Z" }),
       // Within the timeout.
       claim({ id: "fresh", status: "in-approval", currentActorId: "emp-approver", currentStageSince: "2026-08-09T09:00:00Z" }),
-      // On my stage but held: the hold outranks the timeout (ADR-0016).
-      claim({ id: "held", status: "in-approval", currentActorId: "emp-approver", heldAt: "2026-08-05T09:00:00Z", currentStageSince: "2026-08-01T09:00:00Z" }),
       // Another actor's stale claim is not mine to chase.
       claim({ id: "other", status: "in-approval", currentActorId: "emp-other", currentStageSince: "2026-08-01T09:00:00Z" }),
       // A stale terminal stage is never auto-skipped (absence-skip.ts).
@@ -294,11 +274,10 @@ describe("approverAggregates", () => {
 });
 
 describe("financeAggregates", () => {
-  it("counts the verification/payment backlog, excluding held claims", () => {
+  it("counts the verification/payment backlog", () => {
     const list = [
       claim({ id: "q1", status: "in-finance", amountMinor: 12000 }),
       claim({ id: "q2", status: "in-finance", amountMinor: 8000, steps: [step("approved"), step("verified")] }),
-      claim({ id: "held", status: "in-finance", heldAt: "2026-08-05T09:00:00Z", amountMinor: 5000 }),
       claim({ id: "draft", status: "draft", amountMinor: 3000 }),
       claim({ id: "paid", status: "paid", amountMinor: 9000 }),
       claim({ id: "rejected", status: "rejected", amountMinor: 2000 }),

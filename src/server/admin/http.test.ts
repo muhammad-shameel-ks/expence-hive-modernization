@@ -509,7 +509,7 @@ describe("handleCreateRoleRequest", () => {
         canSubmit: true,
         canApprove: true,
         canAccessFinance: false,
-        canHold: false,
+        approveBankDetails: false,
         canViewOrganizationActivity: false,
         canAccessAdminConsole: false,
       },
@@ -524,7 +524,7 @@ describe("handleCreateRoleRequest", () => {
             canSubmit: true,
             canApprove: true,
             canAccessFinance: false,
-            canHold: false,
+            approveBankDetails: false,
             canViewOrganizationActivity: false,
             canAccessAdminConsole: false,
           },
@@ -542,7 +542,7 @@ describe("handleCreateRoleRequest", () => {
         canSubmit: true,
         canApprove: true,
         canAccessFinance: false,
-        canHold: false,
+        approveBankDetails: false,
         canViewOrganizationActivity: false,
         canAccessAdminConsole: false,
       },
@@ -572,7 +572,7 @@ describe("handleUpdateRoleCapabilitiesRequest", () => {
     canSubmit: true,
     canApprove: false,
     canAccessFinance: false,
-    canHold: false,
+    approveBankDetails: false,
     canViewOrganizationActivity: false,
     canAccessAdminConsole: false,
   };
@@ -616,8 +616,8 @@ describe("handleUpdateRoleCapabilitiesRequest", () => {
 
   it("serializes the unconfirmed-removal conflict with its impact", async () => {
     const impact = {
-      removedActionPrivileges: ["canApprove"],
-      pendingClaims: [{ ref: "EXP-2026-0001", title: "Reviewer claim", requesterId: "emp-1", requesterName: "Ada", stage: "Reviewer" }],
+      removedActionPrivileges: ["canApprove" as const],
+      pendingClaims: [{ ref: "EXP-2026-0001", title: "Reviewer claim", requesterId: "emp-1", requesterName: "Ada", stage: "Reviewer", willSkip: false }],
     };
     const updateRoleCapabilities = vi.fn().mockRejectedValue(
       new AdminError("conflict", "Removing approve affects 1 pending claim.", impact),

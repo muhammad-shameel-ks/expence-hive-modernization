@@ -57,7 +57,7 @@ export interface EmployeeAggregates {
   /** The viewer's own non-draft spend in the period, minor units. */
   spentMinor: number;
   spentCount: number;
-  /** The viewer's own in-flight claims awaiting payment (held claims are paused, ADR-0016). */
+  /** The viewer's own in-flight claims awaiting payment, minor units. */
   pendingMinor: number;
   pendingCount: number;
   /** The viewer's drafts needing completion. */
@@ -71,10 +71,6 @@ export interface ApproverAggregates {
   /** In-flight claims whose current actor is the viewer, count + total. */
   awaitingMyActionCount: number;
   awaitingMyActionTotalMinor: number;
-  /** Held claims the viewer holds or that sit on the viewer's stage (ADR-0016; delegation re-points the actor without clearing the hold, ADR-0017). */
-  myHoldsCount: number;
-  /** Held claims, most recently held first - the card opens one in the drawer for quick resume. */
-  holdClaimIds: string[];
   /** The viewer's stage claims stuck beyond the configured absence timeout (ADR-0018). */
   agedCount: number;
   /** Aged claims, most overdue first - the card can chase the oldest. */
@@ -82,7 +78,7 @@ export interface ApproverAggregates {
 }
 
 export interface FinanceAggregates {
-  /** In-flight claims at the finance stage awaiting verification or payment (held claims are paused). */
+  /** In-flight claims at the finance stage awaiting verification or payment. */
   queueCount: number;
   queueTotalMinor: number;
   /** Claims paid in the period, minor units. */
@@ -120,10 +116,10 @@ function pendingIndex(claim: ExpenseClaim): number {
 // A claim is "aged" when its current pending stage has waited past the
 // configured absence timeout - the same predicate the sweep uses to
 // auto-skip, so the aging card and the sweep cannot drift apart
-// (ADR-0018/0020). Held claims are exempt (ADR-0016/0018), and the
-// terminal stage is never auto-skipped, so neither is ever "aged".
+// (ADR-0018/0020). The terminal stage is never auto-skipped, so it is
+// never "aged".
 function isAged(claim: ExpenseClaim, absenceTimeoutDays: number, now: Date): boolean {
-  if (!inFlight(claim) || claim.heldAt) return false;
+  if (!inFlight(claim)) return false;
   const index = pendingIndex(claim);
   if (index === -1 || isTerminalIndex(claim, index)) return false;
   return isStageTimedOut(claim, absenceTimeoutDays, now);
@@ -157,7 +153,7 @@ export function employeeAggregates(
         reimbursedCount += 1;
       }
     }
-    if (inFlight(claim) && !claim.heldAt) {
+    if (inFlight(claim)) {
       pendingMinor += claim.amountMinor;
       pendingCount += 1;
     }
@@ -181,21 +177,12 @@ export function approverAggregates(
 ): ApproverAggregates {
   let awaitingMyActionCount = 0;
   let awaitingMyActionTotalMinor = 0;
-  let myHoldsCount = 0;
-  const holdClaimIds: string[] = [];
   let agedCount = 0;
   const agedClaimIds: string[] = [];
   for (const claim of claims) {
-    if (inFlight(claim) && !claim.heldAt && claim.currentActorId === viewerId && pendingIndex(claim) !== -1) {
+    if (inFlight(claim) && claim.currentActorId === viewerId && pendingIndex(claim) !== -1) {
       awaitingMyActionCount += 1;
       awaitingMyActionTotalMinor += claim.amountMinor;
-    }
-    // Delegation (ADR-0017) re-points a held claim's actor without clearing
-    // the hold, so "mine" is the union of holds I started and holds sitting
-    // on my stage.
-    if (claim.heldAt && (claim.heldBy === viewerId || claim.currentActorId === viewerId)) {
-      myHoldsCount += 1;
-      holdClaimIds.push(claim.id);
     }
     if (claim.currentActorId === viewerId && isAged(claim, absenceTimeoutDays, now)) {
       agedCount += 1;
@@ -203,15 +190,11 @@ export function approverAggregates(
     }
   }
   const claimsById = new Map(claims.map((claim) => [claim.id, claim]));
-  const heldAtOf = (id: string) => claimsById.get(id)?.heldAt ?? "";
   const stageSinceOf = (id: string) => claimsById.get(id)?.currentStageSince ?? "";
-  holdClaimIds.sort((a, b) => heldAtOf(b).localeCompare(heldAtOf(a)));
   agedClaimIds.sort((a, b) => stageSinceOf(a).localeCompare(stageSinceOf(b)));
   return {
     awaitingMyActionCount,
     awaitingMyActionTotalMinor,
-    myHoldsCount,
-    holdClaimIds,
     agedCount,
     agedClaimIds,
   };
@@ -232,7 +215,7 @@ export function financeAggregates(
   let rejectedCount = 0;
   let rejectedTotalMinor = 0;
   for (const claim of claims) {
-    if (claim.status === "in-finance" && !claim.heldAt) {
+    if (claim.status === "in-finance") {
       queueCount += 1;
       queueTotalMinor += claim.amountMinor;
     }

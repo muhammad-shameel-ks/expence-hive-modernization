@@ -21,13 +21,12 @@ export default async function AdminPage() {
     redirect("/expenses");
   }
   const isSuperadmin = actor.role?.code === SUPERADMIN_ROLE_CODE;
-  const [people, flows, roles, departments, absenceTimeoutDays, heldClaims] = await Promise.all([
+  const [people, flows, roles, departments, absenceTimeoutDays] = await Promise.all([
     admin.listEmployees(actor.id),
     admin.listFlows(actor.id),
     admin.listRoles(actor.id),
     admin.listDepartments(actor.id),
     isSuperadmin ? admin.getAbsenceTimeoutDays(actor.id) : Promise.resolve(null),
-    isSuperadmin ? expenseCommands().listHeldClaims(employee.id) : Promise.resolve([]),
   ]);
   const workspace = await expenseCommands().getWorkspace(employee.id);
   return (
@@ -45,7 +44,6 @@ export default async function AdminPage() {
         currentEmployeeId={employee.id}
         isSuperadmin={isSuperadmin}
         absenceTimeoutDays={absenceTimeoutDays}
-        heldClaims={heldClaims}
       />
     </main>
   );
