@@ -37,7 +37,7 @@ export function AppTopbar({ employeeName }: { employeeName: string }) {
         </BreadcrumbList>
       </Breadcrumb>
 
-      <div className="ml-auto flex items-center gap-2">
+      <div className="ml-auto flex shrink-0 items-center gap-2">
         <DropdownMenu>
           <DropdownMenuTrigger
             aria-label={employeeName}
