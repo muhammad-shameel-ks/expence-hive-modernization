@@ -29,8 +29,8 @@ import {
 } from "@/components/ui/dialog";
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
 import { cn } from "@/lib/utils";
-import type { BulkApproveReport } from "@/server/expenses/commands";
-import { MAX_APPROVAL_COMMENT_LENGTH, type ExpenseEmployee } from "@/server/expenses/ports";
+import type { BulkApproveReport, BulkVerifyReport } from "@/server/expenses/commands";
+import { MAX_APPROVAL_COMMENT_LENGTH, type ExpenseClaim, type ExpenseEmployee } from "@/server/expenses/ports";
 import { ExpenseDrawer } from "@/features/dashboard/expense-drawer";
 import { formatMoney } from "@/features/dashboard/journey-meta";
 import type { Expense } from "@/features/dashboard/mock-data";
@@ -43,6 +43,12 @@ import {
 } from "./approvals-selection";
 
 export type ApprovalsSortKey = "title" | "employee" | "category" | "date" | "amount";
+
+type BulkActionResultReport = {
+  approvedCount: number;
+  verifiedCount: number;
+  skipped: Array<{ claimId: string; reason: string; message: string }>;
+};
 
 export interface ApprovalsInboxTableProps {
   expenses: Expense[];
@@ -82,12 +88,12 @@ export function ApprovalsInboxTable({
   const [selectedExpense, setSelectedExpense] = useState<Expense | null>(null);
   const [drawerOpen, setDrawerOpen] = useState(false);
 
-  // Bulk approval modal & execution state
+  // Bulk action modal & execution state
   const [confirmModalOpen, setConfirmModalOpen] = useState(false);
   const [approvalComment, setApprovalComment] = useState("");
   const [approving, setApproving] = useState(false);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [bulkResult, setBulkResult] = useState<BulkApproveReport | null>(null);
+  const [bulkResult, setBulkResult] = useState<BulkActionResultReport | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
   // Employee lookup map
@@ -186,6 +192,26 @@ export function ApprovalsInboxTable({
     [selectedExpenses],
   );
 
+  const allVerificationOnly = useMemo(
+    () => expenses.length > 0 && expenses.every((exp) => exp.primaryAction === "verify"),
+    [expenses],
+  );
+
+  const selectedActionType = useMemo<"approve" | "verify" | "mixed">(() => {
+    let hasVerify = false;
+    let hasApprove = false;
+    for (const exp of selectedExpenses) {
+      if (exp.primaryAction === "verify") {
+        hasVerify = true;
+      } else {
+        hasApprove = true;
+      }
+    }
+    if (hasVerify && !hasApprove) return "verify";
+    if (hasApprove && !hasVerify) return "approve";
+    return "mixed";
+  }, [selectedExpenses]);
+
   const activeAdvancedCount =
     (selectedCategory !== "all" ? 1 : 0) + (dateFrom ? 1 : 0) + (dateTo ? 1 : 0);
 
@@ -209,7 +235,7 @@ export function ApprovalsInboxTable({
     setDateTo("");
   }
 
-  async function executeBulkApproval() {
+  async function executeBulkAction() {
     if (selectedClaimIds.size === 0 || approving) return;
     setApproving(true);
     setActionError(null);
@@ -217,47 +243,138 @@ export function ApprovalsInboxTable({
     setSuccessNotice(null);
 
     try {
-      const response = await fetch("/api/expenses/bulk-approve", {
-        method: "POST",
-        headers: { "content-type": "application/json" },
-        body: JSON.stringify({
-          claimIds: Array.from(selectedClaimIds),
-          ...(approvalComment.trim() ? { comment: approvalComment.trim() } : {}),
-        }),
-      });
+      const approveIds: string[] = [];
+      const verifyIds: string[] = [];
+      for (const exp of selectedExpenses) {
+        if (exp.primaryAction === "verify") {
+          verifyIds.push(exp.id);
+        } else {
+          approveIds.push(exp.id);
+        }
+      }
 
-      const data = await response.json().catch(() => null);
-      if (!response.ok) {
+      let approvedClaims: ExpenseClaim[] = [];
+      let verifiedClaims: ExpenseClaim[] = [];
+      const skipped: Array<{ claimId: string; reason: string; message: string }> = [];
+      // The two legs of a mixed selection are independent server actions
+      // (there is no single endpoint that verifies and approves together),
+      // so a failure in one leg must not hide a success already committed
+      // by the other: both legs always run, and any leg-level error is
+      // surfaced alongside whatever the other leg actually processed.
+      let legError: string | null = null;
+
+      if (verifyIds.length > 0) {
+        try {
+          const response = await fetch("/api/expenses/bulk-verify", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ claimIds: verifyIds }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok) {
+            legError =
+              (data as { message?: string } | null)?.message ??
+              "The bulk verification could not be completed. Please try again.";
+          } else {
+            const report = (data as { report?: BulkVerifyReport })?.report;
+            if (!report) {
+              legError = "The server returned an unexpected response.";
+            } else {
+              verifiedClaims = report.verified;
+              skipped.push(...report.skipped);
+            }
+          }
+        } catch {
+          legError = "Could not reach the server. Please check your connection and try again.";
+        }
+      }
+
+      if (approveIds.length > 0) {
+        try {
+          const response = await fetch("/api/expenses/bulk-approve", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              claimIds: approveIds,
+              ...(approvalComment.trim() ? { comment: approvalComment.trim() } : {}),
+            }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok) {
+            legError =
+              (data as { message?: string } | null)?.message ??
+              "The bulk approval could not be completed. Please try again.";
+          } else {
+            const report = (data as { report?: BulkApproveReport })?.report;
+            if (!report) {
+              legError = "The server returned an unexpected response.";
+            } else {
+              approvedClaims = report.approved;
+              skipped.push(...report.skipped);
+            }
+          }
+        } catch {
+          legError = "Could not reach the server. Please check your connection and try again.";
+        }
+      }
+
+      const totalProcessed = approvedClaims.length + verifiedClaims.length;
+      const processedIds = new Set([
+        ...approvedClaims.map((c) => c.id),
+        ...verifiedClaims.map((c) => c.id),
+      ]);
+
+      if (legError) {
+        // A leg-level failure must not swallow work the other leg already
+        // committed: report the failure, but also say plainly what already
+        // went through so the user does not re-submit already-processed claims.
         setActionError(
-          (data as { message?: string } | null)?.message ??
-            "The bulk approval could not be completed. Please try again.",
-        );
-        return;
-      }
-
-      const report = (data as { report?: BulkApproveReport })?.report;
-      if (!report) {
-        setActionError("The server returned an unexpected response.");
-        return;
-      }
-
-      setBulkResult(report);
-      setConfirmModalOpen(false);
-      setApprovalComment("");
-
-      // Remove approved claims from selection
-      const approvedIds = new Set(report.approved.map((claim) => claim.id));
-      setSelectedClaimIds((current) => new Set([...current].filter((id) => !approvedIds.has(id))));
-
-      if (report.approved.length > 0 && report.skipped.length === 0) {
-        setSuccessNotice(
-          `Successfully approved ${report.approved.length} expense ${
-            report.approved.length === 1 ? "claim" : "claims"
-          }.`,
+          totalProcessed > 0
+            ? `${legError} ${totalProcessed} expense ${
+                totalProcessed === 1 ? "claim was" : "claims were"
+              } already processed before this failure and have been removed from your selection.`
+            : legError,
         );
       }
 
-      router.refresh();
+      if (totalProcessed > 0) {
+        setSelectedClaimIds((current) => new Set([...current].filter((id) => !processedIds.has(id))));
+
+        if (skipped.length > 0) {
+          setBulkResult({
+            approvedCount: approvedClaims.length,
+            verifiedCount: verifiedClaims.length,
+            skipped,
+          });
+        }
+
+        setConfirmModalOpen(false);
+        setApprovalComment("");
+
+        if (!legError && skipped.length === 0) {
+          if (verifiedClaims.length > 0 && approvedClaims.length === 0) {
+            setSuccessNotice(
+              `Successfully verified ${verifiedClaims.length} expense ${
+                verifiedClaims.length === 1 ? "claim" : "claims"
+              }.`,
+            );
+          } else if (approvedClaims.length > 0 && verifiedClaims.length === 0) {
+            setSuccessNotice(
+              `Successfully approved ${approvedClaims.length} expense ${
+                approvedClaims.length === 1 ? "claim" : "claims"
+              }.`,
+            );
+          } else {
+            setSuccessNotice(
+              `Successfully processed ${totalProcessed} expense ${
+                totalProcessed === 1 ? "claim" : "claims"
+              }.`,
+            );
+          }
+        }
+
+        router.refresh();
+      }
     } catch {
       setActionError("Could not reach the server. Please check your connection and try again.");
     } finally {
@@ -315,8 +432,11 @@ export function ApprovalsInboxTable({
         >
           <div className="flex items-center justify-between gap-2">
             <p className="font-semibold">
-              Approval completed with warnings: {bulkResult.approved.length} approved,{" "}
-              {bulkResult.skipped.length} skipped.
+              {bulkResult.verifiedCount > 0 && bulkResult.approvedCount === 0
+                ? `Verification completed with warnings: ${bulkResult.verifiedCount} verified, ${bulkResult.skipped.length} skipped.`
+                : bulkResult.approvedCount > 0 && bulkResult.verifiedCount === 0
+                ? `Approval completed with warnings: ${bulkResult.approvedCount} approved, ${bulkResult.skipped.length} skipped.`
+                : `Action completed with warnings: ${bulkResult.approvedCount + bulkResult.verifiedCount} processed, ${bulkResult.skipped.length} skipped.`}
             </p>
             <button
               type="button"
@@ -350,10 +470,14 @@ export function ApprovalsInboxTable({
           <div className="flex flex-wrap items-center justify-between gap-3">
             <div>
               <h2 className="text-lg font-semibold tracking-tight text-foreground">
-                Pending approvals ({expenses.length})
+                {allVerificationOnly
+                  ? `Pending verification (${expenses.length})`
+                  : `Pending approvals (${expenses.length})`}
               </h2>
               <p className="text-xs text-muted-foreground">
-                Select claims to approve in bulk or click any row to review details in full.
+                {allVerificationOnly
+                  ? "Select claims to verify in bulk or click any row to review details in full."
+                  : "Select claims to approve in bulk or click any row to review details in full."}
               </p>
             </div>
 
@@ -369,7 +493,11 @@ export function ApprovalsInboxTable({
                   onClick={() => setConfirmModalOpen(true)}
                 >
                   <CheckCheck className="h-4 w-4" />
-                  Approve selected ({selectedClaimIds.size})
+                  {selectedActionType === "verify"
+                    ? `Verify selected (${selectedClaimIds.size})`
+                    : selectedActionType === "mixed"
+                    ? `Process selected (${selectedClaimIds.size})`
+                    : `Approve selected (${selectedClaimIds.size})`}
                 </Button>
                 <Button
                   variant="ghost"
@@ -639,14 +767,29 @@ export function ApprovalsInboxTable({
         )}
       </section>
 
-      {/* Bulk Approval Confirmation Modal */}
+      {/* Bulk Action Confirmation Modal */}
       <Dialog open={confirmModalOpen} onOpenChange={setConfirmModalOpen}>
         <DialogContent className="max-w-md">
           <DialogHeader>
-            <DialogTitle>Approve {selectedClaimIds.size} expense claims</DialogTitle>
+            <DialogTitle>
+              {selectedActionType === "verify"
+                ? `Verify ${selectedClaimIds.size} expense ${selectedClaimIds.size === 1 ? "claim" : "claims"}`
+                : selectedActionType === "mixed"
+                ? `Process ${selectedClaimIds.size} expense ${selectedClaimIds.size === 1 ? "claim" : "claims"}`
+                : `Approve ${selectedClaimIds.size} expense ${selectedClaimIds.size === 1 ? "claim" : "claims"}`}
+            </DialogTitle>
             <DialogDescription>
-              You are approving {selectedClaimIds.size}{" "}
-              {selectedClaimIds.size === 1 ? "claim" : "claims"} totaling{" "}
+              {selectedActionType === "verify"
+                ? `You are verifying ${selectedClaimIds.size} ${
+                    selectedClaimIds.size === 1 ? "claim" : "claims"
+                  } totaling `
+                : selectedActionType === "mixed"
+                ? `You are processing ${selectedClaimIds.size} ${
+                    selectedClaimIds.size === 1 ? "claim" : "claims"
+                  } totaling `
+                : `You are approving ${selectedClaimIds.size} ${
+                    selectedClaimIds.size === 1 ? "claim" : "claims"
+                  } totaling `}
               <strong className="text-foreground">{formatMoney(selectedTotalAmount)}</strong> in
               bulk.
             </DialogDescription>
@@ -668,27 +811,29 @@ export function ApprovalsInboxTable({
               ))}
             </div>
 
-            {/* Optional Approval Comment */}
-            <div className="flex flex-col gap-1.5">
-              <label
-                htmlFor="bulk-approval-comment"
-                className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
-              >
-                Approval note (optional)
-              </label>
-              <textarea
-                id="bulk-approval-comment"
-                value={approvalComment}
-                onChange={(e) => setApprovalComment(e.target.value.slice(0, MAX_APPROVAL_COMMENT_LENGTH))}
-                maxLength={MAX_APPROVAL_COMMENT_LENGTH}
-                rows={3}
-                placeholder="Add a remark to record on each approved claim's timeline..."
-                className="w-full resize-none rounded-xl border border-input bg-card p-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
-              />
-              <span className="self-end text-[11px] text-muted-foreground">
-                {approvalComment.length} / {MAX_APPROVAL_COMMENT_LENGTH}
-              </span>
-            </div>
+            {/* Optional Approval Comment (for approve and mixed actions) */}
+            {selectedActionType !== "verify" ? (
+              <div className="flex flex-col gap-1.5">
+                <label
+                  htmlFor="bulk-approval-comment"
+                  className="text-xs font-semibold uppercase tracking-wider text-muted-foreground"
+                >
+                  Approval note (optional)
+                </label>
+                <textarea
+                  id="bulk-approval-comment"
+                  value={approvalComment}
+                  onChange={(e) => setApprovalComment(e.target.value.slice(0, MAX_APPROVAL_COMMENT_LENGTH))}
+                  maxLength={MAX_APPROVAL_COMMENT_LENGTH}
+                  rows={3}
+                  placeholder="Add a remark to record on each approved claim's timeline..."
+                  className="w-full resize-none rounded-xl border border-input bg-card p-3 text-sm text-foreground outline-none transition-colors placeholder:text-muted-foreground focus-visible:border-ring focus-visible:ring-2 focus-visible:ring-ring/30"
+                />
+                <span className="self-end text-[11px] text-muted-foreground">
+                  {approvalComment.length} / {MAX_APPROVAL_COMMENT_LENGTH}
+                </span>
+              </div>
+            ) : null}
           </div>
 
           <div className="flex justify-end gap-2.5 pt-2">
@@ -700,12 +845,22 @@ export function ApprovalsInboxTable({
               Cancel
             </Button>
             <Button
-              onClick={() => void executeBulkApproval()}
+              onClick={() => void executeBulkAction()}
               disabled={approving}
               className="gap-1.5"
             >
               {approving ? <Loader2 className="h-4 w-4 animate-spin" /> : <Check className="h-4 w-4" />}
-              {approving ? "Approving..." : `Confirm & Approve (${selectedClaimIds.size})`}
+              {approving
+                ? selectedActionType === "verify"
+                  ? "Verifying..."
+                  : selectedActionType === "mixed"
+                  ? "Processing..."
+                  : "Approving..."
+                : selectedActionType === "verify"
+                ? `Confirm & Verify (${selectedClaimIds.size})`
+                : selectedActionType === "mixed"
+                ? `Confirm & Process (${selectedClaimIds.size})`
+                : `Confirm & Approve (${selectedClaimIds.size})`}
             </Button>
           </div>
         </DialogContent>

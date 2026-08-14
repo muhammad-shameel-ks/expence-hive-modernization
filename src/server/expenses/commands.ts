@@ -210,6 +210,43 @@ function bulkApproveSkipMessage(reason: BulkApproveSkipReason): string {
   }
 }
 
+// The bulk-verify skip reasons: every selected claim is validated at execution
+// and ineligible rows are skipped and reported.
+export type BulkVerifySkipReason =
+  | "not-found"
+  | "self-claim"
+  | "not-eligible"
+  | "not-in-finance"
+  | "conflict";
+
+/** One selected claim the bulk run refused to verify, with the reason. */
+export type BulkVerifySkippedClaim = {
+  claimId: string;
+  reason: BulkVerifySkipReason;
+  message: string;
+};
+
+/** The per-claim outcome of a bulk verification run. */
+export type BulkVerifyReport = {
+  verified: ExpenseClaim[];
+  skipped: BulkVerifySkippedClaim[];
+};
+
+function bulkVerifySkipMessage(reason: BulkVerifySkipReason): string {
+  switch (reason) {
+    case "not-found":
+      return "Expense claim does not exist.";
+    case "self-claim":
+      return "You cannot verify your own expense claim.";
+    case "not-eligible":
+      return "You are not eligible to verify this claim.";
+    case "not-in-finance":
+      return "This claim is not waiting for Finance verification.";
+    case "conflict":
+      return "This claim was modified by another action.";
+  }
+}
+
 // The register import conflict buckets (ADR-0023): a file row that matched
 // a claim which is no longer payable - either already paid, or still
 // in-flight without a verified terminal step. Both are reported so finance
@@ -279,6 +316,10 @@ export type ExpenseCommands = {
   // the claim lands at that step.
   delegateClaim(actorId: string, claimId: string, delegateeId: string, reason: string): Promise<ExpenseClaim>;
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  // Bulk verification: validates each selected claim at execution (in-finance state,
+  // terminal pending step, pool eligibility, not self-claim) and eligible rows are
+  // verified with their own 'verified' history events; ineligible rows are skipped and reported.
+  verifyClaims(actorId: string, claimIds: string[]): Promise<BulkVerifyReport>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
   // Bulk payment (ADR-0023): every claim id is validated at execution
   // (verified state, not already paid, terminal-pool eligibility) and the
@@ -499,9 +540,15 @@ export function createExpenseCommands({
   // claim commands map the failures back to ExpenseError codes. Sharing one
   // implementation keeps the single-claim eligibility and the bulk
   // eligibility from drifting apart (the slice-08 contract).
+  // The terminal-pool eligibility failures shared by every terminal-stage
+  // command (verify, pay): a subset of both BulkPaySkipReason and
+  // BulkVerifySkipReason, so either bulk command can report a
+  // terminalPoolCheck failure without reason-mapping.
+  type TerminalPoolSkipReason = "not-found" | "self-claim" | "not-eligible";
+
   type TerminalPoolCheck =
     | { ok: true; actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }
-    | { ok: false; reason: BulkPaySkipReason };
+    | { ok: false; reason: TerminalPoolSkipReason };
 
   async function terminalPoolCheck(actorId: string, claimId: string): Promise<TerminalPoolCheck> {
     const actor = await requireEmployee(actorId);
@@ -565,6 +612,29 @@ export function createExpenseCommands({
     claim.status = "paid";
     claim.currentStage = undefined;
     claim.currentActorId = undefined;
+    claim.version += 1;
+  }
+
+  // The shared verification transition: stamps the terminal step verified
+  // and records the claim's own 'verified' history event with actor and
+  // timestamp. Both the single-claim verifyClaim and the bulk run apply
+  // this exact transition so the audit trail of a bulk-verified claim is
+  // identical to a one-off verification.
+  function applyVerification(
+    claim: ExpenseClaim,
+    step: ExpenseClaim["steps"][number],
+    actorId: string,
+    verifiedAt: string,
+  ): void {
+    step.status = "verified";
+    step.decidedAt = verifiedAt;
+    claim.history.push({
+      id: idFactory("history"),
+      kind: "verified",
+      actorId,
+      detail: "Finance verification complete",
+      createdAt: verifiedAt,
+    });
     claim.version += 1;
   }
 
@@ -1041,11 +1111,9 @@ export function createExpenseCommands({
         }
         if (claim.status === "in-finance") {
           const terminal = claim.steps[claim.steps.length - 1];
-          if (!terminal || !actor.role) return false;
-          return (
-            (terminal.status === "pending" || terminal.status === "verified") &&
-            terminal.roleId === actor.role.id
-          );
+          const requester = requesterById.get(claim.requesterId);
+          if (!terminal || !requester || terminal.status !== "pending") return false;
+          return canActOnStep(requester, actor, terminal);
         }
         return false;
       });
@@ -1197,13 +1265,43 @@ export function createExpenseCommands({
       if (claim.status !== "in-finance" || step.status !== "pending") {
         throw new ExpenseError("conflict", "This claim is not waiting for Finance verification.");
       }
-      const verifiedAt = now().toISOString();
-      step.status = "verified";
-      step.decidedAt = verifiedAt;
-      claim.history.push({ id: idFactory("history"), kind: "verified", actorId, detail: "Finance verification complete", createdAt: verifiedAt });
-      claim.version += 1;
+      applyVerification(claim, step, actorId, now().toISOString());
       await store.updateClaim(claim);
       return claim;
+    },
+
+    async verifyClaims(actorId, claimIds) {
+      const actor = await requireEmployee(actorId);
+      if (!canAccessFinance(actor)) {
+        throw new ExpenseError("unauthorized", "Only Finance can verify claims.");
+      }
+      const verified: ExpenseClaim[] = [];
+      const skipped: BulkVerifySkippedClaim[] = [];
+
+      for (const claimId of Array.from(new Set(claimIds))) {
+        const check = await terminalPoolCheck(actorId, claimId);
+        if (!check.ok) {
+          skipped.push({ claimId, reason: check.reason, message: bulkVerifySkipMessage(check.reason) });
+          continue;
+        }
+        const { claim, step } = check;
+        if (claim.status !== "in-finance" || step.status !== "pending") {
+          skipped.push({ claimId, reason: "not-in-finance", message: bulkVerifySkipMessage("not-in-finance") });
+          continue;
+        }
+        applyVerification(claim, step, actorId, now().toISOString());
+        try {
+          await store.updateClaim(claim);
+        } catch (error) {
+          if (isExpenseError(error) && error.code === "conflict") {
+            skipped.push({ claimId, reason: "conflict", message: bulkVerifySkipMessage("conflict") });
+            continue;
+          }
+          throw error;
+        }
+        verified.push(claim);
+      }
+      return { verified, skipped };
     },
 
     async markPaid(actorId, claimId) {
