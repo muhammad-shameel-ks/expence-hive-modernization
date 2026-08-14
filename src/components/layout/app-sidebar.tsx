@@ -54,137 +54,139 @@ export function AppSidebar({ role = null }: { role?: ExpenseRole | null }) {
       </SidebarHeader>
 
       <SidebarContent>
-        <SidebarGroup>
-          <SidebarGroupLabel>Workspace</SidebarGroupLabel>
-          <SidebarGroupContent>
-            <SidebarMenu>
-              <SidebarMenuItem>
-                <SidebarMenuButton asChild isActive={activePath === "/expenses"} tooltip="Dashboard">
-                  <a href="/expenses">
-                    <LayoutDashboard />
-                    <span>Dashboard</span>
-                  </a>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-              <SidebarMenuItem>
-                <SidebarMenuButton
-                  asChild
-                  isActive={activePath === "/expenses/all"}
-                  tooltip="My expenses"
-                >
-                  <a href="/expenses/all">
-                    <ListChecks />
-                    <span>My expenses</span>
-                  </a>
-                </SidebarMenuButton>
-              </SidebarMenuItem>
-            </SidebarMenu>
-          </SidebarGroupContent>
-        </SidebarGroup>
-
-        {showApprovalsGroup ? (
+        <nav aria-label="Workspace">
           <SidebarGroup>
-            <SidebarGroupLabel>Approvals &amp; finance</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                {isApprover ? (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={activePath === "/expenses/approvals"}
-                      tooltip="Approvals"
-                    >
-                      <a href="/expenses/approvals">
-                        <CheckCircle2 />
-                        <span>Approvals</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ) : null}
-                {canViewPaymentQueue ? (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={activePath === "/finance/payments"}
-                      tooltip="Payment queue"
-                    >
-                      <a href="/finance/payments">
-                        <Wallet />
-                        <span>Payment queue</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ) : null}
-                {canReviewBankDetails ? (
-                  <SidebarMenuItem>
-                    <SidebarMenuButton
-                      asChild
-                      isActive={activePath === "/finance/bank-details"}
-                      tooltip="Bank approvals"
-                    >
-                      <a href="/finance/bank-details">
-                        <Landmark />
-                        <span>Bank approvals</span>
-                      </a>
-                    </SidebarMenuButton>
-                  </SidebarMenuItem>
-                ) : null}
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
-
-        {canViewOrganizationActivity ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>Insights</SidebarGroupLabel>
+            <SidebarGroupLabel>Workspace</SidebarGroupLabel>
             <SidebarGroupContent>
               <SidebarMenu>
                 <SidebarMenuItem>
-                  <SidebarMenuButton
-                    asChild
-                    isActive={activePath === "/finance/expenses"}
-                    tooltip="Expense list"
-                  >
-                    <a href="/finance/expenses">
-                      <FileText />
-                      <span>Expense list</span>
+                  <SidebarMenuButton asChild isActive={activePath === "/expenses"} tooltip="Dashboard">
+                    <a href="/expenses">
+                      <LayoutDashboard />
+                      <span>Dashboard</span>
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
                 <SidebarMenuItem>
                   <SidebarMenuButton
                     asChild
-                    isActive={activePath === "/finance/activity"}
-                    tooltip="Activity"
+                    isActive={activePath === "/expenses/all"}
+                    tooltip="My expenses"
                   >
-                    <a href="/finance/activity">
-                      <ActivityIcon />
-                      <span>Activity</span>
+                    <a href="/expenses/all">
+                      <ListChecks />
+                      <span>My expenses</span>
                     </a>
                   </SidebarMenuButton>
                 </SidebarMenuItem>
               </SidebarMenu>
             </SidebarGroupContent>
           </SidebarGroup>
-        ) : null}
 
-        {canViewAdminConsole ? (
-          <SidebarGroup>
-            <SidebarGroupLabel>Admin</SidebarGroupLabel>
-            <SidebarGroupContent>
-              <SidebarMenu>
-                <SidebarMenuItem>
-                  <SidebarMenuButton asChild isActive={activePath === "/admin"} tooltip="Admin console">
-                    <a href="/admin">
-                      <ShieldCheck />
-                      <span>Admin console</span>
-                    </a>
-                  </SidebarMenuButton>
-                </SidebarMenuItem>
-              </SidebarMenu>
-            </SidebarGroupContent>
-          </SidebarGroup>
-        ) : null}
+          {showApprovalsGroup ? (
+            <SidebarGroup>
+              <SidebarGroupLabel>Approvals &amp; finance</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  {isApprover ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={activePath === "/expenses/approvals"}
+                        tooltip="Approvals"
+                      >
+                        <a href="/expenses/approvals">
+                          <CheckCircle2 />
+                          <span>Approvals</span>
+                        </a>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ) : null}
+                  {canViewPaymentQueue ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={activePath === "/finance/payments"}
+                        tooltip="Payment queue"
+                      >
+                        <a href="/finance/payments">
+                          <Wallet />
+                          <span>Payment queue</span>
+                        </a>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ) : null}
+                  {canReviewBankDetails ? (
+                    <SidebarMenuItem>
+                      <SidebarMenuButton
+                        asChild
+                        isActive={activePath === "/finance/bank-details"}
+                        tooltip="Bank approvals"
+                      >
+                        <a href="/finance/bank-details">
+                          <Landmark />
+                          <span>Bank approvals</span>
+                        </a>
+                      </SidebarMenuButton>
+                    </SidebarMenuItem>
+                  ) : null}
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ) : null}
+
+          {canViewOrganizationActivity ? (
+            <SidebarGroup>
+              <SidebarGroupLabel>Insights</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={activePath === "/finance/expenses"}
+                      tooltip="Expense list"
+                    >
+                      <a href="/finance/expenses">
+                        <FileText />
+                        <span>Expense list</span>
+                      </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton
+                      asChild
+                      isActive={activePath === "/finance/activity"}
+                      tooltip="Activity"
+                    >
+                      <a href="/finance/activity">
+                        <ActivityIcon />
+                        <span>Activity</span>
+                      </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ) : null}
+
+          {canViewAdminConsole ? (
+            <SidebarGroup>
+              <SidebarGroupLabel>Admin</SidebarGroupLabel>
+              <SidebarGroupContent>
+                <SidebarMenu>
+                  <SidebarMenuItem>
+                    <SidebarMenuButton asChild isActive={activePath === "/admin"} tooltip="Admin console">
+                      <a href="/admin">
+                        <ShieldCheck />
+                        <span>Admin console</span>
+                      </a>
+                    </SidebarMenuButton>
+                  </SidebarMenuItem>
+                </SidebarMenu>
+              </SidebarGroupContent>
+            </SidebarGroup>
+          ) : null}
+        </nav>
       </SidebarContent>
       <SidebarRail />
     </Sidebar>
