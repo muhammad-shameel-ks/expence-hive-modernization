@@ -11,8 +11,6 @@ const HISTORY_KINDS: Record<ExpenseHistoryEvent["kind"], Expense["history"][numb
   skipped: "skipped",
   "auto-skipped": "auto-skipped",
   comment: "comment",
-  held: "held",
-  resumed: "resumed",
   delegated: "delegated",
 };
 
@@ -58,13 +56,6 @@ export function claimToExpense(claim: ExpenseClaim, employees: ExpenseEmployee[]
       kind: HISTORY_KINDS[event.kind],
       detail: event.detail,
     })),
-    held: claim.heldAt
-      ? {
-          by: claim.heldBy ? names.get(claim.heldBy) ?? claim.heldBy : undefined,
-          at: claim.heldAt,
-          reason: claim.heldReason,
-        }
-      : undefined,
     steps: claim.steps.map((step) => ({
       id: step.id,
       roleId: step.roleId,
@@ -109,9 +100,6 @@ export function activityEntryToItem(entry: ActivityEntry): ActivityItem {
 }
 
 function actionFor(claim: ExpenseClaim): Expense["primaryAction"] {
-  // A held claim is frozen against terminal actions (ADR-0016): no primary
-  // action is offered until the current stage actor resumes it.
-  if (claim.heldAt) return undefined;
   const index = claim.steps.findIndex((step) => step.status === "pending" || step.status === "verified");
   if (index === -1) return undefined;
   const isTerminal = index === claim.steps.length - 1;

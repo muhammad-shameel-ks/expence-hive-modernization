@@ -29,7 +29,6 @@ function renderList(list: Expense[]) {
       currentUserId="emp-user"
       currentUserRoleId="role-manager"
       currentUserRoleCode="manager"
-      currentUserCanHold
     />,
   );
 }

@@ -11,7 +11,6 @@ import {
   dashboardViewForRole,
   parseDashboardPeriod,
 } from "@/server/expenses/dashboard-read-models";
-import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { Button } from "@/components/ui/button";
 import styles from "./expenses.module.css";
 import { ExpenseDashboard } from "@/features/dashboard/dashboard";
@@ -36,8 +35,8 @@ export default async function ExpensesPage({
       expenseCommands().getWorkspace(employee.id),
       expenseCommands().listActivity(employee.id),
     ]);
-    // The admin held-claims view deep-links to the drawer: resolve the
-    // focused claim server-side so the dashboard can open it on mount.
+    // The focusClaim deep-link (e.g. ?claim= from the admin console)
+    // resolves the claim server-side so the dashboard can open it on mount.
     focusClaim = focusClaimId
       ? await expenseCommands().getClaim(employee.id, focusClaimId).catch(() => null)
       : null;
@@ -98,7 +97,6 @@ export default async function ExpensesPage({
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
             currentUserRoleCode={workspace.employee.role?.code}
-            currentUserCanHold={resolveRoleCapabilities(workspace.employee.role).canHold}
             cards={cards}
             absenceTimeoutDays={absenceTimeoutDays}
             period={period}

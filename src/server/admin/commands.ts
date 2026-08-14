@@ -136,15 +136,15 @@ function normalizeEmail(email: string): string {
 // claim total satisfies the operator against the guard amount".
 const GUARD_OPERATORS = ["gte", "gt", "lte", "lt"] as const;
 
-// The six toggles are the fixed privilege catalog (ADR-0015): a capability
-// set must carry all six as booleans. The HTTP boundary shapes the body
-// into this shape; the commands re-validate it so stores never see partial
-// sets.
+// The six toggles are the fixed privilege catalog (ADR-0015, amended by
+// ADR-0024 and ADR-0026): a capability set must carry all six as booleans.
+// The HTTP boundary shapes the body into this shape; the commands
+// re-validate it so stores never see partial sets.
 const CAPABILITY_KEYS = [
   "canSubmit",
   "canApprove",
   "canAccessFinance",
-  "canHold",
+  "approveBankDetails",
   "canViewOrganizationActivity",
   "canAccessAdminConsole",
 ] as const;
@@ -184,7 +184,7 @@ export type AdminCommands = {
   createRole(actorId: string, input: RoleInput): Promise<AdminRole>;
   deactivateRole(actorId: string, roleId: string): Promise<void>;
   // Applies a new capability set to a role. Removing an action privilege
-  // (approve / finance access / hold) while claims are pending at the
+  // (approve / finance access) while claims are pending at the
   // role's steps requires the caller's confirmation; unconfirmed, the
   // command raises a conflict carrying the full impact. Confirmed removals
   // sweep the affected pending steps forward on the next absence catch-up,
@@ -841,7 +841,7 @@ export function createAdminCommands({
           ? undefined
           : parseRoleCapabilities(input.capabilities);
       if (input.capabilities !== null && input.capabilities !== undefined && !capabilities) {
-        throw new AdminError("validation", "A capability set must be six booleans.");
+        throw new AdminError("validation", `A capability set must be ${CAPABILITY_KEYS.length} booleans.`);
       }
       const role = await store.createRole(actor.organizationId, {
         code,
@@ -863,7 +863,7 @@ export function createAdminCommands({
       const actor = await requireAdmin(actorId);
       const parsed = parseRoleCapabilities(capabilities);
       if (!parsed) {
-        throw new AdminError("validation", "A capability set must be six booleans.");
+        throw new AdminError("validation", `A capability set must be ${CAPABILITY_KEYS.length} booleans.`);
       }
       const role = await requireActiveRole(actor.organizationId, roleId);
       if (role.code === SUPERADMIN_ROLE_CODE) {

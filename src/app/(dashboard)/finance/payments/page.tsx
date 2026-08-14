@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
-import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { requireSessionEmployee } from "@/server/shared/session";
 import { PaymentQueueTable } from "@/features/finance/payment-queue-table";
 import styles from "../../expenses/expenses.module.css";
@@ -40,6 +39,13 @@ export default async function FinancePaymentsPage() {
     throw error;
   }
 
+  // The payment-register export (ADR-0023) carries each claim's pay-to
+  // account: the currently approved bank details, read live at export time
+  // (ADR-0024), through the same finance gate as the queue itself.
+  const approvedBankDetails = await expenseCommands().listFinanceApprovedBankDetails(
+    employee.id,
+  );
+
   return (
     <main className={styles.page}>
       <div className="mx-auto w-full max-w-7xl px-4 py-10 pb-32 sm:px-6 lg:px-10">
@@ -50,18 +56,19 @@ export default async function FinancePaymentsPage() {
           Payment queue
         </h1>
         <p className="mt-2 max-w-2xl text-sm text-muted-foreground sm:text-base">
-          Claims at or past Finance verification - awaiting payment, paid, or sent back with a reason.
+          Verified claims waiting to be paid. Every stage of every expense lives in the
+          organization expense list.
         </p>
 
         <div className="mt-8">
           <PaymentQueueTable
             claims={claims}
             employees={workspace.employees}
+            approvedBankDetails={approvedBankDetails}
             currentUser={workspace.employee.name}
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
             currentUserRoleCode={workspace.employee.role?.code}
-            currentUserCanHold={resolveRoleCapabilities(workspace.employee.role).canHold}
           />
         </div>
       </div>

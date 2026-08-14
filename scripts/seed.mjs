@@ -41,15 +41,16 @@ const ROLES = [
   { code: "superadmin", displayName: "Superadmin", locked: true },
 ];
 
-// The default privilege catalog (ADR-0015): submit-only for the locked
-// catalog except Manager (+approve), Finance Executive (+finance access),
-// Finance Head (+finance access, +org activity), and the built-in
-// Superadmin (all six). Custom roles default to submit-only.
+// The default privilege catalog (ADR-0015, amended by ADR-0024 and
+// ADR-0026): submit-only for the locked catalog except Manager (+approve),
+// Finance Executive (+finance access), Finance Head (+finance access, +org
+// activity, +approve bank detail changes), and the built-in Superadmin (all
+// six). Custom roles default to submit-only.
 const SUBMIT_ONLY = {
   can_submit: true,
   can_approve: false,
   can_access_finance: false,
-  can_hold: false,
+  can_approve_bank_details: false,
   can_view_org_activity: false,
   can_access_admin_console: false,
 };
@@ -58,13 +59,18 @@ const DEFAULT_CAPABILITIES = {
   intern: SUBMIT_ONLY,
   executive: SUBMIT_ONLY,
   manager: { ...SUBMIT_ONLY, can_approve: true },
-  "finance-head": { ...SUBMIT_ONLY, can_access_finance: true, can_view_org_activity: true },
+  "finance-head": {
+    ...SUBMIT_ONLY,
+    can_access_finance: true,
+    can_view_org_activity: true,
+    can_approve_bank_details: true,
+  },
   "finance-executive": { ...SUBMIT_ONLY, can_access_finance: true },
   superadmin: {
     can_submit: true,
     can_approve: true,
     can_access_finance: true,
-    can_hold: true,
+    can_approve_bank_details: true,
     can_view_org_activity: true,
     can_access_admin_console: true,
   },
@@ -226,6 +232,26 @@ const HIERARCHY = [
   ["emp-intern", "emp-abilash"],
 ];
 
+// Every seeded employee carries an approved bank account (ADR-0024), so the
+// demo data never trips the submission gate: a claim can be submitted as
+// soon as the seeded employee account is active. Each account is seeded as
+// an already-approved change request with an audit event, matching what the
+// app itself produces when Finance approves a pending request.
+const BANK_DETAILS = [
+  { employeeId: "emp-superadmin", holderName: "Super Admin", accountNumber: "50100234567890", ifsc: "HDFC0001234", bankName: "HDFC Bank", branch: "Indiranagar" },
+  { employeeId: "emp-shameel", holderName: "Muhammad Shameel", accountNumber: "90123456789012", ifsc: "ICIC0004567", bankName: "ICICI Bank", branch: "Koramangala" },
+  { employeeId: "emp-katherine", holderName: "Katherine Johnson", accountNumber: "40122334455667", ifsc: "HDFC0001234", bankName: "HDFC Bank", branch: "Indiranagar" },
+  { employeeId: "emp-ada", holderName: "Ada Lovelace", accountNumber: "60123456789013", ifsc: "SBIN0002345", bankName: "State Bank of India", branch: "Whitefield" },
+  { employeeId: "emp-sanil", holderName: "Sanil Davis", accountNumber: "70123456789014", ifsc: "HDFC0001234", bankName: "HDFC Bank", branch: "Indiranagar" },
+  { employeeId: "emp-arun", holderName: "Arun Kumar", accountNumber: "80123456789015", ifsc: "ICIC0004567", bankName: "ICICI Bank", branch: "Koramangala" },
+  { employeeId: "emp-dorothy", holderName: "Dorothy Vaughan", accountNumber: "90123456789016", ifsc: "SBIN0002345", bankName: "State Bank of India", branch: "Whitefield" },
+  { employeeId: "emp-abilash", holderName: "Abilash", accountNumber: "10123456789017", ifsc: "HDFC0001234", bankName: "HDFC Bank", branch: "Indiranagar" },
+  { employeeId: "emp-intern", holderName: "Ananya Iyer", accountNumber: "20123456789018", ifsc: "ICIC0004567", bankName: "ICICI Bank", branch: "Koramangala" },
+  { employeeId: "emp-pramod", holderName: "Pramod", accountNumber: "30123456789019", ifsc: "SBIN0002345", bankName: "State Bank of India", branch: "Whitefield" },
+  { employeeId: "emp-finance", holderName: "Rishikesh", accountNumber: "40123456789020", ifsc: "HDFC0001234", bankName: "HDFC Bank", branch: "Indiranagar" },
+  { employeeId: "emp-rishikesh", holderName: "Farhan", accountNumber: "50123456789021", ifsc: "ICIC0004567", bankName: "ICICI Bank", branch: "Koramangala" },
+];
+
 async function main() {
   const pool = new Pool({ connectionString: databaseUrl });
   const client = await pool.connect();
@@ -261,7 +287,7 @@ async function main() {
       await client.query(
         `INSERT INTO roles
            (id, organization_id, code, display_name, locked,
-            can_submit, can_approve, can_access_finance, can_hold,
+            can_submit, can_approve, can_access_finance, can_approve_bank_details,
             can_view_org_activity, can_access_admin_console)
          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
          ON CONFLICT (organization_id, code) DO UPDATE SET
@@ -270,7 +296,7 @@ async function main() {
            can_submit = EXCLUDED.can_submit,
            can_approve = EXCLUDED.can_approve,
            can_access_finance = EXCLUDED.can_access_finance,
-           can_hold = EXCLUDED.can_hold,
+           can_approve_bank_details = EXCLUDED.can_approve_bank_details,
            can_view_org_activity = EXCLUDED.can_view_org_activity,
            can_access_admin_console = EXCLUDED.can_access_admin_console`,
         [
@@ -282,7 +308,7 @@ async function main() {
           capabilities.can_submit,
           capabilities.can_approve,
           capabilities.can_access_finance,
-          capabilities.can_hold,
+          capabilities.can_approve_bank_details,
           capabilities.can_view_org_activity,
           capabilities.can_access_admin_console,
         ],
@@ -366,6 +392,56 @@ async function main() {
       );
     }
 
+    const bankReviewerResult = await client.query(
+      "SELECT id FROM roles WHERE organization_id = $1 AND code = 'finance-head' LIMIT 1",
+      [ORGANIZATION.id],
+    );
+    const bankReviewerRoleId = bankReviewerResult.rows[0]?.id ?? "role-finance-head";
+    const bankReviewer = await client.query(
+      `SELECT e.id FROM employees e
+       JOIN employee_roles er ON er.employee_id = e.id AND er.role_id = $1
+       WHERE e.organization_id = $2 LIMIT 1`,
+      [bankReviewerRoleId, ORGANIZATION.id],
+    );
+    const bankReviewerId = bankReviewer.rows[0]?.id ?? "emp-pramod";
+
+    for (const details of BANK_DETAILS) {
+      const requestId = `bank-change-${details.employeeId}-approved`;
+      await client.query(
+        `INSERT INTO bank_detail_change_requests
+           (id, organization_id, employee_id, status, holder_name, account_number, ifsc, bank_name, branch, requester_id, reviewer_id, requested_at, reviewed_at)
+         VALUES ($1, $2, $3, 'approved', $4, $5, $6, $7, $8, $9, $10, now() - interval '30 days', now() - interval '29 days')
+         ON CONFLICT (id) DO UPDATE SET
+           holder_name = EXCLUDED.holder_name, account_number = EXCLUDED.account_number,
+           ifsc = EXCLUDED.ifsc, bank_name = EXCLUDED.bank_name, branch = EXCLUDED.branch,
+           requester_id = EXCLUDED.requester_id, reviewer_id = EXCLUDED.reviewer_id`,
+        [
+          requestId,
+          ORGANIZATION.id,
+          details.employeeId,
+          details.holderName,
+          details.accountNumber,
+          details.ifsc,
+          details.bankName,
+          details.branch,
+          details.employeeId,
+          bankReviewerId,
+        ],
+      );
+      await client.query(
+        `INSERT INTO bank_detail_request_events (id, request_id, kind, actor_id, created_at)
+         VALUES ($1, $2, 'submitted', $3, now() - interval '30 days')
+         ON CONFLICT (id) DO NOTHING`,
+        [`${requestId}-submitted`, requestId, details.employeeId],
+      );
+      await client.query(
+        `INSERT INTO bank_detail_request_events (id, request_id, kind, actor_id, created_at)
+         VALUES ($1, $2, 'approved', $3, now() - interval '29 days')
+         ON CONFLICT (id) DO NOTHING`,
+        [`${requestId}-approved`, requestId, bankReviewerId],
+      );
+    }
+
     for (const claim of CLAIMS) {
       await client.query(
         `INSERT INTO reimbursement_claims
@@ -438,7 +514,7 @@ async function main() {
     );
 
     await client.query("COMMIT");
-    console.log(`seeded organization "${ORGANIZATION.name}" with ${EMPLOYEES.length} employees, ${ROLES.length} roles, and ${FLOWS.length} published flows`);
+    console.log(`seeded organization "${ORGANIZATION.name}" with ${EMPLOYEES.length} employees, ${ROLES.length} roles, ${FLOWS.length} published flows, and ${BANK_DETAILS.length} approved bank accounts`);
   } catch (error) {
     await client.query("ROLLBACK");
     throw error;

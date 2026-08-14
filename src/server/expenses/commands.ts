@@ -12,18 +12,20 @@ import { catchUpAbsentStages, hasActionPrivilege, isTerminalIndex, terminalIndex
 import {
   ACTIVITY_EVENT_KINDS,
   type ActivityEntry,
+  type BankDetails,
   type CreateExpenseDraftInput,
   type ExpenseAttachment,
   type ExpenseClaim,
   type ExpenseEmployee,
   type ExpenseStore,
   type FlowStepTarget,
-  type HeldClaimRow,
+  MAX_APPROVAL_COMMENT_LENGTH,
   type ReceiptData,
   type ReceiptUploadInput,
   type UpdateExpenseDraftInput,
 } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES, receiptSizeLimitLabel, resolveReceiptContentType } from "./receipt-validation";
+import { parsePaymentRegisterData } from "./payment-register-import";
 
 const MAX_REASON_CODE_LENGTH = 200;
 
@@ -31,18 +33,22 @@ function canAccessFinance(employee: ExpenseEmployee): boolean {
   return employee.role !== null && resolveRoleCapabilities(employee.role).canAccessFinance;
 }
 
-// A held claim is frozen against terminal actions (ADR-0016): the flow
-// status is kept, but approve/reject/verify/pay are all refused until the
-// current stage actor resumes the claim.
-function requireNotHeld(claim: ExpenseClaim): void {
-  if (claim.heldAt) {
-    throw new ExpenseError("conflict", "This claim is held and cannot be acted on until it is resumed.");
-  }
-}
-
 function canViewOrganizationActivity(employee: ExpenseEmployee): boolean {
   return (
     employee.role !== null && resolveRoleCapabilities(employee.role).canViewOrganizationActivity
+  );
+}
+
+// A claim in the verified state (ADR-0023): it has reached the terminal
+// finance stage and that step was verified. Verified is the only waiting
+// state - the payment queue renders only these claims, and everything else
+// (draft, in-approval, rejected, paid, finance-pending) lives in the
+// org-wide finance list view instead.
+function isVerifiedClaim(claim: ExpenseClaim): boolean {
+  return (
+    claim.status === "in-finance" &&
+    claim.steps.length > 0 &&
+    claim.steps[terminalIndex(claim)].status === "verified"
   );
 }
 
@@ -129,6 +135,102 @@ export function isExpenseError(error: unknown): error is ExpenseError {
   return error instanceof ExpenseError;
 }
 
+// The bulk-pay skip reasons (ADR-0023): every selected claim is validated
+// at execution and ineligible rows are skipped and reported, so a run with
+// mixed rows still completes (partial success is the expected outcome).
+// The reasons are the shared vocabulary of the bulk command's report and
+// the single-claim command's errors.
+export type BulkPaySkipReason =
+  // No claim with this id exists in the actor's organization.
+  | "not-found"
+  // The actor is the claim's requester.
+  | "self-claim"
+  // The actor does not hold the terminal step (pool eligibility failed).
+  | "not-eligible"
+  // The claim is already paid.
+  | "already-paid"
+  // In-flight, but the terminal step is not verified yet.
+  | "not-verified"
+  // Another writer changed the claim between the check and the write.
+  | "conflict";
+
+/** One selected claim the bulk run refused to pay, with the reason. */
+export type BulkPaySkippedClaim = {
+  claimId: string;
+  reason: BulkPaySkipReason;
+  message: string;
+};
+
+/** The per-claim outcome of a bulk payment run (ADR-0023). */
+export type BulkPayReport = {
+  paid: ExpenseClaim[];
+  skipped: BulkPaySkippedClaim[];
+};
+
+// The bulk-approve skip reasons (ADR-0029): every selected claim is validated
+// at execution and ineligible rows are skipped and reported, so a run with
+// mixed rows still completes (partial success is the expected outcome).
+export type BulkApproveSkipReason =
+  // No claim with this id exists in the actor's organization.
+  | "not-found"
+  // The actor is the claim's requester.
+  | "self-claim"
+  // The actor is not assigned or eligible to act on the current step.
+  | "not-eligible"
+  // The claim is not waiting for an approval decision (e.g. draft, verified, paid, rejected).
+  | "not-in-approval"
+  // Another writer changed the claim between the check and the write.
+  | "conflict";
+
+/** One selected claim the bulk run refused to approve, with the reason. */
+export type BulkApproveSkippedClaim = {
+  claimId: string;
+  reason: BulkApproveSkipReason;
+  message: string;
+};
+
+/** The per-claim outcome of a bulk approval run (ADR-0029). */
+export type BulkApproveReport = {
+  approved: ExpenseClaim[];
+  skipped: BulkApproveSkippedClaim[];
+};
+
+function bulkApproveSkipMessage(reason: BulkApproveSkipReason): string {
+  switch (reason) {
+    case "not-found":
+      return "Expense claim does not exist.";
+    case "self-claim":
+      return "You cannot approve your own expense claim.";
+    case "not-eligible":
+      return "You are not eligible to approve this claim's current stage.";
+    case "not-in-approval":
+      return "This claim is not waiting for an approval decision.";
+    case "conflict":
+      return "This claim was modified by another action.";
+  }
+}
+
+// The register import conflict buckets (ADR-0023): a file row that matched
+// a claim which is no longer payable - either already paid, or still
+// in-flight without a verified terminal step. Both are reported so finance
+// can reconcile the run before paying.
+export type PaymentRegisterImportConflictReason = "already-paid" | "not-verified";
+
+export type PaymentRegisterImportConflict = {
+  claim: ExpenseClaim;
+  reason: PaymentRegisterImportConflictReason;
+};
+
+/** The row-level result of a register drag-back import (ADR-0023). */
+export type PaymentRegisterImportReport = {
+  /** Verified claims the queue can auto-select. */
+  matched: ExpenseClaim[];
+  /** File rows whose claim exists but is not payable anymore. */
+  conflicts: PaymentRegisterImportConflict[];
+  /** File rows with no claim in this organization. */
+  unknownIds: string[];
+};
+
 type IdFactory = (prefix: string) => string;
 
 // Resolves an organization's configured absence auto-skip timeout (the
@@ -154,32 +256,57 @@ export type ExpenseCommands = {
   getWorkspace(actorId: string): Promise<{ employee: ExpenseEmployee; employees: ExpenseEmployee[]; claims: ExpenseClaim[] }>;
   listEmployees(actorId: string): Promise<ExpenseEmployee[]>;
   submitClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
-  approveStage(actorId: string, claimId: string): Promise<ExpenseClaim>;
+  // The optional comment (ADR-0028) is recorded on the 'approved' history
+  // event with actor and timestamp, mirroring the rejection reason
+  // (ADR-0009): it is never written into the claim's comments field, which
+  // stays Finance-only via updateComments.
+  approveStage(actorId: string, claimId: string, comment?: string): Promise<ExpenseClaim>;
+  // Bulk approval (ADR-0029): every selected claim is validated at execution
+  // (in-approval state, not self-claim, stage eligibility) and eligible rows
+  // are approved with their own 'approved' history events (carrying the optional
+  // comment); ineligible rows are skipped and reported.
+  approveClaims(actorId: string, claimIds: string[], comment?: string): Promise<BulkApproveReport>;
+  // The approvals queue read (ADR-0029): every claim in the organization currently
+  // awaiting this approver's action at their approval stage. Gated on the canApprove
+  // privilege.
+  listApprovalsQueue(actorId: string): Promise<ExpenseClaim[]>;
   rejectClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
   // Delegation (ADR-0017): the Superadmin re-points an in-flight claim's
   // current task to another specific person without acting on it. A
   // required reason is recorded as a 'delegated' event; when the
   // delegatee's role appears at a later pending step, the intermediate
   // pending steps are each auto-skipped with their own 'skipped' event and
-  // the claim lands at that step. A held claim stays held - the new actor
-  // resumes it (ADR-0016).
+  // the claim lands at that step.
   delegateClaim(actorId: string, claimId: string, delegateeId: string, reason: string): Promise<ExpenseClaim>;
   verifyClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
   markPaid(actorId: string, claimId: string): Promise<ExpenseClaim>;
-  // Hold (ADR-0016): pauses a claim at its current stage. Only the claim's
-  // current stage actor may hold, their role must carry the can_hold
-  // capability, and a reason is required; the hold is recorded as a 'held'
-  // history event with the reason attached. Resume is positional: the
-  // current stage actor unpauses, recording a 'resumed' event.
-  holdClaim(actorId: string, claimId: string, reason: string): Promise<ExpenseClaim>;
-  resumeClaim(actorId: string, claimId: string): Promise<ExpenseClaim>;
-  // The admin held-claims oversight view (ADR-0016): every held claim in
-  // the organization with display names resolved, for console users only.
-  listHeldClaims(actorId: string): Promise<HeldClaimRow[]>;
+  // Bulk payment (ADR-0023): every claim id is validated at execution
+  // (verified state, not already paid, terminal-pool eligibility) and the
+  // eligible rows are paid with their own 'paid' history events; ineligible
+  // rows are skipped and reported. Partial success is the expected outcome,
+  // and a re-run of the same ids pays nothing new.
+  markClaimsPaid(actorId: string, claimIds: string[]): Promise<BulkPayReport>;
+  // The drag-back import (ADR-0023): parses the uploaded register Excel
+  // server-side (never in the browser), validates it against the slice-06
+  // format contract, and returns the matching verified claims plus a
+  // row-level report of unknown ids and no-longer-payable claims.
+  importPaymentRegister(actorId: string, data: Uint8Array): Promise<PaymentRegisterImportReport>;
   listFinancePaymentQueue(actorId: string): Promise<ExpenseClaim[]>;
+  // The approved bank details of every employee of the organization, for
+  // the payment-register export (ADR-0023): the register carries the
+  // account each claim will be paid to (ADR-0024). Gated on finance access
+  // like the queue read; the details are read live at export time.
+  listFinanceApprovedBankDetails(
+    actorId: string,
+  ): Promise<Array<{ employeeId: string; details: BankDetails }>>;
   updateComments(actorId: string, claimId: string, comments: string): Promise<ExpenseClaim>;
   listActivity(actorId: string, targetEmployeeId?: string): Promise<ActivityEntry[]>;
   listOrganizationActivity(actorId: string): Promise<ActivityEntry[]>;
+  // The org-wide finance expense list read (ADR-0023): every claim in the
+  // organization at every stage, for roles carrying the view-org-wide-activity
+  // privilege. The list surface is read-only - there is no mutation in this
+  // read. Distinct from listClaims, which is viewer-scoped.
+  listOrganizationClaims(actorId: string): Promise<ExpenseClaim[]>;
   // System-level absence sweep (ADR-0018): enforces the organization's
   // configured absence timeout across all of its in-flight claims, applying
   // the exact same catch-up as the lazy read path and persisting the
@@ -345,23 +472,134 @@ export function createExpenseCommands({
     return claim;
   }
 
-  async function requireTerminalPoolClaim(
-    actorId: string,
-    claimId: string,
-  ): Promise<{ actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }> {
-    const { actor, claim } = await requireClaimForActor(
-      actorId,
-      claimId,
-      "You cannot verify or pay your own expense claim.",
-    );
+  // The bulk-pay skip reasons (ADR-0023): every selected claim is validated
+  // at execution and ineligible rows are skipped and reported, so a run
+  // with mixed rows still completes (partial success is the expected
+  // outcome). The module-level BulkPaySkipReason type is the shared
+  // vocabulary of the bulk report and the single-claim command's errors.
+  function bulkPaySkipMessage(reason: BulkPaySkipReason): string {
+    switch (reason) {
+      case "not-found":
+        return "Expense claim does not exist.";
+      case "self-claim":
+        return "You cannot verify or pay your own expense claim.";
+      case "not-eligible":
+        return "You are not eligible to process this claim's terminal stage.";
+      case "already-paid":
+        return "This claim is already paid.";
+      case "not-verified":
+        return "This claim is not verified and cannot be paid.";
+      case "conflict":
+        return "This claim changed before it could be paid.";
+    }
+  }
+
+  // The non-throwing half of the terminal-pool authority check: the bulk
+  // command runs it per claim to build its skip report, while the single
+  // claim commands map the failures back to ExpenseError codes. Sharing one
+  // implementation keeps the single-claim eligibility and the bulk
+  // eligibility from drifting apart (the slice-08 contract).
+  type TerminalPoolCheck =
+    | { ok: true; actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }
+    | { ok: false; reason: BulkPaySkipReason };
+
+  async function terminalPoolCheck(actorId: string, claimId: string): Promise<TerminalPoolCheck> {
+    const actor = await requireEmployee(actorId);
+    const claimRow = await store.getClaim(claimId);
+    if (!claimRow || claimRow.organizationId !== actor.organizationId) {
+      return { ok: false, reason: "not-found" };
+    }
+    const claim = await catchUp(claimRow);
+    if (claim.requesterId === actorId) {
+      return { ok: false, reason: "self-claim" };
+    }
     const index = terminalIndex(claim);
     const step = claim.steps[index];
     const employees = await store.listEmployees(claim.organizationId);
     const requester = employees.find((candidate) => candidate.id === claim.requesterId);
     if (!requester || !step || !canActOnStep(requester, actor, step)) {
+      return { ok: false, reason: "not-eligible" };
+    }
+    return { ok: true, actor, claim, step };
+  }
+
+  async function requireTerminalPoolClaim(
+    actorId: string,
+    claimId: string,
+  ): Promise<{ actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }> {
+    const check = await terminalPoolCheck(actorId, claimId);
+    if (!check.ok) {
+      if (check.reason === "not-found") {
+        throw new ExpenseError("not-found", "Expense claim does not exist.");
+      }
+      if (check.reason === "self-claim") {
+        throw new ExpenseError("unauthorized", "You cannot verify or pay your own expense claim.");
+      }
       throw new ExpenseError("unauthorized", "You are not eligible to process this claim's terminal stage.");
     }
-    return { actor, claim, step };
+    return check;
+  }
+
+  // The shared payment transition (ADR-0023): stamps the terminal step
+  // paid, records the claim's own 'paid' history event with actor,
+  // timestamp, and the account the payment actually used, and moves the
+  // claim to its terminal paid state. The account is read live at execution
+  // time (ADR-0024 decision 5), never from a per-claim snapshot, so it
+  // reflects whatever bank details were approved at the moment of payment.
+  // Both the single-claim markPaid and the bulk run apply this exact
+  // transition so the audit trail of a bulk-paid claim is identical to a
+  // one-off payment.
+  async function applyPayment(
+    claim: ExpenseClaim,
+    step: ExpenseClaim["steps"][number],
+    actorId: string,
+    paidAt: string,
+  ): Promise<void> {
+    const account = await store.getApprovedBankDetails(claim.requesterId);
+    const detail = account
+      ? `Paid to ${account.holderName}, account ${account.accountNumber} (${account.ifsc}, ${account.bankName})`
+      : "Payment marked complete";
+    step.status = "paid";
+    step.decidedAt = paidAt;
+    claim.history.push({ id: idFactory("history"), kind: "paid", actorId, detail, createdAt: paidAt });
+    claim.status = "paid";
+    claim.currentStage = undefined;
+    claim.currentActorId = undefined;
+    claim.version += 1;
+  }
+
+  // The shared approval transition (ADR-0029): stamps the current step
+  // approved, records the claim's own 'approved' history event with actor,
+  // optional comment, and timestamp, advances the claim to its next pending
+  // step (or terminal in-finance state), and bumps the claim version. Both the
+  // single-claim approveStage and the bulk run apply this exact transition so
+  // the audit trail of a bulk-approved claim is identical to a one-off approval.
+  function applyApproval(
+    claim: ExpenseClaim,
+    index: number,
+    actorId: string,
+    decidedAt: string,
+    trimmedComment: string,
+  ): void {
+    const step = claim.steps[index];
+    step.status = "approved";
+    step.decidedAt = decidedAt;
+    claim.history.push({
+      id: idFactory("history"),
+      kind: "approved",
+      actorId,
+      ...(trimmedComment ? { detail: trimmedComment } : {}),
+      createdAt: decidedAt,
+    });
+    const nextIndex = claim.steps.findIndex(
+      (candidate, candidateIndex) => candidateIndex > index && candidate.status === "pending",
+    );
+    const next = claim.steps[nextIndex];
+    claim.currentStage = next?.roleId ?? undefined;
+    claim.currentActorId = next?.assignedActorId;
+    claim.currentStageSince = decidedAt;
+    claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
+    claim.version += 1;
   }
 
   // Uploads receipt bytes to a claim-scoped key and returns the attachment
@@ -609,6 +847,17 @@ export function createExpenseCommands({
       if (!claim.attachment) {
         throw new ExpenseError("validation", "A receipt is required before this claim can be submitted.");
       }
+      // Submission gate (ADR-0024): drafts may be created without bank
+      // details, but the first submission is blocked until an approved bank
+      // detail record exists, with a pointer to the profiles page. Enforced
+      // server-side; the UI never needs to duplicate this authority.
+      const approvedBankDetails = await store.getApprovedBankDetails(requester.id);
+      if (!approvedBankDetails) {
+        throw new ExpenseError(
+          "validation",
+          "Approved bank details are required before submitting a claim. Add them on your profile page.",
+        );
+      }
       const employees = await store.listEmployees(requester.organizationId);
       const roleNames = new Map(
         employees.flatMap((employee) =>
@@ -653,7 +902,7 @@ export function createExpenseCommands({
       return claim;
     },
 
-    async approveStage(actorId, claimId) {
+    async approveStage(actorId, claimId, comment) {
       const actor = await requireEmployee(actorId);
       const claimRow = await store.getClaim(claimId);
       if (!claimRow || claimRow.organizationId !== actor.organizationId) {
@@ -667,7 +916,13 @@ export function createExpenseCommands({
       if (index === -1 || isTerminalIndex(claim, index) || claim.status !== "in-approval") {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
       }
-      requireNotHeld(claim);
+      // The approval comment is optional free text (ADR-0028): an approval
+      // without one is valid, whitespace-only input is treated as absent,
+      // and an oversized comment is refused before anything is written.
+      const trimmedComment = comment?.trim() ?? "";
+      if (trimmedComment.length > MAX_APPROVAL_COMMENT_LENGTH) {
+        throw new ExpenseError("validation", "Comment is too long.");
+      }
       // Pool semantics (stories 13/14): any eligible pool member may approve
       // the current stage, not only the member it was assigned to. The
       // assignment is the default actor; the pool is the authority.
@@ -677,23 +932,8 @@ export function createExpenseCommands({
       if (!requester || !canActOnStep(requester, actor, claim.steps[index])) {
         throw new ExpenseError("unauthorized", "You are not eligible to approve this claim's current stage.");
       }
-      const step = claim.steps[index];
       const decidedAt = now().toISOString();
-      step.status = "approved";
-      step.decidedAt = decidedAt;
-      claim.history.push({ id: idFactory("history"), kind: "approved", actorId, createdAt: decidedAt });
-      // Advance to the next pending step: steps between could have been
-      // auto-skipped by an amount guard at submission and must be passed
-      // over, never stranding the claim on an already-skipped stage.
-      const nextIndex = claim.steps.findIndex(
-        (candidate, candidateIndex) => candidateIndex > index && candidate.status === "pending",
-      );
-      const next = claim.steps[nextIndex];
-      claim.currentStage = next.roleId ?? undefined;
-      claim.currentActorId = next.assignedActorId;
-      claim.currentStageSince = decidedAt;
-      claim.status = isTerminalIndex(claim, nextIndex) ? "in-finance" : "in-approval";
-      claim.version += 1;
+      applyApproval(claim, index, actorId, decidedAt, trimmedComment);
       const employees = await store.listEmployees(claim.organizationId);
       await catchUpAbsentStages(
         claim,
@@ -706,13 +946,118 @@ export function createExpenseCommands({
       return claim;
     },
 
+    async approveClaims(actorId, claimIds, comment) {
+      const actor = await requireEmployee(actorId);
+      // Bulk approval rides the canApprove / canAccessFinance privilege (ADR-0029):
+      // any role carrying approval capability may execute a bulk approval run.
+      const caps = resolveRoleCapabilities(actor.role);
+      if (!caps.canApprove && !caps.canAccessFinance) {
+        throw new ExpenseError("unauthorized", "Only approvers can approve claims.");
+      }
+      const trimmedComment = comment?.trim() ?? "";
+      if (trimmedComment.length > MAX_APPROVAL_COMMENT_LENGTH) {
+        throw new ExpenseError("validation", "Comment is too long.");
+      }
+      const approved: ExpenseClaim[] = [];
+      const skipped: BulkApproveSkippedClaim[] = [];
+      const employees = await store.listEmployees(actor.organizationId);
+      const requesterById = new Map(employees.map((candidate) => [candidate.id, candidate]));
+      const timeoutDays = await absenceTimeoutDaysFor(actor.organizationId);
+
+      // Duplicate ids in the batch are approved once: the report never lists a
+      // claim twice, and a re-run of the same ids is idempotent.
+      for (const claimId of Array.from(new Set(claimIds))) {
+        const claimRow = await store.getClaim(claimId);
+        if (!claimRow || claimRow.organizationId !== actor.organizationId) {
+          skipped.push({ claimId, reason: "not-found", message: bulkApproveSkipMessage("not-found") });
+          continue;
+        }
+        if (claimRow.requesterId === actorId) {
+          skipped.push({ claimId, reason: "self-claim", message: bulkApproveSkipMessage("self-claim") });
+          continue;
+        }
+        const claim = await catchUp(claimRow);
+        // Bulk approval is an approval-stage action only (ADR-0029 decision 4):
+        // finance verify/pay has its own confirmation surface (ADR-0023) and
+        // must not be reachable through this batch, even for actors who also
+        // hold finance privilege. An in-finance claim is skipped like any
+        // other claim that isn't waiting for an approval decision.
+        if (claim.status !== "in-approval") {
+          skipped.push({ claimId, reason: "not-in-approval", message: bulkApproveSkipMessage("not-in-approval") });
+          continue;
+        }
+
+        const decidedAt = now().toISOString();
+        const index = claim.steps.findIndex((step) => step.status === "pending");
+        if (index === -1 || isTerminalIndex(claim, index)) {
+          skipped.push({ claimId, reason: "not-in-approval", message: bulkApproveSkipMessage("not-in-approval") });
+          continue;
+        }
+        const requester = requesterById.get(claim.requesterId);
+        if (!requester || !canActOnStep(requester, actor, claim.steps[index])) {
+          skipped.push({ claimId, reason: "not-eligible", message: bulkApproveSkipMessage("not-eligible") });
+          continue;
+        }
+        applyApproval(claim, index, actorId, decidedAt, trimmedComment);
+        await catchUpAbsentStages(claim, employees, timeoutDays, now, idFactory);
+
+        try {
+          await store.updateClaim(claim);
+        } catch (error) {
+          // Another writer got there first (optimistic concurrency version check):
+          // skip like any other ineligible row instead of aborting the run.
+          if (isExpenseError(error) && error.code === "conflict") {
+            skipped.push({ claimId, reason: "conflict", message: bulkApproveSkipMessage("conflict") });
+            continue;
+          }
+          throw error;
+        }
+        approved.push(claim);
+      }
+      return { approved, skipped };
+    },
+
+    async listApprovalsQueue(actorId) {
+      const actor = await requireEmployee(actorId);
+      const caps = resolveRoleCapabilities(actor.role);
+      if (!caps.canApprove && !caps.canAccessFinance) {
+        throw new ExpenseError("unauthorized", "Only approvers can access the approvals inbox.");
+      }
+      const [employees, rawClaims] = await Promise.all([
+        store.listEmployees(actor.organizationId),
+        store.listClaimsForOrganization(actor.organizationId),
+      ]);
+      const claims = await catchUpAll(rawClaims, actor.organizationId);
+      const requesterById = new Map(employees.map((candidate) => [candidate.id, candidate]));
+      const approvable = claims.filter((claim) => {
+        if (claim.requesterId === actor.id) return false;
+        if (claim.status === "in-approval") {
+          const index = claim.steps.findIndex((step) => step.status === "pending");
+          if (index === -1 || isTerminalIndex(claim, index)) return false;
+          const step = claim.steps[index];
+          const requester = requesterById.get(claim.requesterId);
+          if (!requester) return false;
+          return canActOnStep(requester, actor, step);
+        }
+        if (claim.status === "in-finance") {
+          const terminal = claim.steps[claim.steps.length - 1];
+          if (!terminal || !actor.role) return false;
+          return (
+            (terminal.status === "pending" || terminal.status === "verified") &&
+            terminal.roleId === actor.role.id
+          );
+        }
+        return false;
+      });
+      return approvable.map((claim) => maskClaimComments(claim, actor));
+    },
+
     async rejectClaim(actorId, claimId, reason) {
       const claim = await requireAssignedClaim(actorId, claimId);
       const index = claim.steps.findIndex((step) => step.status === "pending");
       if (index === -1 || (claim.status !== "in-approval" && claim.status !== "in-finance")) {
         throw new ExpenseError("conflict", "This claim is not waiting for an approval decision.");
       }
-      requireNotHeld(claim);
       const trimmedReason = reason.trim();
       if (!trimmedReason) {
         throw new ExpenseError("validation", "A reason is required to reject a claim.");
@@ -838,8 +1183,8 @@ export function createExpenseCommands({
         claim.steps[targetIndex].assignedActorId = delegatee.id;
       }
       claim.currentStage = claim.steps[landedIndex].roleId ?? undefined;      claim.currentActorId = delegatee.id;
-      // The new actor gets a fresh absence window (mirrors resume, ADR-0016):
-      // a long-stuck claim must not be swept the moment it is re-pointed.
+      // The new actor gets a fresh absence window: a long-stuck claim must
+      // not be swept the moment it is re-pointed.
       claim.currentStageSince = decidedAt;
       claim.status = isTerminalIndex(claim, landedIndex) ? "in-finance" : "in-approval";
       claim.version += 1;
@@ -852,7 +1197,6 @@ export function createExpenseCommands({
       if (claim.status !== "in-finance" || step.status !== "pending") {
         throw new ExpenseError("conflict", "This claim is not waiting for Finance verification.");
       }
-      requireNotHeld(claim);
       const verifiedAt = now().toISOString();
       step.status = "verified";
       step.decidedAt = verifiedAt;
@@ -868,124 +1212,87 @@ export function createExpenseCommands({
         throw new ExpenseError("conflict", "This claim is not ready for payment.");
       }
       if (step.status !== "verified") throw new ExpenseError("conflict", "Verify the claim before marking payment.");
-      requireNotHeld(claim);
-      const paidAt = now().toISOString();
-      step.status = "paid";
-      step.decidedAt = paidAt;
-      claim.history.push({ id: idFactory("history"), kind: "paid", actorId, detail: "Payment marked complete", createdAt: paidAt });
-      claim.status = "paid";
-      claim.currentStage = undefined;
-      claim.currentActorId = undefined;
-      claim.version += 1;
+      await applyPayment(claim, step, actorId, now().toISOString());
       await store.updateClaim(claim);
       return claim;
     },
 
-    async holdClaim(actorId, claimId, reason) {
-      const { actor, claim } = await requireClaimForActor(
-        actorId,
-        claimId,
-        "You cannot hold your own expense claim.",
-      );
-      if (claim.status !== "in-approval" && claim.status !== "in-finance") {
-        throw new ExpenseError("conflict", "Only an in-flight claim can be held.");
+    async markClaimsPaid(actorId, claimIds) {
+      const actor = await requireEmployee(actorId);
+      // Bulk payment rides the finance verify/pay privilege (ADR-0023): any
+      // role whose record carries it may run a payment batch, mirroring the
+      // register export and drag-back import gates.
+      if (!canAccessFinance(actor)) {
+        throw new ExpenseError("unauthorized", "Only Finance can pay claims.");
       }
-      if (claim.heldAt) {
-        throw new ExpenseError("conflict", "This claim is already held.");
+      const paid: ExpenseClaim[] = [];
+      const skipped: BulkPaySkippedClaim[] = [];
+      // Duplicate ids in the batch are paid once: the report never lists a
+      // claim twice, and a re-run of the same ids is idempotent.
+      for (const claimId of Array.from(new Set(claimIds))) {
+        const check = await terminalPoolCheck(actorId, claimId);
+        if (!check.ok) {
+          skipped.push({ claimId, reason: check.reason, message: bulkPaySkipMessage(check.reason) });
+          continue;
+        }
+        const { claim, step } = check;
+        if (claim.status !== "in-finance" || step.status !== "verified") {
+          const reason: BulkPaySkipReason = claim.status === "paid" ? "already-paid" : "not-verified";
+          skipped.push({ claimId, reason, message: bulkPaySkipMessage(reason) });
+          continue;
+        }
+        await applyPayment(claim, step, actorId, now().toISOString());
+        try {
+          await store.updateClaim(claim);
+        } catch (error) {
+          // Another writer got there first (the store's optimistic version
+          // check): the claim was already advanced, so it is skipped like
+          // any other ineligible row instead of aborting the run.
+          if (isExpenseError(error) && error.code === "conflict") {
+            skipped.push({ claimId, reason: "conflict", message: bulkPaySkipMessage("conflict") });
+            continue;
+          }
+          throw error;
+        }
+        paid.push(claim);
       }
-      if (claim.currentActorId !== actorId) {
-        throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
-      }
-      // Holding is a per-role privilege (ADR-0015/0016): the actor's own
-      // role must carry the can_hold capability, resolved from the role
-      // record. Superadmin holds it by construction.
-      if (!resolveRoleCapabilities(actor.role).canHold) {
-        throw new ExpenseError("unauthorized", "Your role does not have the hold privilege.");
-      }
-      const trimmedReason = reason.trim();
-      if (!trimmedReason) {
-        throw new ExpenseError("validation", "A reason is required to hold a claim.");
-      }
-      const heldAt = now().toISOString();
-      claim.heldAt = heldAt;
-      claim.heldBy = actorId;
-      claim.heldReason = trimmedReason;
-      claim.history.push({
-        id: idFactory("history"),
-        kind: "held",
-        actorId,
-        detail: trimmedReason,
-        createdAt: heldAt,
-      });
-      claim.version += 1;
-      await store.updateClaim(claim);
-      return claim;
+      return { paid, skipped };
     },
 
-    async resumeClaim(actorId, claimId) {
-      const { claim } = await requireClaimForActor(
-        actorId,
-        claimId,
-        "You cannot resume your own expense claim.",
-      );
-      if (claim.status !== "in-approval" && claim.status !== "in-finance") {
-        throw new ExpenseError("conflict", "Only an in-flight claim can be resumed.");
-      }
-      if (!claim.heldAt) {
-        throw new ExpenseError("conflict", "This claim is not held.");
-      }
-      // Resume authority is positional (ADR-0016): the claim's current
-      // stage actor unpauses it. Delegation (ADR-0017) re-points the actor,
-      // so the new actor resumes instead - no hold capability is needed.
-      if (claim.currentActorId !== actorId) {
-        throw new ExpenseError("unauthorized", "This expense claim is not assigned to you.");
-      }
-      const resumedAt = now().toISOString();
-      claim.heldAt = undefined;
-      claim.heldBy = undefined;
-      claim.heldReason = undefined;
-      // The hold pauses the absence clock: the resumed stage gets a fresh
-      // timeout window, so a long hold never sweeps the claim the moment it
-      // is unpaused.
-      claim.currentStageSince = resumedAt;
-      claim.history.push({ id: idFactory("history"), kind: "resumed", actorId, createdAt: resumedAt });
-      claim.version += 1;
-      await store.updateClaim(claim);
-      return claim;
-    },
-
-    async listHeldClaims(actorId) {
+    async importPaymentRegister(actorId, data) {
       const employee = await requireEmployee(actorId);
-      // Held-claims oversight is a Superadmin-only built-in (ADR-0016):
-      // holds can span every department, so the view is not a console
-      // toggle.
-      if (!employee.role || employee.role.code !== SUPERADMIN_ROLE_CODE) {
-        throw new ExpenseError("unauthorized", "Only Superadmin can view held claims.");
+      // Drag-back import rides the finance verify/pay privilege (ADR-0023),
+      // like the register export it feeds.
+      if (!canAccessFinance(employee)) {
+        throw new ExpenseError("unauthorized", "Only Finance can import a payment register.");
       }
-      const [claims, employees] = await Promise.all([
-        store.listClaimsForOrganization(employee.organizationId),
-        store.listEmployees(employee.organizationId),
-      ]);
-      const names = new Map(employees.map((candidate) => [candidate.id, candidate.name]));
-      const roleNames = new Map(
-        employees
-          .filter((candidate) => candidate.role)
-          .map((candidate) => [candidate.role!.id, candidate.role!.displayName]),
+      // Parsing is server-side authority: the bytes are validated against
+      // the register format contract before any id is matched.
+      const parsed = parsePaymentRegisterData(data);
+      if (!parsed.ok) {
+        throw new ExpenseError("validation", parsed.message);
+      }
+      const claims = await catchUpAll(
+        await store.listClaimsForOrganization(employee.organizationId),
+        employee.organizationId,
       );
-      return claims
-        .filter((claim) => claim.heldAt)
-        .map((claim) => ({
-          claimId: claim.id,
-          ref: claim.ref,
-          title: claim.title,
-          heldBy: claim.heldBy ? (names.get(claim.heldBy) ?? claim.heldBy) : "Unknown",
-          heldReason: claim.heldReason ?? "",
-          heldAt: claim.heldAt!,
-          // A team-lead stage carries no role id; the stage labels itself.
-          stage: claim.currentStage
-            ? (roleNames.get(claim.currentStage) ?? claim.currentStage)
-            : "Team lead",
-        }));
+      const claimById = new Map(claims.map((claim) => [claim.id, claim]));
+      const matched: ExpenseClaim[] = [];
+      const conflicts: PaymentRegisterImportConflict[] = [];
+      const unknownIds: string[] = [];
+      for (const expenseId of parsed.expenseIds) {
+        const claim = claimById.get(expenseId);
+        if (!claim) {
+          unknownIds.push(expenseId);
+          continue;
+        }
+        if (isVerifiedClaim(claim)) {
+          matched.push(claim);
+          continue;
+        }
+        conflicts.push({ claim, reason: claim.status === "paid" ? "already-paid" : "not-verified" });
+      }
+      return { matched, conflicts, unknownIds };
     },
 
     async listFinancePaymentQueue(actorId) {
@@ -994,7 +1301,18 @@ export function createExpenseCommands({
         throw new ExpenseError("unauthorized", "Only Finance can view the payment queue.");
       }
       const claims = await catchUpAll(await store.listClaimsForOrganization(employee.organizationId), employee.organizationId);
-      return claims.filter((claim) => claim.status !== "draft");
+      // Verified is the only waiting state (ADR-0023): the queue renders
+      // only verified claims. Rejected, paid, draft, and not-yet-verified
+      // rows are visible in the org-wide finance list instead.
+      return claims.filter(isVerifiedClaim);
+    },
+
+    async listFinanceApprovedBankDetails(actorId) {
+      const employee = await requireEmployee(actorId);
+      if (!canAccessFinance(employee)) {
+        throw new ExpenseError("unauthorized", "Only Finance can view the payment queue.");
+      }
+      return store.listApprovedBankDetails(employee.organizationId);
     },
 
     async updateComments(actorId, claimId, comments) {
@@ -1042,6 +1360,20 @@ export function createExpenseCommands({
         "delegated",
         "comment",
       ]);
+    },
+
+    async listOrganizationClaims(actorId) {
+      const actor = await requireEmployee(actorId);
+      if (!canViewOrganizationActivity(actor)) {
+        throw new ExpenseError(
+          "unauthorized",
+          "Only roles with the view-org-wide-activity privilege can view the organization expense list.",
+        );
+      }
+      return catchUpAll(
+        await store.listClaimsForOrganization(actor.organizationId),
+        actor.organizationId,
+      );
     },
 
     // The sweep enforces the configured absence timeout even when nobody

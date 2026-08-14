@@ -14,7 +14,7 @@ export interface StatCardAction {
   label: string;
   /** A navigation CTA, e.g. the finance queue card linking to the queue page. */
   href?: string;
-  /** An in-page CTA, e.g. opening the drawer on a draft or a held claim. */
+  /** An in-page CTA, e.g. opening the drawer on a draft or an aged claim. */
   onClick?: () => void;
 }
 
@@ -80,7 +80,7 @@ export function employeeStatCards(
 export function approverStatCards(
   cards: ApproverAggregates,
   absenceTimeoutDays: number,
-  actions: { onResumeHold: () => void; onReviewAged: () => void },
+  actions: { onReviewAged: () => void },
 ): StatCard[] {
   return [
     {
@@ -90,15 +90,7 @@ export function approverStatCards(
         cards.awaitingMyActionCount > 0
           ? `${cards.awaitingMyActionCount} ${noun(cards.awaitingMyActionCount, "claim", "claims")} need a decision`
           : "Nothing needs your decision",
-    },
-    {
-      label: "My holds",
-      value: String(cards.myHoldsCount),
-      hint:
-        cards.myHoldsCount > 0
-          ? "Paused by you - resume from the drawer"
-          : "You have no held claims",
-      action: cards.myHoldsCount > 0 ? { label: "Resume a hold", onClick: actions.onResumeHold } : undefined,
+      action: cards.awaitingMyActionCount > 0 ? { label: "Review all", href: "/expenses/approvals" } : undefined,
     },
     {
       label: "Aging",

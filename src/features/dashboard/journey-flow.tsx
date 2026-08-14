@@ -249,19 +249,10 @@ export function getJourneyFlowItems(
   }
 
   // The pulse lands on the first *pending* stage, never on a decided stage
-  // like an amount-guard auto-skip that precedes it in flow order. A held
-  // claim is paused (ADR-0016): nothing pulses as next - the hold outranks
-  // the pending state - and the pending stage reads as on hold.
+  // like an amount-guard auto-skip that precedes it in flow order.
   const firstPending = pendingSteps.findIndex((step) => step.pending);
   if (firstPending >= 0) {
     pendingSteps[firstPending].isNext = true;
-  }
-  if (expense.held) {
-    const heldStage = pendingSteps.find((step) => step.pending);
-    if (heldStage) {
-      heldStage.detail = "On hold - awaiting resume";
-      heldStage.isNext = false;
-    }
   }
 
   return [...historySteps, ...pendingSteps];

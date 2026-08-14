@@ -19,8 +19,6 @@ const EMPLOYEE: EmployeeAggregates = {
 const APPROVER: ApproverAggregates = {
   awaitingMyActionCount: 3,
   awaitingMyActionTotalMinor: 150000,
-  myHoldsCount: 2,
-  holdClaimIds: ["claim-hold-1", "claim-hold-2"],
   agedCount: 1,
   agedClaimIds: ["claim-aged-1"],
 };
@@ -86,32 +84,30 @@ describe("employeeStatCards", () => {
 });
 
 describe("approverStatCards", () => {
-  it("shows awaiting my action (total + count), my holds, and aging", () => {
-    const cards = approverStatCards(APPROVER, 3, { onResumeHold: vi.fn(), onReviewAged: vi.fn() });
-    expect(cards.map((card) => card.label)).toEqual(["Awaiting my action", "My holds", "Aging"]);
-    expect(cards[0]).toMatchObject({ value: "₹1,500.00", hint: "3 claims need a decision" });
-    expect(cards[1]).toMatchObject({ value: "2", hint: "Paused by you - resume from the drawer" });
-    expect(cards[2]).toMatchObject({ value: "1", hint: "Stuck beyond the 3-day timeout" });
+  it("shows awaiting my action (total + count) and aging", () => {
+    const cards = approverStatCards(APPROVER, 3, { onReviewAged: vi.fn() });
+    expect(cards.map((card) => card.label)).toEqual(["Awaiting my action", "Aging"]);
+    expect(cards[0]).toMatchObject({
+      value: "₹1,500.00",
+      hint: "3 claims need a decision",
+      action: { label: "Review all", href: "/expenses/approvals" },
+    });
+    expect(cards[1]).toMatchObject({ value: "1", hint: "Stuck beyond the 3-day timeout" });
   });
 
   it("names the configured timeout in the aging hints", () => {
     const cards = approverStatCards({ ...APPROVER, agedCount: 0 }, 7, {
-      onResumeHold: vi.fn(),
       onReviewAged: vi.fn(),
     });
-    expect(cards[2].hint).toBe("Nothing past the 7-day timeout");
-    expect(cards[2].action).toBeUndefined();
+    expect(cards[1].hint).toBe("Nothing past the 7-day timeout");
+    expect(cards[1].action).toBeUndefined();
   });
 
-  it("wires hold resume and aged-review CTAs", () => {
-    const onResumeHold = vi.fn();
+  it("wires the aged-review CTA", () => {
     const onReviewAged = vi.fn();
-    const cards = approverStatCards(APPROVER, 3, { onResumeHold, onReviewAged });
-    expect(cards[1].action).toEqual({ label: "Resume a hold", onClick: expect.any(Function) });
-    expect(cards[2].action).toEqual({ label: "Review oldest", onClick: expect.any(Function) });
+    const cards = approverStatCards(APPROVER, 3, { onReviewAged });
+    expect(cards[1].action).toEqual({ label: "Review oldest", onClick: expect.any(Function) });
     cards[1].action?.onClick?.();
-    cards[2].action?.onClick?.();
-    expect(onResumeHold).toHaveBeenCalledTimes(1);
     expect(onReviewAged).toHaveBeenCalledTimes(1);
   });
 });

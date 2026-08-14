@@ -148,12 +148,10 @@ describe("rowsToWorkbook", () => {
     ]);
   });
 
-  it("exports the read-only rejection note in the comments cell of rejected claims", () => {
-    const workbook = rowsToWorkbook([buildRejectedClaim()], HELPERS);
+  it("exports the claim's comments field in the comments cell", () => {
+    const workbook = rowsToWorkbook([buildRejectedClaim({ comments: "Finance note" })], HELPERS);
     const row = dataRows(workbook)[1];
-    expect(row[colIndex("comments")]).toBe(
-      "Missing itemized receipt - Rejected by Grace Hopper on 2026-08-03",
-    );
+    expect(row[colIndex("comments")]).toBe("Finance note");
   });
 
   it("falls back to the claim's comments for non-rejected claims with a comment", () => {

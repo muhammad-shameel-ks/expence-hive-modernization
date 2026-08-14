@@ -143,30 +143,13 @@ describe("PAYMENT_QUEUE_COLUMNS renderers", () => {
     expect(renderToStaticMarkup(column.render(paid, helpers))).toContain("Paid");
   });
 
-  it("renders the Held badge for a held claim (ADR-0016)", () => {
-    const column = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
-    const held = buildClaim({
-      status: "in-finance",
-      heldAt: "2026-08-05T10:00:00.000Z",
-      heldBy: "employee-2",
-      heldReason: "Awaiting the missing invoice",
-    });
-    const heldHelpers = buildHelpers({ paymentStatusFor: (c) => (c.heldAt ? "Held" : "Not Paid") });
-    const html = renderToStaticMarkup(column.render(held, heldHelpers));
-    expect(html).toContain("Held");
-    // Frozen: no terminal action button rides along.
-    expect(html).not.toContain("Verify for payment");
-    expect(html).not.toContain("Mark paid");
-  });
-
-  it("renders the terminal action button from the helpers' action lookup", () => {
+  it("renders the Mark paid button from the helpers' action lookup", () => {
     const column = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
     const actionable = buildHelpers({ terminalActionFor: () => "pay" });
     const html = renderToStaticMarkup(column.render(claim, actionable));
     expect(html).toContain("Mark paid");
-    expect(html).not.toContain("Verify for payment");
-    const verify = buildHelpers({ terminalActionFor: () => "verify" });
-    expect(renderToStaticMarkup(column.render(claim, verify))).toContain("Verify for payment");
+    const noAction = buildHelpers({ terminalActionFor: () => null });
+    expect(renderToStaticMarkup(column.render(claim, noAction))).not.toContain("Mark paid");
   });
 
   it("renders the comment input with the helpers' saved value", () => {
@@ -250,20 +233,6 @@ describe("PAYMENT_QUEUE_COLUMNS text values", () => {
     expect(paymentStatus.textValue(buildClaim({ status: "rejected" }), helpers)).toBe("Rejected");
   });
 
-  it("maps a held claim to the Held payment status string", () => {
-    const paymentStatus = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "paymentStatus")!;
-    const held = buildClaim({
-      status: "in-finance",
-      heldAt: "2026-08-05T10:00:00.000Z",
-      heldBy: "employee-2",
-      heldReason: "Awaiting the missing invoice",
-    });
-    const heldHelpers = buildTextHelpers({
-      paymentStatusFor: (c) => (c.heldAt ? "Held" : c.status === "paid" ? "Paid" : "Not Paid"),
-    });
-    expect(paymentStatus.textValue(held, heldHelpers)).toBe("Held");
-  });
-
   it("exports the approved-on date from the helpers' approval lookup", () => {
     const approvedOn = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "approvedOn")!;
     const withApproval = buildTextHelpers({ approvedOnFor: () => "2026-08-02T10:00:00.000Z" });
@@ -271,7 +240,7 @@ describe("PAYMENT_QUEUE_COLUMNS text values", () => {
     expect(approvedOn.textValue(claim, helpers)).toBe("-");
   });
 
-  it("exports the read-only rejection note for rejected claims, not the comments field", () => {
+  it("exports the claim's comments field, whatever the claim's status", () => {
     const rejected = buildClaim({
       status: "rejected",
       comments: "Would-be comment",
@@ -286,8 +255,6 @@ describe("PAYMENT_QUEUE_COLUMNS text values", () => {
       ],
     });
     const comments = PAYMENT_QUEUE_COLUMNS.find((c) => c.id === "comments")!;
-    expect(comments.textValue(rejected, helpers)).toBe(
-      "Missing itemized receipt - Rejected by Grace Hopper on 2026-08-03",
-    );
+    expect(comments.textValue(rejected, helpers)).toBe("Would-be comment");
   });
 });

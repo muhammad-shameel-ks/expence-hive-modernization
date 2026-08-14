@@ -491,7 +491,7 @@ describe("role capabilities", () => {
     canSubmit: true,
     canApprove: true,
     canAccessFinance: false,
-    canHold: false,
+    approveBankDetails: false,
     canViewOrganizationActivity: false,
     canAccessAdminConsole: false,
   };
@@ -563,7 +563,7 @@ describe("role capabilities", () => {
       canSubmit: true,
       canApprove: false,
       canAccessFinance: false,
-      canHold: false,
+      approveBankDetails: false,
       canViewOrganizationActivity: false,
       canAccessAdminConsole: false,
     });
@@ -663,7 +663,7 @@ describe("role capabilities", () => {
         canSubmit: true,
         canApprove: true,
         canAccessFinance: true,
-        canHold: true,
+        approveBankDetails: true,
         canViewOrganizationActivity: true,
         canAccessAdminConsole: true,
       },
@@ -2310,7 +2310,7 @@ describe("absence timeout setting", () => {
       canSubmit: true,
       canApprove: false,
       canAccessFinance: false,
-      canHold: false,
+      approveBankDetails: false,
       canViewOrganizationActivity: false,
       canAccessAdminConsole: true,
     });

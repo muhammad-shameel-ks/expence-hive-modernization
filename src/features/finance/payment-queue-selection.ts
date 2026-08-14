@@ -30,3 +30,10 @@ export function stepSelection(rows: ExpenseClaim[], currentId: string | null, di
   const next = Math.min(rows.length - 1, Math.max(0, index + direction));
   return rows[next].id;
 }
+
+/**
+ * The batch multi-select (ADR-0023): finance cherry-picks verified claims
+ * for the payment register export and bulk pay. Shared with the approvals
+ * inbox's selection helpers - see src/lib/claim-selection.ts.
+ */
+export { isSelectionAllSelected, toggleAllSelection, toggleClaimSelection } from "@/lib/claim-selection";

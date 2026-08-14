@@ -1,7 +1,6 @@
 import { redirect } from "next/navigation";
 import { expenseCommands } from "@/server/expenses/dev";
 import { isExpenseError } from "@/server/expenses/commands";
-import { resolveRoleCapabilities } from "@/server/shared/authorization";
 import { requireSessionEmployee } from "@/server/shared/session";
 import { FullExpenseList } from "@/features/dashboard/full-expense-list";
 import { claimToExpense } from "@/features/dashboard/expense-read-model";
@@ -48,7 +47,6 @@ export default async function AllExpensesPage() {
             currentUserId={workspace.employee.id}
             currentUserRoleId={workspace.employee.role?.id}
             currentUserRoleCode={workspace.employee.role?.code}
-            currentUserCanHold={resolveRoleCapabilities(workspace.employee.role).canHold}
           />
         </div>
       </div>

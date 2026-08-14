@@ -10,9 +10,9 @@ export type AdminRoleRef = {
   id: string;
   code: string;
   displayName: string;
-  // The six privilege toggles (ADR-0015), resolved from the roles table.
-  // Present on records read from the store; absent on legacy data, which
-  // resolves to the submit-only default.
+  // The six privilege toggles (ADR-0015, amended by ADR-0024/0026),
+  // resolved from the roles table. Present on records read from the store;
+  // absent on legacy data, which resolves to the submit-only default.
   capabilities?: RoleCapabilities | null;
 };
 

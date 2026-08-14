@@ -4,6 +4,7 @@ import { adminDevStore } from "../admin/dev";
 import { databaseUrl } from "@/server/db/connection.mjs";
 import { runMigrations } from "@/server/db/migrate";
 import { createExpenseCommands, type ExpenseCommands } from "./commands";
+import { createProfileCommands, type ProfileCommands } from "./profile";
 import { PostgresExpenseStore } from "./postgres";
 
 // Only the Pool (a real connection pool) is worth caching across Next.js dev
@@ -47,4 +48,11 @@ export function expenseCommands(): ExpenseCommands {
     // the lazy catch-up and the sweep enforce the configured value.
     absenceTimeout: adminDevStore(),
   });
+}
+
+export function profileCommands(): ProfileCommands {
+  if (process.env.NODE_ENV === "production") {
+    throw new Error("The development profile adapter must not run in production.");
+  }
+  return createProfileCommands({ store: expenseDevStore() });
 }

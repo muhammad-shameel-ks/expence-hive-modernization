@@ -5,6 +5,8 @@ import { InMemoryBlobStore } from "../blob/fakes";
 import { createExpenseCommands } from "./commands";
 import {
   handleApproveExpenseRequest,
+  handleApprovalsQueueRequest,
+  handleBulkApproveExpensesRequest,
   handleCreateExpenseRequest,
   handleDelegateExpenseRequest,
   handleDeleteExpenseRequest,
@@ -12,16 +14,37 @@ import {
   handleGetExpenseRequest,
   handleGetReceiptRequest,
   handleGetExpenseSummaryRequest,
-  handleHoldExpenseRequest,
   handleRejectExpenseRequest,
-  handleResumeExpenseRequest,
   handleSubmitExpenseRequest,
   handleUpdateCommentsRequest,
   handleUpdateExpenseRequest,
+  handleVerifyExpenseRequest,
 } from "./http";
 import { InMemoryExpenseStore } from "./in-memory";
-import type { ExpenseEmployee } from "./ports";
+import type { BankDetails, ExpenseClaim, ExpenseEmployee, ExpenseFlow } from "./ports";
 import { MAX_RECEIPT_SIZE_BYTES } from "./receipt-validation";
+
+// The HTTP tests exercise the boundary, not the submission gate: every
+// fixture employee carries an approved account so submits behave like a
+// fully set-up organization.
+const APPROVED_BANK_DETAILS: BankDetails = {
+  holderName: "Muhammad Shameel",
+  accountNumber: "90123456789012",
+  ifsc: "ICIC0004567",
+  bankName: "ICICI Bank",
+  branch: "Koramangala",
+};
+
+class TestExpenseStore extends InMemoryExpenseStore {
+  constructor(input: { employees: ExpenseEmployee[]; flows?: ExpenseFlow[] }) {
+    super({
+      ...input,
+      approvedBankDetails: Object.fromEntries(
+        input.employees.map((employee) => [employee.id, APPROVED_BANK_DETAILS]),
+      ),
+    });
+  }
+}
 
 // The default privilege catalog (ADR-0015) the migration and seeds backfill:
 // submit-only except Manager +approve, Finance Head +finance +org activity,
@@ -30,7 +53,7 @@ const SUBMIT_ONLY = {
   canSubmit: true,
   canApprove: false,
   canAccessFinance: false,
-  canHold: false,
+  approveBankDetails: false,
   canViewOrganizationActivity: false,
   canAccessAdminConsole: false,
 };
@@ -78,17 +101,20 @@ function createRequest(fields: Record<string, string>, file?: { name: string; ty
   return new Request("http://localhost/api/expenses", { method: "POST", body: multipartBody(fields, file) });
 }
 
+// Every test employee holds an approved bank account (ADR-0024): submission
+// is gated on one, so the fixtures seed it like the seeded database would.
 function build() {
-  const store = new InMemoryExpenseStore({
-    employees: [
-      emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
-      emp("emp-katherine", "Katherine Johnson", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
-      emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
-      emp("emp-sanil", "Sanil Davis", ROLE_MANAGER, { departmentId: "dept-eng" }),
-      emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
-      emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
-      emp("emp-super", "Super Boss", { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" }),
-    ],
+  const employees = [
+    emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
+    emp("emp-katherine", "Katherine Johnson", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
+    emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
+    emp("emp-sanil", "Sanil Davis", ROLE_MANAGER, { departmentId: "dept-eng" }),
+    emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
+    emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
+    emp("emp-super", "Super Boss", { id: "role-superadmin", code: "superadmin", displayName: "Superadmin" }),
+  ];
+  const store = new TestExpenseStore({
+    employees,
     flows: [
       {
         id: "flow-standard",
@@ -432,7 +458,7 @@ describe("expense HTTP boundary", () => {
         headers: { "content-type": "multipart/form-data; boundary=----WebKitFormBoundary" },
         body: stream,
         duplex: "half",
-      }),
+      } as RequestInit),
       commands,
       "emp-shameel",
     );
@@ -470,7 +496,7 @@ describe("expense HTTP boundary", () => {
   });
 
   it("denies the receipt to an employee of another organization", async () => {
-    const store = new InMemoryExpenseStore({
+    const store = new TestExpenseStore({
       employees: [
         emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
         {
@@ -553,7 +579,7 @@ describe("expense HTTP boundary", () => {
     expect(deniedResponse.status).toBe(403);
   });
 
-  it("serves a rejected claim in the finance payment queue to Finance and still denies an employee", async () => {
+  it("keeps a rejected claim out of the finance payment queue and still denies an employee", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
       createRequest({
@@ -602,7 +628,63 @@ describe("expense HTTP boundary", () => {
       "emp-finance",
     );
     expect(okResponse.status).toBe(200);
-    await expect(okResponse.json()).resolves.toMatchObject({ claims: [{ id: claim.id, status: "rejected" }] });
+    await expect(okResponse.json()).resolves.toMatchObject({ claims: [] });
+
+    const deniedResponse = await handleFinancePaymentQueueRequest(
+      new Request("http://localhost/api/expenses/finance-queue"),
+      commands,
+      "emp-shameel",
+    );
+    expect(deniedResponse.status).toBe(403);
+  });
+
+  it("serves a verified claim in the finance payment queue to Finance and still denies an employee", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest({
+        title: "Client dinner",
+        category: "Meals",
+        subCategory: "Client Meeting",
+        remark: "Dinner with Acme Corp",
+        amount: "2400.00",
+        expenseDate: "2026-08-04",
+      }, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
+      commands,
+      "emp-shameel",
+    );
+    const { claim } = await createResponse.json();
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
+      claim.id,
+    );
+    await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+    await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
+      commands,
+      "emp-pramod",
+      claim.id,
+    );
+    await handleVerifyExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/verify`, { method: "POST" }),
+      commands,
+      "emp-finance",
+      claim.id,
+    );
+
+    const okResponse = await handleFinancePaymentQueueRequest(
+      new Request("http://localhost/api/expenses/finance-queue"),
+      commands,
+      "emp-finance",
+    );
+    expect(okResponse.status).toBe(200);
+    await expect(okResponse.json()).resolves.toMatchObject({ claims: [{ id: claim.id, status: "in-finance" }] });
 
     const deniedResponse = await handleFinancePaymentQueueRequest(
       new Request("http://localhost/api/expenses/finance-queue"),
@@ -936,8 +1018,87 @@ describe("expense HTTP boundary", () => {
     });
   });
 
+  it("approves with an optional comment carried in the request body", async () => {
+    const { commands } = build();
+    const claim = await createAndSubmit(commands);
+
+    const response = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ comment: "Within software budget" }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    await expect(response.json()).resolves.toMatchObject({
+      claim: { status: "in-approval", currentStage: ROLE_FINANCE_HEAD.id },
+    });
+    const approved = await commands.getClaim("emp-shameel", claim.id);
+    expect(approved.history.at(-1)).toMatchObject({ kind: "approved", detail: "Within software budget" });
+  });
+
+  it("approves without a comment when the body carries none", async () => {
+    const { commands } = build();
+    const claim = await createAndSubmit(commands);
+
+    const response = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({}),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(200);
+    const approved = await commands.getClaim("emp-shameel", claim.id);
+    expect(approved.history.at(-1)).toMatchObject({ kind: "approved", actorId: "emp-ada" });
+    expect(approved.history.at(-1)?.detail).toBeUndefined();
+  });
+
+  it("rejects a non-string comment body with 422", async () => {
+    const { commands } = build();
+    const claim = await createAndSubmit(commands);
+
+    const response = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ comment: 42 }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(422);
+    const unapproved = await commands.getClaim("emp-shameel", claim.id);
+    expect(unapproved.history.map((event) => event.kind)).toEqual(["draft", "submitted"]);
+  });
+
+  it("rejects an oversized approval comment with the command's validation error", async () => {
+    const { commands } = build();
+    const claim = await createAndSubmit(commands);
+
+    const response = await handleApproveExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/approve`, {
+        method: "POST",
+        body: JSON.stringify({ comment: `A very long comment. ${"x".repeat(200)}` }),
+      }),
+      commands,
+      "emp-ada",
+      claim.id,
+    );
+
+    expect(response.status).toBe(422);
+    await expect(response.json()).resolves.toMatchObject({ message: "Comment is too long." });
+  });
+
   it("rejects a manager from another department who tries to approve through HTTP", async () => {
-    const store = new InMemoryExpenseStore({
+    const store = new TestExpenseStore({
       employees: [
         emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
         emp("emp-ada", "Ada Lovelace", ROLE_MANAGER, { departmentId: "dept-eng" }),
@@ -981,7 +1142,7 @@ describe("expense HTTP boundary", () => {
   });
 
   it("routes an intern claim through the assigned team lead over HTTP", async () => {
-    const store = new InMemoryExpenseStore({
+    const store = new TestExpenseStore({
       employees: [
         emp("emp-intern", "Ananya Iyer", ROLE_INTERN, { departmentId: "dept-eng", managerId: "emp-abilash" }),
         emp("emp-abilash", "Abilash", { id: "role-team-lead", code: "team-lead", displayName: "Team Lead", capabilities: { ...SUBMIT_ONLY } }, { departmentId: "dept-eng" }),
@@ -1185,7 +1346,7 @@ describe("expense summary endpoint", () => {
       commands,
       "emp-shameel",
     );
-    const payload = (await createResponse.json()) as { claim: { id: string } };
+    const payload = (await createResponse.json()) as { claim: ExpenseClaim };
     await handleSubmitExpenseRequest(
       new Request(`http://localhost/api/expenses/${payload.claim.id}/submit`, { method: "POST" }),
       commands,
@@ -1215,7 +1376,7 @@ describe("expense summary endpoint", () => {
   });
 
   it("denies the summary to an employee of another organization", async () => {
-    const store = new InMemoryExpenseStore({
+    const store = new TestExpenseStore({
       employees: [
         emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
         {
@@ -1247,7 +1408,7 @@ describe("expense summary endpoint", () => {
       commands,
       "emp-shameel",
     );
-    const { claim } = (await createResponse.json()) as { claim: { id: string } };
+    const { claim } = (await createResponse.json()) as { claim: ExpenseClaim };
 
     const response = await handleGetExpenseSummaryRequest(
       summaryRequest(claim.id),
@@ -1276,7 +1437,7 @@ describe("expense summary endpoint", () => {
   it("serves a valid PDF summary for a draft claim without a receipt", async () => {
     const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(createRequest(BASE_FIELDS), commands, "emp-shameel");
-    const { claim } = (await createResponse.json()) as { claim: { id: string } };
+    const { claim } = (await createResponse.json()) as { claim: ExpenseClaim };
 
     const response = await handleGetExpenseSummaryRequest(
       summaryRequest(claim.id),
@@ -1301,7 +1462,7 @@ describe("expense summary endpoint", () => {
       commands,
       "emp-shameel",
     );
-    const { claim } = (await createResponse.json()) as { claim: { id: string } };
+    const { claim } = (await createResponse.json()) as { claim: ExpenseClaim };
 
     const response = await handleGetExpenseSummaryRequest(
       summaryRequest(claim.id),
@@ -1309,7 +1470,6 @@ describe("expense summary endpoint", () => {
       "emp-shameel",
       claim.id,
     );
-
     expect(response.status).toBe(200);
     expect(response.headers.get("content-disposition")).toBe(
       `attachment; filename="${claim.ref}-summary.pdf"`,
@@ -1320,205 +1480,105 @@ describe("expense summary endpoint", () => {
   });
 });
 
-describe("hold and resume HTTP boundary", () => {
-  // The build() fixtures give the Manager role no can_hold capability, so
-  // these tests build their own store with a manager who holds the
-  // privilege (ADR-0016).
-  const HOLD_MANAGER = {
-    ...ROLE_MANAGER,
-    capabilities: { ...SUBMIT_ONLY, canApprove: true, canHold: true },
-  };
+describe("bulk approvals HTTP handlers (ADR-0029)", () => {
+  it("rejects non-JSON or malformed bodies for bulk approve", async () => {
+    const { commands } = build();
 
-  function buildWithHoldManager() {
-    const store = new InMemoryExpenseStore({
-      employees: [
-        emp("emp-shameel", "Muhammad Shameel", ROLE_EXECUTIVE, { departmentId: "dept-eng", managerId: "emp-ada" }),
-        emp("emp-katherine", "Katherine Johnson", ROLE_EXECUTIVE, { departmentId: "dept-eng" }),
-        emp("emp-ada", "Ada Lovelace", HOLD_MANAGER, { departmentId: "dept-eng" }),
-        emp("emp-pramod", "Pramod", ROLE_FINANCE_HEAD, { departmentId: "dept-finance" }),
-        emp("emp-finance", "Rishikesh", ROLE_FINANCE_EXECUTIVE, { departmentId: "dept-finance" }),
-      ],
-      flows: [
-        {
-          id: "flow-standard",
-          roleId: ROLE_EXECUTIVE.id,
-          steps: [
-            { kind: "role", roleId: ROLE_MANAGER.id },
-            { kind: "role", roleId: ROLE_FINANCE_HEAD.id },
-            { kind: "role", roleId: ROLE_FINANCE_EXECUTIVE.id },
-          ],
-        },
-      ],
-    });
-    const blobStore = new InMemoryBlobStore();
-    const commands = createExpenseCommands({
-      store,
-      blobStore,
-      idFactory: (() => {
-        const counters = new Map<string, number>();
-        return (prefix: string) => {
-          const next = (counters.get(prefix) ?? 0) + 1;
-          counters.set(prefix, next);
-          return `${prefix}-${next}`;
-        };
-      })(),
-      now: () => new Date("2026-08-04T10:00:00.000Z"),
-    });
-    return { commands, blobStore };
-  }
+    const notJson = await handleBulkApproveExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-approve", {
+        method: "POST",
+        body: "invalid-json",
+        headers: { "content-type": "application/json" },
+      }),
+      commands,
+      "emp-ada",
+    );
+    expect(notJson.status).toBe(422);
 
-  async function createAndSubmit(commands: ReturnType<typeof buildWithHoldManager>["commands"]) {
+    const emptyArray = await handleBulkApproveExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-approve", {
+        method: "POST",
+        body: JSON.stringify({ claimIds: [] }),
+        headers: { "content-type": "application/json" },
+      }),
+      commands,
+      "emp-ada",
+    );
+    expect(emptyArray.status).toBe(422);
+
+    const nonStringComment = await handleBulkApproveExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-approve", {
+        method: "POST",
+        body: JSON.stringify({ claimIds: ["claim-1"], comment: 1234 }),
+        headers: { "content-type": "application/json" },
+      }),
+      commands,
+      "emp-ada",
+    );
+    expect(nonStringComment.status).toBe(422);
+  });
+
+  it("successfully bulk approves claims with an optional comment", async () => {
+    const { commands } = build();
     const createResponse = await handleCreateExpenseRequest(
-      createRequest(
-        {
-          title: "Client dinner",
-          category: "Meals",
-          subCategory: "Client Meeting",
-          remark: "Dinner with Acme Corp",
-          amount: "2400.00",
-          expenseDate: "2026-08-04",
-        },
-        { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT },
-      ),
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
       "emp-shameel",
     );
-    const { claim } = (await createResponse.json()) as { claim: { id: string; ref: string } };
-    const submitResponse = await handleSubmitExpenseRequest(
+    const { claim } = (await createResponse.json()) as { claim: ExpenseClaim };
+    await handleSubmitExpenseRequest(
       new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
       commands,
       "emp-shameel",
       claim.id,
     );
-    return (await submitResponse.json()) as { claim: { id: string } };
-  }
 
-  it("holds a claim through the route and returns the stamped claim with employees", async () => {
-    const { commands } = buildWithHoldManager();
-    const { claim } = await createAndSubmit(commands);
-
-    const response = await handleHoldExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/hold`, {
+    const response = await handleBulkApproveExpensesRequest(
+      new Request("http://localhost/api/expenses/bulk-approve", {
         method: "POST",
-        body: JSON.stringify({ reason: "Awaiting the missing invoice" }),
+        body: JSON.stringify({ claimIds: [claim.id], comment: "Approved by manager" }),
+        headers: { "content-type": "application/json" },
       }),
       commands,
       "emp-ada",
-      claim.id,
     );
 
     expect(response.status).toBe(200);
-    const body = await response.json();
-    expect(body.claim).toMatchObject({
-      id: claim.id,
-      heldBy: "emp-ada",
-      heldReason: "Awaiting the missing invoice",
-    });
-    expect(body.employees.length).toBeGreaterThan(0);
+    const body = (await response.json()) as { report: { approved: ExpenseClaim[]; skipped: unknown[] } };
+    expect(body.report.approved).toHaveLength(1);
+    expect(body.report.approved[0].id).toBe(claim.id);
+    expect(body.report.skipped).toEqual([]);
   });
 
-  it("rejects a hold without a reason at the boundary", async () => {
-    const { commands } = buildWithHoldManager();
-    const { claim } = await createAndSubmit(commands);
-
-    const response = await handleHoldExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/hold`, {
-        method: "POST",
-        body: JSON.stringify({}),
-      }),
+  it("serves the approvals queue for an authorized approver", async () => {
+    const { commands } = build();
+    const createResponse = await handleCreateExpenseRequest(
+      createRequest(BASE_FIELDS, { name: "receipt.pdf", type: "application/pdf", data: PDF_RECEIPT }),
       commands,
-      "emp-ada",
+      "emp-shameel",
+    );
+    const { claim } = (await createResponse.json()) as { claim: ExpenseClaim };
+    await handleSubmitExpenseRequest(
+      new Request(`http://localhost/api/expenses/${claim.id}/submit`, { method: "POST" }),
+      commands,
+      "emp-shameel",
       claim.id,
     );
 
-    expect(response.status).toBe(422);
-  });
-
-  it("returns the hold conflict message when a claim is already held", async () => {
-    const { commands } = buildWithHoldManager();
-    const { claim } = await createAndSubmit(commands);
-    await commands.holdClaim("emp-ada", claim.id, "First hold");
-
-    const response = await handleHoldExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/hold`, {
-        method: "POST",
-        body: JSON.stringify({ reason: "Second hold" }),
-      }),
+    const okResponse = await handleApprovalsQueueRequest(
+      new Request("http://localhost/api/expenses/approvals-queue"),
       commands,
       "emp-ada",
-      claim.id,
     );
+    expect(okResponse.status).toBe(200);
+    const body = (await okResponse.json()) as { claims: ExpenseClaim[] };
+    expect(body.claims.map((c) => c.id)).toContain(claim.id);
 
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({
-      message: "This claim is already held.",
-    });
-  });
-
-  it("resumes a held claim through the route", async () => {
-    const { commands } = buildWithHoldManager();
-    const { claim } = await createAndSubmit(commands);
-    await commands.holdClaim("emp-ada", claim.id, "Awaiting the missing invoice");
-
-    const response = await handleResumeExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/resume`, { method: "POST" }),
+    const deniedResponse = await handleApprovalsQueueRequest(
+      new Request("http://localhost/api/expenses/approvals-queue"),
       commands,
-      "emp-ada",
-      claim.id,
+      "emp-shameel",
     );
-
-    expect(response.status).toBe(200);
-    const body = await response.json();
-    // Resume clears the hold shape; undefined fields are dropped by JSON.
-    expect(body.claim).toMatchObject({ id: claim.id });
-    expect(body.claim.heldAt).toBeUndefined();
-    expect(body.claim.heldBy).toBeUndefined();
-    expect(body.claim.heldReason).toBeUndefined();
-    expect(body.employees.length).toBeGreaterThan(0);
-  });
-
-  it("rejects a resume of a claim that is not held with a conflict", async () => {
-    const { commands } = buildWithHoldManager();
-    const { claim } = await createAndSubmit(commands);
-
-    const response = await handleResumeExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/resume`, { method: "POST" }),
-      commands,
-      "emp-ada",
-      claim.id,
-    );
-
-    expect(response.status).toBe(409);
-    await expect(response.json()).resolves.toMatchObject({
-      message: "This claim is not held.",
-    });
-  });
-
-  it("blocks the terminal action routes while a claim is held", async () => {
-    const { commands } = buildWithHoldManager();
-    const { claim } = await createAndSubmit(commands);
-    await commands.holdClaim("emp-ada", claim.id, "Holding for review");
-
-    const approveResponse = await handleApproveExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/approve`, { method: "POST" }),
-      commands,
-      "emp-ada",
-      claim.id,
-    );
-    expect(approveResponse.status).toBe(409);
-    await expect(approveResponse.json()).resolves.toMatchObject({
-      message: "This claim is held and cannot be acted on until it is resumed.",
-    });
-
-    const rejectResponse = await handleRejectExpenseRequest(
-      new Request(`http://localhost/api/expenses/${claim.id}/reject`, {
-        method: "POST",
-        body: JSON.stringify({ reason: "Too expensive" }),
-      }),
-      commands,
-      "emp-ada",
-      claim.id,
-    );
-    expect(rejectResponse.status).toBe(409);
+    expect(deniedResponse.status).toBe(403);
   });
 });

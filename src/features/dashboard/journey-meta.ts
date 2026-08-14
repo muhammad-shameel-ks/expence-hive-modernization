@@ -3,9 +3,7 @@ import {
   Check,
   Clock,
   MessageSquare,
-  PauseCircle,
   PenLine,
-  PlayCircle,
   Send,
   ShieldCheck,
   SkipForward,
@@ -30,8 +28,6 @@ export const KIND_META: Record<HistoryKind, { label: string; tone: TimelineTone;
   paid: { label: "Paid", tone: "success", icon: Banknote },
   comment: { label: "Comment added", tone: "primary", icon: MessageSquare },
   note: { label: "Note", tone: "muted", icon: StickyNote },
-  held: { label: "Held", tone: "warning", icon: PauseCircle },
-  resumed: { label: "Resumed", tone: "primary", icon: PlayCircle },
 };
 
 export const DEFAULT_KIND_META: { label: string; tone: TimelineTone; icon: LucideIcon } = {
@@ -54,11 +50,6 @@ export function getKindMeta(kind?: string): { label: string; tone: TimelineTone;
     icon: Clock,
   };
 }
-
-// The Held badge meta (ADR-0016): a held claim keeps its flow status but is
-// visibly marked Held everywhere - the badge swaps the status label for this
-// one while the underlying status still colors the rest of the surfaces.
-export const HELD_META = { label: "Held", tone: "warning" } as const;
 
 export { simplifyAutoSkipDetail } from "@/server/shared/amount-guard";
 
@@ -125,21 +116,6 @@ export const ACTION_INDICATOR_STYLES: Record<HistoryKind, ActionIndicatorStyle> 
     iconColorClass: "text-amber-600 dark:text-amber-400",
     borderClass: "border-amber-500/20 dark:border-amber-500/30",
   },
-  held: {
-    label: "Held",
-    badgeClass: "bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/20 dark:border-violet-500/30",
-    iconBgClass: "bg-violet-500/10 dark:bg-violet-500/20",
-    iconColorClass: "text-violet-600 dark:text-violet-400",
-    borderClass: "border-violet-500/20 dark:border-violet-500/30",
-    calloutBgClass: "bg-violet-50/60 dark:bg-violet-950/20 border-violet-200/80 dark:border-violet-900/50 text-violet-900 dark:text-violet-200",
-  },
-  resumed: {
-    label: "Resumed",
-    badgeClass: "bg-sky-500/10 text-sky-700 dark:text-sky-300 border-sky-500/20 dark:border-sky-500/30",
-    iconBgClass: "bg-sky-500/10 dark:bg-sky-500/20",
-    iconColorClass: "text-sky-600 dark:text-sky-400",
-    borderClass: "border-sky-500/20 dark:border-sky-500/30",
-  },
   comment: {
     label: "Commented",
     badgeClass: "bg-blue-500/10 text-blue-700 dark:text-blue-300 border-blue-500/20 dark:border-blue-500/30",
@@ -192,8 +168,6 @@ export const FILTER_DOT_COLOR: Record<string, string> = {
   "auto-skipped": "bg-slate-400",
   reviewing: "bg-indigo-500",
   note: "bg-slate-400",
-  held: "bg-violet-500",
-  resumed: "bg-sky-500",
 };
 
 export function statusBadgeClass(status: ExpenseStatus) {

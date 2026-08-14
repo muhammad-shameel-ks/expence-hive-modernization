@@ -5,6 +5,9 @@ import type { RoleCapabilities } from "../shared/authorization";
 import { ExpenseError } from "./commands";
 import type {
   ActivityEntry,
+  BankDetailChangeRequest,
+  BankDetailRequestEvent,
+  BankDetails,
   ExpenseAttachment,
   ExpenseClaim,
   ExpenseEmployee,
@@ -140,8 +143,7 @@ export class PostgresExpenseStore implements ExpenseStore {
       const result = await client.query(
         `UPDATE reimbursement_claims
          SET title = $2, category = $3, sub_category = $4, remark = $5, amount_minor = $6, expense_date = $7,
-             status = $8, current_stage = $9, current_actor_id = $10, current_stage_since = $11, version = $12, submitted_at = $13, comments = $14,
-             held_at = $15, held_by = $16, held_reason = $17, updated_at = now()
+             status = $8, current_stage = $9, current_actor_id = $10, current_stage_since = $11, version = $12, submitted_at = $13, comments = $14, updated_at = now()
          WHERE id = $1 AND version < $12`,
         [
           claim.id,
@@ -158,9 +160,6 @@ export class PostgresExpenseStore implements ExpenseStore {
           claim.version,
           claim.submittedAt ?? null,
           claim.comments ?? null,
-          claim.heldAt ?? null,
-          claim.heldBy ?? null,
-          claim.heldReason ?? null,
         ],
       );
       if (result.rowCount !== 1) throw new ExpenseError("conflict", "Claim was changed by another request.");
@@ -272,6 +271,132 @@ export class PostgresExpenseStore implements ExpenseStore {
     );
     return result.rows.map(activityFromRow);
   }
+
+  async getApprovedBankDetails(employeeId: string): Promise<BankDetails | null> {
+    const result = await this.pool.query<Row>(
+      `SELECT holder_name, account_number, ifsc, bank_name, branch
+       FROM bank_detail_change_requests
+       WHERE employee_id = $1 AND status = 'approved'
+       ORDER BY reviewed_at DESC
+       LIMIT 1`,
+      [employeeId],
+    );
+    return result.rows.length > 0 ? bankDetailsFromRow(result.rows[0]) : null;
+  }
+
+  async listApprovedBankDetails(organizationId: string): Promise<
+    Array<{ employeeId: string; details: BankDetails }>
+  > {
+    const result = await this.pool.query<Row>(
+      `SELECT DISTINCT ON (employee_id) employee_id, holder_name, account_number, ifsc, bank_name, branch
+       FROM bank_detail_change_requests
+       WHERE organization_id = $1 AND status = 'approved'
+       ORDER BY employee_id, reviewed_at DESC`,
+      [organizationId],
+    );
+    return result.rows.map((row) => ({
+      employeeId: String(row.employee_id),
+      details: bankDetailsFromRow(row),
+    }));
+  }
+
+  async listBankDetailChangeRequests(employeeId: string): Promise<BankDetailChangeRequest[]> {
+    const result = await this.pool.query<Row>(
+      `SELECT * FROM bank_detail_change_requests
+       WHERE employee_id = $1
+       ORDER BY requested_at DESC, id DESC`,
+      [employeeId],
+    );
+    return this.hydrateBankRequests(result.rows);
+  }
+
+  async listPendingBankDetailChangeRequests(
+    organizationId: string,
+  ): Promise<BankDetailChangeRequest[]> {
+    const result = await this.pool.query<Row>(
+      `SELECT * FROM bank_detail_change_requests
+       WHERE organization_id = $1 AND status = 'pending'
+       ORDER BY requested_at ASC, id ASC`,
+      [organizationId],
+    );
+    return this.hydrateBankRequests(result.rows);
+  }
+
+  async getBankDetailChangeRequest(id: string): Promise<BankDetailChangeRequest | null> {
+    const result = await this.pool.query<Row>(
+      "SELECT * FROM bank_detail_change_requests WHERE id = $1",
+      [id],
+    );
+    if (result.rows.length === 0) return null;
+    return (await this.hydrateBankRequests(result.rows))[0] ?? null;
+  }
+
+  async createBankDetailChangeRequest(request: BankDetailChangeRequest): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await insertBankRequest(client, request);
+      await insertBankRequestEvents(client, request);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updateBankDetailChangeRequest(request: BankDetailChangeRequest): Promise<void> {
+    const client = await this.pool.connect();
+    try {
+      await client.query("BEGIN");
+      await client.query(
+        `UPDATE bank_detail_change_requests
+         SET status = $2, reviewer_id = $3, rejection_reason = $4, reviewed_at = $5
+         WHERE id = $1`,
+        [
+          request.id,
+          request.status,
+          request.reviewerId ?? null,
+          request.rejectionReason ?? null,
+          request.reviewedAt ?? null,
+        ],
+      );
+      await insertBankRequestEvents(client, request);
+      await client.query("COMMIT");
+    } catch (error) {
+      await client.query("ROLLBACK");
+      throw error;
+    } finally {
+      client.release();
+    }
+  }
+
+  async updatePersonalDetails(employeeId: string, input: { phone?: string }): Promise<void> {
+    await this.pool.query("UPDATE employees SET phone = $1 WHERE id = $2", [
+      input.phone?.trim() ? input.phone.trim() : null,
+      employeeId,
+    ]);
+  }
+
+  private async hydrateBankRequests(rows: Row[]): Promise<BankDetailChangeRequest[]> {
+    if (rows.length === 0) return [];
+    const ids = rows.map((row) => String(row.id));
+    const eventResult = await this.pool.query<Row>(
+      `SELECT * FROM bank_detail_request_events
+       WHERE request_id = ANY($1::text[])
+       ORDER BY created_at, id`,
+      [ids],
+    );
+    const eventsByRequest = new Map<string, BankDetailRequestEvent[]>();
+    for (const event of eventResult.rows) {
+      const requestId = String(event.request_id);
+      const events = eventsByRequest.get(requestId) ?? [];
+      events.push(bankDetailEventFromRow(event));
+      eventsByRequest.set(requestId, events);
+    }
+    return rows.map((row) => bankRequestFromRow(row, eventsByRequest.get(String(row.id)) ?? []));
+  }
 }
 
 const ACTIVITY_SELECT = `
@@ -305,15 +430,18 @@ function activityFromRow(row: Row): ActivityEntry {
 }
 
 const employeeQuery = `
-  SELECT e.id, e.organization_id, e.name, e.department_id, e.active,
+  SELECT e.id, e.organization_id, e.name, e.email, e.phone, e.department_id, e.active,
+         d.name AS department_name,
          r.id AS role_id, r.code AS role_code, r.display_name AS role_name,
          r.department_id AS role_department_id,
          r.can_submit AS role_can_submit, r.can_approve AS role_can_approve,
-         r.can_access_finance AS role_can_access_finance, r.can_hold AS role_can_hold,
+         r.can_access_finance AS role_can_access_finance,
+         r.can_approve_bank_details AS role_can_approve_bank_details,
          r.can_view_org_activity AS role_can_view_org_activity,
          r.can_access_admin_console AS role_can_access_admin_console,
          ha.manager_id
   FROM employees e
+  LEFT JOIN departments d ON d.id = e.department_id
   LEFT JOIN LATERAL (
     SELECT role_id FROM employee_roles WHERE employee_id = e.id ORDER BY role_id LIMIT 1
   ) er ON true
@@ -322,17 +450,17 @@ const employeeQuery = `
   WHERE e.id = $1
 `;
 
-// The six role capability columns (ADR-0015) as a role record's privilege
-// set. Legacy mock rows without the columns yield undefined, which
-// resolution treats as the submit-only default; real role rows always
-// carry them after migration 0025.
+// The six role capability columns (ADR-0015, amended by ADR-0024/0026) as a
+// role record's privilege set. Legacy mock rows without the columns yield
+// undefined, which resolution treats as the submit-only default; real role
+// rows always carry them after migration 0025.
 function roleCapabilitiesFromRow(row: Row): RoleCapabilities | undefined {
   if (row.role_can_submit === null || row.role_can_submit === undefined) return undefined;
   return {
     canSubmit: Boolean(row.role_can_submit),
     canApprove: Boolean(row.role_can_approve),
     canAccessFinance: Boolean(row.role_can_access_finance),
-    canHold: Boolean(row.role_can_hold),
+    approveBankDetails: Boolean(row.role_can_approve_bank_details),
     canViewOrganizationActivity: Boolean(row.role_can_view_org_activity),
     canAccessAdminConsole: Boolean(row.role_can_access_admin_console),
   };
@@ -344,7 +472,13 @@ function employeeFromRow(row: Row): ExpenseEmployee {
     id: String(row.id),
     organizationId: String(row.organization_id),
     name: String(row.name),
+    email: row.email ? String(row.email) : undefined,
+    phone: row.phone ? String(row.phone) : undefined,
     departmentId: row.department_id ? String(row.department_id) : null,
+    departmentName:
+      row.department_name === null || row.department_name === undefined
+        ? null
+        : String(row.department_name),
     active: Boolean(row.active),
     role: row.role_id
       ? {
@@ -410,9 +544,6 @@ function claimFromRow(row: Row): ExpenseClaim {
     currentStage: row.current_stage ? String(row.current_stage) : undefined,
     currentActorId: row.current_actor_id ? String(row.current_actor_id) : undefined,
     currentStageSince: row.current_stage_since ? new Date(String(row.current_stage_since)).toISOString() : undefined,
-    heldAt: row.held_at ? new Date(String(row.held_at)).toISOString() : undefined,
-    heldBy: row.held_by ? String(row.held_by) : undefined,
-    heldReason: row.held_reason ? String(row.held_reason) : undefined,
     steps: [],
     history: [],
     version: Number(row.version),
@@ -462,4 +593,78 @@ function historyFromRow(row: Row): ExpenseHistoryEvent {
     detail: row.detail ? String(row.detail) : undefined,
     createdAt: new Date(String(row.created_at)).toISOString(),
   };
+}
+
+function bankDetailsFromRow(row: Row): BankDetails {
+  return {
+    holderName: String(row.holder_name),
+    accountNumber: String(row.account_number),
+    ifsc: String(row.ifsc),
+    bankName: String(row.bank_name),
+    branch: String(row.branch),
+  };
+}
+
+function bankRequestFromRow(row: Row, history: BankDetailRequestEvent[]): BankDetailChangeRequest {
+  return {
+    id: String(row.id),
+    organizationId: String(row.organization_id),
+    employeeId: String(row.employee_id),
+    status: String(row.status) as BankDetailChangeRequest["status"],
+    requested: bankDetailsFromRow(row),
+    requesterId: String(row.requester_id),
+    reviewerId: row.reviewer_id ? String(row.reviewer_id) : undefined,
+    rejectionReason: row.rejection_reason ? String(row.rejection_reason) : undefined,
+    requestedAt: new Date(String(row.requested_at)).toISOString(),
+    reviewedAt: row.reviewed_at ? new Date(String(row.reviewed_at)).toISOString() : undefined,
+    history,
+  };
+}
+
+function bankDetailEventFromRow(row: Row): BankDetailRequestEvent {
+  return {
+    id: String(row.id),
+    kind: String(row.kind) as BankDetailRequestEvent["kind"],
+    actorId: row.actor_id ? String(row.actor_id) : undefined,
+    actorName: row.actor_name ? String(row.actor_name) : undefined,
+    detail: row.detail ? String(row.detail) : undefined,
+    createdAt: new Date(String(row.created_at)).toISOString(),
+  };
+}
+
+async function insertBankRequest(
+  client: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
+  request: BankDetailChangeRequest,
+): Promise<void> {
+  await client.query(
+    `INSERT INTO bank_detail_change_requests
+      (id, organization_id, employee_id, status, holder_name, account_number, ifsc, bank_name, branch, requester_id, requested_at)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)`,
+    [
+      request.id,
+      request.organizationId,
+      request.employeeId,
+      request.status,
+      request.requested.holderName,
+      request.requested.accountNumber,
+      request.requested.ifsc,
+      request.requested.bankName,
+      request.requested.branch,
+      request.requesterId,
+      request.requestedAt,
+    ],
+  );
+}
+
+async function insertBankRequestEvents(
+  client: { query: (sql: string, values?: unknown[]) => Promise<unknown> },
+  request: BankDetailChangeRequest,
+): Promise<void> {
+  for (const event of request.history) {
+    await client.query(
+      `INSERT INTO bank_detail_request_events (id, request_id, kind, actor_id, actor_name, detail, created_at)
+       VALUES ($1, $2, $3, $4, $5, $6, $7) ON CONFLICT (id) DO NOTHING`,
+      [event.id, request.id, event.kind, event.actorId ?? null, event.actorName ?? null, event.detail ?? null, event.createdAt],
+    );
+  }
 }

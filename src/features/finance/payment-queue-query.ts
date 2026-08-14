@@ -23,6 +23,17 @@ const FILTER_MATCH: Record<Exclude<PaymentQueueFilter, "All">, (claim: ExpenseCl
   Rejected: (claim) => claim.status === "rejected",
 };
 
+// A claim in the verified state (ADR-0023): it has reached the terminal
+// finance stage and that step was verified. The payment queue renders only
+// these claims; every other stage lives in the org-wide finance list view.
+export function isVerifiedClaim(claim: ExpenseClaim): boolean {
+  return (
+    claim.status === "in-finance" &&
+    claim.steps.length > 0 &&
+    claim.steps[claim.steps.length - 1].status === "verified"
+  );
+}
+
 export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: PaymentQueueQuery = {}): ExpenseClaim[] {
   const {
     query = "",
@@ -37,7 +48,9 @@ export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: Payme
   } = options;
   const q = query.trim().toLowerCase();
 
-  let list = claims;
+  // Verified is the only waiting state (ADR-0023): non-verified rows never
+  // enter the queue view, whatever the caller hands in.
+  let list = claims.filter(isVerifiedClaim);
   if (filter !== "All") list = list.filter(FILTER_MATCH[filter]);
   if (categories && categories.length > 0) list = list.filter((claim) => categories.includes(claim.category));
   if (amountMin !== undefined) list = list.filter((claim) => claim.amountMinor / 100 >= amountMin);
@@ -79,12 +92,9 @@ export function filterAndSortPaymentQueue(claims: ExpenseClaim[], options: Payme
   });
 }
 
-export type PaymentStatus = "Paid" | "In approval" | "Not Paid" | "Rejected" | "Held";
+export type PaymentStatus = "Paid" | "In approval" | "Not Paid" | "Rejected";
 
 export function paymentStatusFor(claim: ExpenseClaim): PaymentStatus {
-  // A held claim keeps its flow status but is visibly marked Held and
-  // frozen against verify/pay (ADR-0016), mirroring the rejected treatment.
-  if (claim.heldAt) return "Held";
   if (claim.status === "paid") return "Paid";
   if (claim.status === "rejected") return "Rejected";
   if (claim.status === "in-approval") return "In approval";

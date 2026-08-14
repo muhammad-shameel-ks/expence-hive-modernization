@@ -13,7 +13,8 @@
 
 ## Current Work
 
-- What: approval workflow revamp - per-role privilege toggles with mid-flight removal confirmation, hold state on claims, delegation replacing takeover, role-adaptive dashboard with period switch, and the unified one-per-status filter section (ADRs 0015-0021).
-- Plan: `docs/specs/approval-revamp-hold-delegation-dashboard.md` (ADRs 0015-0021); tracked as PR #58, issues #51, #54-57.
-- Next: opencode reviews on PR #58 addressed (canSubmit enforcement, held-claims Superadmin gate, PDF hold trail, single-user manager lock, delegation eligibility). 1068+ vitest tests passing (52 files), lint/build green. Ready to merge.
+- What: full ADR compliance/connectivity audit (ADRs 0015-0029) plus fixes for findings surfaced by the audit and an automated PR review on #63: bulk-approve no longer silently pays in-finance claims (restricted to in-approval status per ADR-0029), the `paid` history event now records the bank account used (ADR-0024), the approval-comment length limit is a single shared constant (200) enforced client and server, the admin capability-count error message derives from the six-key catalog instead of a stale "five", and the duplicated selection-set helpers between the approvals inbox and payment queue were consolidated into `src/lib/claim-selection.ts`. Also fixed an unrelated flaky test in `expense-create-form.test.tsx` (an assertion that didn't wait for an async remount).
+- Audit notes: no missing ADR/doc cross-references and no orphaned domain modules were found. `docs/specs/approval-revamp-hold-delegation-dashboard.md` is stale (still documents the Hold feature removed by ADR-0026) and should eventually get a superseded-by note.
+- Next: 1285 vitest tests passing (68 files), lint and build green.
+
 
