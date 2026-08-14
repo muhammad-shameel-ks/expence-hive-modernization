@@ -540,9 +540,15 @@ export function createExpenseCommands({
   // claim commands map the failures back to ExpenseError codes. Sharing one
   // implementation keeps the single-claim eligibility and the bulk
   // eligibility from drifting apart (the slice-08 contract).
+  // The terminal-pool eligibility failures shared by every terminal-stage
+  // command (verify, pay): a subset of both BulkPaySkipReason and
+  // BulkVerifySkipReason, so either bulk command can report a
+  // terminalPoolCheck failure without reason-mapping.
+  type TerminalPoolSkipReason = "not-found" | "self-claim" | "not-eligible";
+
   type TerminalPoolCheck =
     | { ok: true; actor: ExpenseEmployee; claim: ExpenseClaim; step: ExpenseClaim["steps"][number] }
-    | { ok: false; reason: BulkPaySkipReason };
+    | { ok: false; reason: TerminalPoolSkipReason };
 
   async function terminalPoolCheck(actorId: string, claimId: string): Promise<TerminalPoolCheck> {
     const actor = await requireEmployee(actorId);
@@ -606,6 +612,29 @@ export function createExpenseCommands({
     claim.status = "paid";
     claim.currentStage = undefined;
     claim.currentActorId = undefined;
+    claim.version += 1;
+  }
+
+  // The shared verification transition: stamps the terminal step verified
+  // and records the claim's own 'verified' history event with actor and
+  // timestamp. Both the single-claim verifyClaim and the bulk run apply
+  // this exact transition so the audit trail of a bulk-verified claim is
+  // identical to a one-off verification.
+  function applyVerification(
+    claim: ExpenseClaim,
+    step: ExpenseClaim["steps"][number],
+    actorId: string,
+    verifiedAt: string,
+  ): void {
+    step.status = "verified";
+    step.decidedAt = verifiedAt;
+    claim.history.push({
+      id: idFactory("history"),
+      kind: "verified",
+      actorId,
+      detail: "Finance verification complete",
+      createdAt: verifiedAt,
+    });
     claim.version += 1;
   }
 
@@ -1238,11 +1267,7 @@ export function createExpenseCommands({
       if (claim.status !== "in-finance" || step.status !== "pending") {
         throw new ExpenseError("conflict", "This claim is not waiting for Finance verification.");
       }
-      const verifiedAt = now().toISOString();
-      step.status = "verified";
-      step.decidedAt = verifiedAt;
-      claim.history.push({ id: idFactory("history"), kind: "verified", actorId, detail: "Finance verification complete", createdAt: verifiedAt });
-      claim.version += 1;
+      applyVerification(claim, step, actorId, now().toISOString());
       await store.updateClaim(claim);
       return claim;
     },
@@ -1254,46 +1279,19 @@ export function createExpenseCommands({
       }
       const verified: ExpenseClaim[] = [];
       const skipped: BulkVerifySkippedClaim[] = [];
-      const nowIso = now().toISOString();
 
       for (const claimId of Array.from(new Set(claimIds))) {
-        const claimRow = await store.getClaim(claimId);
-        if (!claimRow || claimRow.organizationId !== actor.organizationId) {
-          skipped.push({ claimId, reason: "not-found", message: bulkVerifySkipMessage("not-found") });
+        const check = await terminalPoolCheck(actorId, claimId);
+        if (!check.ok) {
+          skipped.push({ claimId, reason: check.reason, message: bulkVerifySkipMessage(check.reason) });
           continue;
         }
-        if (claimRow.requesterId === actorId) {
-          skipped.push({ claimId, reason: "self-claim", message: bulkVerifySkipMessage("self-claim") });
-          continue;
-        }
-        const claim = await catchUp(claimRow);
-        if (claim.status !== "in-finance") {
+        const { claim, step } = check;
+        if (claim.status !== "in-finance" || step.status !== "pending") {
           skipped.push({ claimId, reason: "not-in-finance", message: bulkVerifySkipMessage("not-in-finance") });
           continue;
         }
-        const index = claim.steps.length - 1;
-        const step = claim.steps[index];
-        const isEligible = Boolean(
-          step &&
-          actor.role &&
-          step.roleId === actor.role.id &&
-          step.status === "pending",
-        );
-        if (!isEligible) {
-          skipped.push({ claimId, reason: "not-eligible", message: bulkVerifySkipMessage("not-eligible") });
-          continue;
-        }
-        step.status = "verified";
-        step.decidedAt = nowIso;
-        claim.history.push({
-          id: idFactory("history"),
-          kind: "verified",
-          actorId,
-          detail: "Finance verification complete",
-          createdAt: nowIso,
-        });
-        claim.version += 1;
-
+        applyVerification(claim, step, actorId, now().toISOString());
         try {
           await store.updateClaim(claim);
         } catch (error) {

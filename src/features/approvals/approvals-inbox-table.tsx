@@ -256,54 +256,66 @@ export function ApprovalsInboxTable({
       let approvedClaims: ExpenseClaim[] = [];
       let verifiedClaims: ExpenseClaim[] = [];
       const skipped: Array<{ claimId: string; reason: string; message: string }> = [];
+      // The two legs of a mixed selection are independent server actions
+      // (there is no single endpoint that verifies and approves together),
+      // so a failure in one leg must not hide a success already committed
+      // by the other: both legs always run, and any leg-level error is
+      // surfaced alongside whatever the other leg actually processed.
+      let legError: string | null = null;
 
       if (verifyIds.length > 0) {
-        const response = await fetch("/api/expenses/bulk-verify", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({ claimIds: verifyIds }),
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) {
-          setActionError(
-            (data as { message?: string } | null)?.message ??
-              "The bulk verification could not be completed. Please try again.",
-          );
-          return;
+        try {
+          const response = await fetch("/api/expenses/bulk-verify", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({ claimIds: verifyIds }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok) {
+            legError =
+              (data as { message?: string } | null)?.message ??
+              "The bulk verification could not be completed. Please try again.";
+          } else {
+            const report = (data as { report?: BulkVerifyReport })?.report;
+            if (!report) {
+              legError = "The server returned an unexpected response.";
+            } else {
+              verifiedClaims = report.verified;
+              skipped.push(...report.skipped);
+            }
+          }
+        } catch {
+          legError = "Could not reach the server. Please check your connection and try again.";
         }
-        const report = (data as { report?: BulkVerifyReport })?.report;
-        if (!report) {
-          setActionError("The server returned an unexpected response.");
-          return;
-        }
-        verifiedClaims = report.verified;
-        skipped.push(...report.skipped);
       }
 
       if (approveIds.length > 0) {
-        const response = await fetch("/api/expenses/bulk-approve", {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            claimIds: approveIds,
-            ...(approvalComment.trim() ? { comment: approvalComment.trim() } : {}),
-          }),
-        });
-        const data = await response.json().catch(() => null);
-        if (!response.ok) {
-          setActionError(
-            (data as { message?: string } | null)?.message ??
-              "The bulk approval could not be completed. Please try again.",
-          );
-          return;
+        try {
+          const response = await fetch("/api/expenses/bulk-approve", {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify({
+              claimIds: approveIds,
+              ...(approvalComment.trim() ? { comment: approvalComment.trim() } : {}),
+            }),
+          });
+          const data = await response.json().catch(() => null);
+          if (!response.ok) {
+            legError =
+              (data as { message?: string } | null)?.message ??
+              "The bulk approval could not be completed. Please try again.";
+          } else {
+            const report = (data as { report?: BulkApproveReport })?.report;
+            if (!report) {
+              legError = "The server returned an unexpected response.";
+            } else {
+              approvedClaims = report.approved;
+              skipped.push(...report.skipped);
+            }
+          }
+        } catch {
+          legError = "Could not reach the server. Please check your connection and try again.";
         }
-        const report = (data as { report?: BulkApproveReport })?.report;
-        if (!report) {
-          setActionError("The server returned an unexpected response.");
-          return;
-        }
-        approvedClaims = report.approved;
-        skipped.push(...report.skipped);
       }
 
       const totalProcessed = approvedClaims.length + verifiedClaims.length;
@@ -311,42 +323,58 @@ export function ApprovalsInboxTable({
         ...approvedClaims.map((c) => c.id),
         ...verifiedClaims.map((c) => c.id),
       ]);
-      setSelectedClaimIds((current) => new Set([...current].filter((id) => !processedIds.has(id))));
 
-      if (skipped.length > 0) {
-        setBulkResult({
-          approvedCount: approvedClaims.length,
-          verifiedCount: verifiedClaims.length,
-          skipped,
-        });
+      if (legError) {
+        // A leg-level failure must not swallow work the other leg already
+        // committed: report the failure, but also say plainly what already
+        // went through so the user does not re-submit already-processed claims.
+        setActionError(
+          totalProcessed > 0
+            ? `${legError} ${totalProcessed} expense ${
+                totalProcessed === 1 ? "claim" : "claims"
+              } were already processed before this failure and have been removed from your selection.`
+            : legError,
+        );
       }
 
-      setConfirmModalOpen(false);
-      setApprovalComment("");
+      if (totalProcessed > 0) {
+        setSelectedClaimIds((current) => new Set([...current].filter((id) => !processedIds.has(id))));
 
-      if (totalProcessed > 0 && skipped.length === 0) {
-        if (verifiedClaims.length > 0 && approvedClaims.length === 0) {
-          setSuccessNotice(
-            `Successfully verified ${verifiedClaims.length} expense ${
-              verifiedClaims.length === 1 ? "claim" : "claims"
-            }.`,
-          );
-        } else if (approvedClaims.length > 0 && verifiedClaims.length === 0) {
-          setSuccessNotice(
-            `Successfully approved ${approvedClaims.length} expense ${
-              approvedClaims.length === 1 ? "claim" : "claims"
-            }.`,
-          );
-        } else {
-          setSuccessNotice(
-            `Successfully processed ${totalProcessed} expense ${
-              totalProcessed === 1 ? "claim" : "claims"
-            }.`,
-          );
+        if (skipped.length > 0) {
+          setBulkResult({
+            approvedCount: approvedClaims.length,
+            verifiedCount: verifiedClaims.length,
+            skipped,
+          });
         }
-      }
 
-      router.refresh();
+        setConfirmModalOpen(false);
+        setApprovalComment("");
+
+        if (!legError && skipped.length === 0) {
+          if (verifiedClaims.length > 0 && approvedClaims.length === 0) {
+            setSuccessNotice(
+              `Successfully verified ${verifiedClaims.length} expense ${
+                verifiedClaims.length === 1 ? "claim" : "claims"
+              }.`,
+            );
+          } else if (approvedClaims.length > 0 && verifiedClaims.length === 0) {
+            setSuccessNotice(
+              `Successfully approved ${approvedClaims.length} expense ${
+                approvedClaims.length === 1 ? "claim" : "claims"
+              }.`,
+            );
+          } else {
+            setSuccessNotice(
+              `Successfully processed ${totalProcessed} expense ${
+                totalProcessed === 1 ? "claim" : "claims"
+              }.`,
+            );
+          }
+        }
+
+        router.refresh();
+      }
     } catch {
       setActionError("Could not reach the server. Please check your connection and try again.");
     } finally {

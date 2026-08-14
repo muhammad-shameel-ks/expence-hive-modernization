@@ -3575,5 +3575,25 @@ describe("bulk approvals (ADR-0029)", () => {
         expect.objectContaining({ claimId: claim1.id, reason: "conflict" }),
       );
     });
+
+    it("honors a cross-role delegatee assigned to the terminal finance step (ADR-0017), matching verifyClaim", async () => {
+      const superadmin = emp("emp-super", "Super Boss", ROLE_SUPERADMIN);
+      const { commands } = buildCommands({ employees: [...BASE_EMPLOYEES, superadmin] });
+      const claim1 = await submitStandardDraft(commands, employee.id);
+      await commands.approveStage("emp-ada", claim1.id);
+      await commands.approveStage("emp-pramod", claim1.id); // in-finance, terminal step assigned to emp-finance
+
+      // emp-pramod (Finance Head) is delegated the terminal step normally
+      // assigned to emp-finance (Finance Executive): a different role that
+      // still carries canAccessFinance.
+      await commands.delegateClaim(superadmin.id, claim1.id, "emp-pramod", "Rishikesh is out");
+
+      const report = await commands.verifyClaims("emp-pramod", [claim1.id]);
+      expect(report.skipped).toEqual([]);
+      expect(report.verified.map((c) => c.id)).toEqual([claim1.id]);
+
+      const verified = await commands.getClaim(employee.id, claim1.id);
+      expect(verified.steps.at(-1)).toMatchObject({ status: "verified", assignedActorId: "emp-pramod" });
+    });
   });
 });

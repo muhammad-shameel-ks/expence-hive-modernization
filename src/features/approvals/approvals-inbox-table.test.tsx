@@ -388,4 +388,46 @@ describe("ApprovalsInboxTable", () => {
       expect(screen.getByText(/This claim was modified by another action\./)).toBeInTheDocument();
     });
   });
+
+  it("keeps a mixed selection's already-verified claims processed when the approve leg fails afterward", async () => {
+    const list = [
+      buildExpense({ id: "exp-v1", title: "Cloud bill", primaryAction: "verify", status: "in-finance" }),
+      buildExpense({ id: "exp-a1", ref: "EXP-2026-0002", title: "Hotel stay", primaryAction: "approve", status: "in-approval" }),
+    ];
+
+    const fetchMock = vi.fn().mockImplementation((url: string) => {
+      if (url === "/api/expenses/bulk-verify") {
+        return Promise.resolve({
+          ok: true,
+          json: async () => ({ report: { verified: [{ id: "exp-v1", status: "in-finance" }], skipped: [] } }),
+        });
+      }
+      return Promise.resolve({
+        ok: false,
+        json: async () => ({ message: "The bulk approval could not be completed. Please try again." }),
+      });
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    renderTable(list);
+
+    fireEvent.click(screen.getByLabelText("Select all claims in list"));
+    fireEvent.click(screen.getByRole("button", { name: /Process selected \(2\)/i }));
+    fireEvent.click(screen.getByRole("button", { name: /Confirm & Process/i }));
+
+    await waitFor(() => {
+      expect(fetchMock).toHaveBeenCalledWith("/api/expenses/bulk-verify", expect.anything());
+      expect(fetchMock).toHaveBeenCalledWith("/api/expenses/bulk-approve", expect.anything());
+    });
+
+    await waitFor(() => {
+      expect(
+        screen.getByText(
+          /The bulk approval could not be completed\. Please try again\. 1 expense claim were already processed before this failure/,
+        ),
+      ).toBeInTheDocument();
+    });
+    // The verified claim's success is not hidden by the approve leg's failure.
+    expect(mockRefresh).toHaveBeenCalled();
+  });
 });
