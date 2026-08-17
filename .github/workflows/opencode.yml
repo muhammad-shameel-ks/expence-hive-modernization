@@ -53,7 +53,7 @@ jobs:
         env:
           OPENCODE_API_KEY: ${{ secrets.OPENCODE_API_KEY }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          MODEL: opencode-go/deepseek-v4-flash
+          MODEL: opencode-go/mimo-v2.5
           PR_NUMBER: ${{ github.event.pull_request.number || github.event.issue.number }}
           COMMENT_BODY: ${{ github.event.comment.body }}
           REPO: ${{ github.repository }}
@@ -212,7 +212,7 @@ jobs:
           Analyze the repository evidence and diff, then respond with the review.
           PROMPT
 
-          if ! opencode run --model "$MODEL" --variant max --format json --pure \
+          if ! opencode run --model "$MODEL" --format json --pure \
             < /tmp/prompt.txt > /tmp/opencode.jsonl 2> /tmp/opencode.stderr; then
             echo "OpenCode failed to produce a review." >&2
             cat /tmp/opencode.stderr >&2 || true
